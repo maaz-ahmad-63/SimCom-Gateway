@@ -7,7 +7,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run --workspaces --if-present build",
+    "build": "npm run --workspace=@sim-gateway/shared build && npm run --workspace=@sim-gateway/gateway build && npm run --workspace=@sim-gateway/dashboard build",
     "test": "npm run --workspaces --if-present test",
     "lint": "npm run --workspaces --if-present lint",
     "dev:gateway": "npm run --workspace=@sim-gateway/gateway dev",

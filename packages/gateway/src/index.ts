@@ -1,3 +1,14 @@
+import dotenv from 'dotenv';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const currentFile = fileURLToPath(import.meta.url);
+const currentDir = path.dirname(currentFile);
+
+// From src/config or dist/config, resolve to the repository root.
+dotenv.config({
+  path: path.resolve(currentDir, '../../../.env'),
+});
 import { createGatewayServer } from './server.js';
 
 async function main() {
