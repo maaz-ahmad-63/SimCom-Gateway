@@ -39,6 +39,7 @@ export function loadConfig(overrides: Partial<GatewayConfigInput> = {}): Gateway
     audioBaudRate: process.env.MODEM_AUDIO_BAUD ?? 115200,
     audioSampleRate: process.env.AUDIO_SAMPLE_RATE ?? 8000,
     enableAudioDumps: process.env.AUDIO_ENABLE_RAW_DUMP ?? true,
+    enableUsbAudioDiagnostic: process.env.AUDIO_USB_DIAGNOSTIC_ENABLED ?? false,
     audioDumpDir: process.env.AUDIO_DUMP_DIRECTORY ?? './audio-dumps',
     sqliteDbPath: process.env.SQLITE_DB_PATH ?? './data/gateway.sqlite',
     gatewayApiKey: rawApiKey ?? 'dev-secret-api-key-sim7600ei',

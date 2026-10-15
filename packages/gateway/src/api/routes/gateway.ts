@@ -97,5 +97,34 @@ export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
     res.json(health);
   });
 
+  router.post('/audio/usb-diagnostic', async (req: Request, res: Response) => {
+    if (deps.config.enableUsbAudioDiagnostic !== true) {
+      res.status(404).json({ error: 'USB audio diagnostic is disabled' });
+      return;
+    }
+    try {
+      const action = req.body?.action;
+      if (action === 'activate') {
+        if (!deps.callManager.activateUsbAudioDiagnostic) {
+          res.status(501).json({ error: 'USB audio diagnostic is unavailable' });
+          return;
+        }
+        res.json(await deps.callManager.activateUsbAudioDiagnostic());
+        return;
+      }
+      if (action === 'deactivate') {
+        if (!deps.callManager.deactivateUsbAudioDiagnostic) {
+          res.status(501).json({ error: 'USB audio diagnostic is unavailable' });
+          return;
+        }
+        res.json((await deps.callManager.deactivateUsbAudioDiagnostic()) ?? { active: false });
+        return;
+      }
+      res.status(400).json({ error: "action must be 'activate' or 'deactivate'" });
+    } catch (error) {
+      res.status(409).json({ error: (error as Error).message });
+    }
+  });
+
   return router;
 }

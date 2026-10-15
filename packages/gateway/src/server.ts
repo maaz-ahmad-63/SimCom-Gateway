@@ -97,12 +97,17 @@ export function createGatewayServer(
 
   // 3. Core Event Bus & Call Session Manager
   const eventBus = options.eventBus ?? new GatewayEventBus();
+  const logger = createLogger('Server');
+  eventBus.on('error', (error) => {
+    logger.error(`Gateway error: ${error.message}`, error);
+  });
   const callManager =
     options.callManager ??
     new CallSessionManager({
       modem,
       audio,
       eventBus,
+      enableUsbAudioDiagnostic: config.enableUsbAudioDiagnostic,
     });
 
   // 4. Persistence Event Hookup (Safely recording calls to SQLite)
@@ -215,8 +220,6 @@ export function createGatewayServer(
     atPort: config.atPort,
     audioPort: config.audioPort,
   });
-
-  const logger = createLogger('Server');
 
   const start = async (): Promise<void> => {
     logger.info(`Starting gateway server in ${config.modemDriver} mode on ${config.host}:${config.port}`);

@@ -310,6 +310,33 @@ describe('Phase 4: Windows Hardware Integration Readiness', () => {
       expect((urcs[1] as CallEndUrcEvent).durationSeconds).toBe(35);
     });
 
+    it('dispatches SIM7600 CONNECT as the answered-call event while dialing', async () => {
+      const urcs: any[] = [];
+      adapter.on('urc', (event) => urcs.push(event));
+      transport.onWrite((written) => {
+        if (written.includes('ATD')) {
+          transport.feedIncomingData('CONNECT\r\n');
+        }
+      });
+
+      await adapter.dial('+919876543210');
+
+      expect(urcs).toHaveLength(1);
+      expect(urcs[0].type).toBe('VOICE_CALL_BEGIN');
+      expect(urcs[0].raw).toBe('CONNECT');
+    });
+
+    it('dispatches SIMCom ^CEND call-end URCs', async () => {
+      const urcs: any[] = [];
+      adapter.on('urc', (event) => urcs.push(event));
+
+      transport.feedIncomingData('^CEND: 0,35,16\r\n');
+
+      expect(urcs).toHaveLength(1);
+      expect(urcs[0].type).toBe('VOICE_CALL_END');
+      expect(urcs[0].payload.modemCode).toBe('0,35,16');
+    });
+
     it('dispatches URC arriving in the middle of an active command without corrupting command response', async () => {
       const urcs: any[] = [];
       adapter.on('urc', (event) => {
@@ -381,6 +408,39 @@ describe('Phase 4: Windows Hardware Integration Readiness', () => {
         SerialPortDisconnectedError
       );
       expect(adapter.getConnectionState()).toBe('ERROR');
+    });
+
+    it('handles transport error followed by close once and reconnects', async () => {
+      const reconnectTransport = new FakeSerialTransport('COM15', 115200);
+      const reconnectingAdapter = new Sim7600HardwareAdapter({
+        atPort: 'COM15',
+        atBaudRate: 115200,
+        commandTimeoutMs: 1000,
+        autoReconnect: true,
+        reconnectIntervalMs: 1,
+        maxReconnectAttempts: 2,
+        transport: reconnectTransport,
+      });
+      const errors: Error[] = [];
+      reconnectingAdapter.on('error', (error) => errors.push(error));
+
+      reconnectTransport.onWrite((written) => {
+        if (written.includes('AT+CPIN?')) {
+          reconnectTransport.feedIncomingData('+CPIN: READY\r\nOK\r\n');
+        } else {
+          reconnectTransport.feedIncomingData('OK\r\n');
+        }
+      });
+      await reconnectingAdapter.initialize();
+
+      reconnectTransport.simulateDisconnect(new Error('serial driver reported a disconnect'));
+
+      await vi.waitFor(() => {
+        expect(reconnectingAdapter.getConnectionState()).toBe('READY');
+      });
+      expect(errors).toHaveLength(1);
+
+      await reconnectingAdapter.close();
     });
   });
 });

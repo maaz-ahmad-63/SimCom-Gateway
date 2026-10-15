@@ -81,8 +81,11 @@ export class AtParser {
     if (trimmed === 'RING' || trimmed.startsWith('+CRING:')) return true;
     if (trimmed.startsWith('+CLIP:')) return true;
     if (trimmed === 'VOICE CALL: BEGIN') return true;
+    if (trimmed === 'CONNECT') return true;
     if (trimmed.startsWith('VOICE CALL: END')) return true;
+    if (trimmed.startsWith('^CEND:')) return true;
     if (trimmed === 'NO CARRIER') return true;
+    if (trimmed === 'NO ANSWER') return true;
     if (trimmed === 'BUSY') return true;
     if (trimmed === 'ALERTING') return true;
     if (trimmed.startsWith('+CEREG:') && !trimmed.includes('?')) return true;
@@ -132,7 +135,17 @@ export class AtParser {
       };
     }
 
-    // 4. Voice Call End (SIM7600 standard, e.g. "VOICE CALL: END: 15")
+    // 4. Connected voice call result from ATD
+    if (trimmed === 'CONNECT') {
+      return {
+        raw: trimmed,
+        type: 'VOICE_CALL_BEGIN',
+        timestamp: new Date().toISOString(),
+        isSimulated: false,
+      };
+    }
+
+    // 5. Voice Call End (SIM7600 standard, e.g. "VOICE CALL: END: 15")
     if (trimmed.startsWith('VOICE CALL: END')) {
       const parsed = AtParser.parseVoiceCallEnd(trimmed);
       const callEndEvent: CallEndUrcEvent = {
@@ -145,7 +158,18 @@ export class AtParser {
       return callEndEvent;
     }
 
-    // 5. NO CARRIER
+    // 6. SIMCom call-end URC (^CEND: cause,duration,...)
+    if (trimmed.startsWith('^CEND:')) {
+      return {
+        raw: trimmed,
+        type: 'VOICE_CALL_END',
+        payload: { modemCode: trimmed.substring('^CEND:'.length).trim() },
+        timestamp: new Date().toISOString(),
+        isSimulated: false,
+      };
+    }
+
+    // 7. NO CARRIER
     if (trimmed === 'NO CARRIER') {
       return {
         raw: trimmed,
@@ -155,7 +179,16 @@ export class AtParser {
       };
     }
 
-    // 6. BUSY
+    if (trimmed === 'NO ANSWER') {
+      return {
+        raw: trimmed,
+        type: 'NO_ANSWER',
+        timestamp: new Date().toISOString(),
+        isSimulated: false,
+      };
+    }
+
+    // 8. BUSY
     if (trimmed === 'BUSY') {
       return {
         raw: trimmed,
@@ -165,7 +198,7 @@ export class AtParser {
       };
     }
 
-    // 7. ALERTING
+    // 9. ALERTING
     if (trimmed === 'ALERTING') {
       return {
         raw: trimmed,
@@ -176,7 +209,7 @@ export class AtParser {
       };
     }
 
-    // 8. CEREG/CREG registration update
+    // 10. CEREG/CREG registration update
     if (trimmed.startsWith('+CEREG:') || trimmed.startsWith('+CREG:')) {
       const status = AtParser.parseCregOrCereg(trimmed);
       return {

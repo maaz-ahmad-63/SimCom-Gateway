@@ -41,6 +41,7 @@ export const gatewayConfigSchema = z.object({
   audioBaudRate: z.coerce.number().default(115200),
   audioSampleRate: z.coerce.number().default(8000),
   enableAudioDumps: z.coerce.boolean().default(true),
+  enableUsbAudioDiagnostic: z.coerce.boolean().default(false),
   audioDumpDir: z.string().default('./audio-dumps'),
   sqliteDbPath: z.string().default('./data/gateway.sqlite'),
   gatewayApiKey: z.string().min(8, 'API Key must be at least 8 characters'),

@@ -91,6 +91,10 @@ export interface ICallSessionManager {
   /** Sends DTMF digit over active call */
   sendDtmf(request: DtmfRequest): Promise<void>;
 
+  /** Explicitly controlled SIM7600 USB-audio diagnostic activation. */
+  activateUsbAudioDiagnostic?(): Promise<{ command: string; response: string; timestamp: string }>;
+  deactivateUsbAudioDiagnostic?(): Promise<{ command: string; response: string; timestamp: string } | null>;
+
   /** Event listeners */
   on(event: 'call:state_changed', listener: (event: CallStateChangeEvent) => void): this;
   on(event: 'call:started', listener: (session: CallSession) => void): this;

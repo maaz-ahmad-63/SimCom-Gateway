@@ -19,10 +19,34 @@ When the SIM7600EI is plugged in and drivers are installed, Windows Device Manag
 | Port | Config Name | Verified COM (Current Windows Host) | Purpose |
 |---|---|---|---|
 | **AT Command Interface** | `MODEM_AT_PORT` | `COM20` | AT commands, call setup, URCs, network status, DTMF (115200 8-N-1) |
-| **Virtual Audio / NMEA** | `MODEM_AUDIO_PORT` | `COM19` | Raw USB virtual audio stream during active calls |
+| **Virtual Audio / NMEA** | `MODEM_AUDIO_PORT` | `COM19` | Serial byte stream observed during active calls; codec, framing, and playback direction are not verified |
 | **Diagnostics / Modem** | — | — | Qualcomm/SIMCOM firmware flashing and diagnostic logs |
 
-*Note: Verified on the current host via PowerShell: AT interface on COM20, Audio interface on COM19.*
+*Note: The project records COM20 as the AT interface and COM19 as the audio/NMEA
+interface, but it does not record the physical USB VID/PID, carrier-board model,
+or a verified audio protocol. Run the read-only inspection script below on the
+Windows host before treating these mappings as hardware evidence.*
+
+### Read-only hardware identification
+
+From the repository root, run:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\tools\inspect-sim7600-windows.ps1
+```
+
+The script reports Windows descriptions, manufacturers, status, filtered USB
+VID/PID hardware IDs, and the modem responses to `AT`, `ATI`, `AT+CGMM`, and
+`AT+CGMR`. It does not issue call-control, SMS, network-write, audio-write,
+IMEI, IMSI, or phone-number commands. Its output redacts long numeric
+identifiers and sensitive-looking response lines.
+
+The repository-confirmed facts are only the SIMCOM SIM7600EI family, the
+configured COM20/COM19 assignments, and the 115200 serial setting. The exact
+carrier-board model, USB identity, physical modem firmware revision, and
+official SIMCom COM19 audio-interface specification must come from this
+diagnostic and the board/modem documentation.
 
 ---
 
@@ -80,10 +104,25 @@ AUDIO_CHANNELS=1
 AUDIO_BIT_DEPTH=16
 AUDIO_ENABLE_RAW_DUMP=true
 AUDIO_DUMP_DIRECTORY=./audio-dumps
+# Must be explicitly enabled for the manual CPCMREG diagnostic
+AUDIO_USB_DIAGNOSTIC_ENABLED=false
 
 # Database Persistence
 SQLITE_DB_PATH=./data/gateway.sqlite
 ```
+
+The sample rate, channel count, and bit depth above are target configuration
+values only. The repository does not include a SIM7600EI audio protocol
+definition proving that COM19 carries linear PCM, a framed codec, or
+host-to-modem playback. Do not send arbitrary audio bytes to COM19 until the
+manual bidirectional test confirms the transport and format.
+
+The USB-audio diagnostic is disabled by default. When explicitly enabled, the
+authenticated endpoint `POST /api/gateway/audio/usb-diagnostic` accepts
+`{"action":"activate"}` or `{"action":"deactivate"}`. Activation is allowed
+only while the call is ACTIVE and issues `AT+CPCMREG=1` through the existing
+COM20 AT queue. Call cleanup issues `AT+CPCMREG=0` once when activation
+succeeded. No audio payload is written.
 
 ---
 
@@ -187,7 +226,21 @@ Expected JSON Response:
 
 ---
 
-## 5. Connecting from the macOS Dashboard
+## 5. Manual COM19 Audio Qualification (No Automatic Dial)
+
+Start the gateway with debug logging, then place one authorized call manually
+through the existing dashboard or API. During the active call, verify that the
+gateway reports inbound byte counts on COM19. If testing playback, use only
+known test data after confirming the modem documentation and endpoint format;
+do not infer PCM from byte counts alone. Record whether the remote party hears
+the playback and stop the call manually.
+
+The gateway diagnostics record timestamps, chunk sizes, write success/failure,
+stream errors, and aggregate statistics. They do not log audio content, phone
+numbers, or API credentials. A successful serial write alone does not prove
+that the modem transmitted audible audio.
+
+## 6. Connecting from the macOS Dashboard
 
 1. On your macOS development machine, start the dashboard:
    ```bash
@@ -199,4 +252,3 @@ Expected JSON Response:
 5. Click **Test API Connection**:
    - Status badge turns green: `ONLINE (hardware)`.
    - The Overview page will now display live RSSI signal bars (4 bars, RSSI 23), Vi India carrier (LTE), and real physical incoming and outgoing calls!
-

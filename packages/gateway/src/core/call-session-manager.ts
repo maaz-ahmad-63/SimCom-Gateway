@@ -16,11 +16,13 @@ import {
 import { CallStateMachine } from './call-state-machine.js';
 import { GatewayBusyError, InvalidStateTransitionError } from './errors.js';
 import { GatewayEventBus } from './event-bus.js';
+import { createLogger, redactDiagnosticText } from './logger.js';
 
 export interface CallSessionManagerOptions {
   modem: IModemAdapter;
   audio?: IAudioAdapter;
   eventBus?: GatewayEventBus;
+  enableUsbAudioDiagnostic?: boolean;
 }
 
 export class CallSessionManager extends EventEmitter implements ICallSessionManager {
@@ -30,12 +32,22 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
 
   private activeStateMachine: CallStateMachine | null = null;
   private dialTimeoutTimer: NodeJS.Timeout | null = null;
+  private pendingTerminationReason: string | undefined;
+  private readonly logger = createLogger('CallSessionManager');
+  private readonly enableUsbAudioDiagnostic: boolean;
+  private usbAudioDiagnosticActive = false;
+  private usbAudioDiagnosticDeactivation: Promise<{
+    command: string;
+    response: string;
+    timestamp: string;
+  } | null> | null = null;
 
   constructor(options: CallSessionManagerOptions) {
     super();
     this.modem = options.modem;
     this.audio = options.audio;
     this.eventBus = options.eventBus;
+    this.enableUsbAudioDiagnostic = options.enableUsbAudioDiagnostic ?? false;
 
     this.bindModemEvents();
   }
@@ -70,6 +82,7 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
 
     // Transition to DIALING
     this.applyTransition(sm, 'DIALING');
+    this.logger.info(`Outbound call ${sm.getSession().id} entered DIALING`);
     this.emit('call:started', sm.getSession());
     this.eventBus?.emit('call:started', sm.getSession());
 
@@ -85,7 +98,9 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
     }, timeoutSeconds * 1000);
 
     try {
+      this.logger.info(`Sending outbound dial command for call ${sm.getSession().id}`);
       await this.modem.dial(request.phoneNumber);
+      this.logger.info(`Dial command accepted for call ${sm.getSession().id}`);
     } catch (error) {
       this.clearDialTimer();
       this.applyTransition(sm, 'TERMINATING', {
@@ -131,6 +146,7 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
 
     const sm = this.activeStateMachine;
     const currentState = sm.getState();
+    this.pendingTerminationReason = reason;
 
     if (currentState === 'IDLE' || currentState === 'TERMINATING') {
       return;
@@ -140,6 +156,12 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
       await this.modem.hangup();
     } catch {
       // Continue cleanup even if modem returns error on hangup
+    }
+
+    try {
+      await this.deactivateUsbAudioDiagnostic();
+    } catch (error) {
+      this.logger.error(`USB audio diagnostic cleanup failed: ${(error as Error).message}`);
     }
 
     if (this.audio) {
@@ -167,18 +189,74 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
     await this.modem.sendDtmf(request.digit);
   }
 
+  async activateUsbAudioDiagnostic(): Promise<{ command: string; response: string; timestamp: string }> {
+      if (!this.enableUsbAudioDiagnostic) {
+        throw new Error('USB audio diagnostic is disabled');
+      }
+      if (!this.activeStateMachine || this.activeStateMachine.getState() !== 'ACTIVE') {
+        throw new InvalidStateTransitionError(
+          this.activeStateMachine?.getState() ?? 'IDLE',
+          'ACTIVE',
+          'USB audio diagnostic requires an active call'
+        );
+      }
+      if (this.usbAudioDiagnosticActive) {
+        throw new Error('USB audio diagnostic is already active');
+      }
+
+      const command = 'AT+CPCMREG=1';
+      const timestamp = new Date().toISOString();
+      const response = await this.modem.executeCommand(command);
+      if (!/\bOK\b/.test(response)) {
+        throw new Error(`USB audio activation rejected: ${response}`);
+      }
+      this.usbAudioDiagnosticActive = true;
+      this.logger.info(`USB audio diagnostic activated at ${timestamp}; response metadata recorded`);
+      return { command, response, timestamp };
+    }
+
+    async deactivateUsbAudioDiagnostic(): Promise<{ command: string; response: string; timestamp: string } | null> {
+      if (this.usbAudioDiagnosticDeactivation) {
+        return this.usbAudioDiagnosticDeactivation;
+      }
+      if (!this.usbAudioDiagnosticActive) {
+        return null;
+      }
+      const command = 'AT+CPCMREG=0';
+      const timestamp = new Date().toISOString();
+      this.usbAudioDiagnosticDeactivation = (async () => {
+        try {
+          const response = await this.modem.executeCommand(command);
+          if (!/\bOK\b/.test(response)) {
+            throw new Error(`USB audio deactivation rejected: ${response}`);
+          }
+          this.logger.info(`USB audio diagnostic deactivated at ${timestamp}; response metadata recorded`);
+          return { command, response, timestamp };
+        } finally {
+          this.usbAudioDiagnosticActive = false;
+          this.usbAudioDiagnosticDeactivation = null;
+        }
+      })();
+      return this.usbAudioDiagnosticDeactivation;
+    }
+
   private bindModemEvents(): void {
     this.modem.on('urc', (urc: UrcEvent) => {
       this.handleUrc(urc);
     });
 
     this.modem.on('error', (err: Error) => {
-      this.emit('error', err);
+      if (this.listenerCount('error') > 0) {
+        this.emit('error', err);
+      }
       this.eventBus?.emit('error', err);
     });
   }
 
   private handleUrc(urc: UrcEvent): void {
+    this.logger.info(
+      `Call URC ${urc.type} received: ${redactDiagnosticText(urc.raw)}`
+    );
     this.eventBus?.emit('modem:urc', urc);
 
     if (urc.type === 'CLIP') {
@@ -209,15 +287,28 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
       return;
     }
 
-    if (urc.type === 'VOICE_CALL_END' || urc.type === 'NO_CARRIER') {
+    if (
+      urc.type === 'VOICE_CALL_END' ||
+      urc.type === 'NO_CARRIER' ||
+      urc.type === 'NO_ANSWER'
+    ) {
       if (this.activeStateMachine && this.activeStateMachine.getState() !== 'IDLE') {
         this.clearDialTimer();
+        void this.deactivateUsbAudioDiagnostic().catch((error: Error) => {
+          this.logger.error(`USB audio diagnostic cleanup failed: ${error.message}`);
+          this.eventBus?.emit('error', error);
+        });
         if (this.audio) {
           this.audio.stopSession().catch(() => {});
         }
         const callEnd = urc as CallEndUrcEvent;
+        const wasAnswered = Boolean(this.activeStateMachine.getSession().answeredAt);
         this.applyTransition(this.activeStateMachine, 'TERMINATING', {
-          reason: 'Remote party disconnected',
+          reason: this.pendingTerminationReason ?? (wasAnswered
+            ? 'Remote party disconnected'
+            : urc.type === 'NO_ANSWER'
+              ? 'Remote party did not answer'
+              : 'Call ended before answer'),
         });
         this.finalizeCall(this.activeStateMachine);
       }
@@ -227,6 +318,10 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
     if (urc.type === 'BUSY') {
       if (this.activeStateMachine && this.activeStateMachine.getState() !== 'IDLE') {
         this.clearDialTimer();
+        void this.deactivateUsbAudioDiagnostic().catch((error: Error) => {
+          this.logger.error(`USB audio diagnostic cleanup failed: ${error.message}`);
+          this.eventBus?.emit('error', error);
+        });
         this.applyTransition(this.activeStateMachine, 'TERMINATING', {
           outcome: 'busy',
           reason: 'Remote party is busy',
@@ -301,6 +396,11 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
     nextState: any,
     options?: { outcome?: CallOutcome; reason?: string }
   ): void {
+    this.logger.info(
+      `Call ${sm.getSession().id} state transition ${sm.getState()} -> ${nextState}${
+        options?.reason ? ` (${redactDiagnosticText(options.reason)})` : ''
+      }`
+    );
     const change = sm.transitionTo(nextState, options);
     const event: CallStateChangeEvent = {
       callId: change.session.id,
@@ -317,6 +417,7 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
     sm.transitionTo('IDLE');
     const endedSession = sm.getSession();
     this.activeStateMachine = null;
+    this.pendingTerminationReason = undefined;
 
     this.emit('call:ended', endedSession);
     this.eventBus?.emit('call:ended', endedSession);

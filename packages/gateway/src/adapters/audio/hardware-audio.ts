@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import { Readable, Writable } from 'node:stream';
+import { PassThrough, Readable, Writable } from 'node:stream';
 import {
   AudioDumpOptions,
   AudioFormatSpec,
@@ -10,6 +10,7 @@ import {
   IAudioAdapter,
 } from '@sim-gateway/shared';
 import { ISerialTransport, NodeSerialTransport } from '../modem/serial-transport.js';
+import { createLogger, Logger } from '../../core/logger.js';
 
 export interface HardwareAudioOptions {
   audioPort?: string;
@@ -35,9 +36,12 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
   private isStreaming = false;
   private currentCallId: string | null = null;
   private dumpWriteStream: fs.WriteStream | null = null;
+  private inboundStream: PassThrough | null = null;
+  private outboundStream: Writable | null = null;
   private sequenceNumber = 0;
   private stats: AudioStreamStats;
   private readonly options: Required<HardwareAudioOptions>;
+  private readonly logger: Logger;
 
   constructor(options: HardwareAudioOptions = {}) {
     super();
@@ -58,6 +62,7 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
     };
 
     this.transport = this.options.transport;
+    this.logger = createLogger(`Audio:${this.options.audioPort}`);
 
     this.stats = {
       bytesReceived: 0,
@@ -75,6 +80,7 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
     });
 
     this.transport.on('error', (err: Error) => {
+      this.logger.error(`Audio transport error: ${err.message}`);
       if (this.listenerCount('error') > 0) {
         this.emit('error', err);
       }
@@ -86,6 +92,15 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
     this.sequenceNumber = 0;
     this.isStreaming = true;
     this.stats.isStreaming = true;
+    this.inboundStream = new PassThrough();
+    this.outboundStream = new Writable({
+      write: (chunk, _encoding, callback) => {
+        this.writeAudioChunk(Buffer.from(chunk)).then(
+          () => callback(),
+          (error: Error) => callback(error)
+        );
+      },
+    });
 
     // Open audio COM port if not already open
     try {
@@ -95,6 +110,7 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
           baudRate: this.options.audioBaudRate,
         });
       }
+      this.logger.info(`Audio transport '${this.options.audioPort}' opened for call ${callId}`);
     } catch (err) {
       // Audio open failure shouldn't crash the voice call session
       if (this.listenerCount('error') > 0) {
@@ -103,6 +119,7 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
           new Error(`Could not open audio port ${this.options.audioPort}: ${(err as Error).message}`)
         );
       }
+      this.logger.error(`Could not open audio port ${this.options.audioPort}: ${(err as Error).message}`);
     }
 
     // Initialize raw diagnostic file dump if enabled
@@ -128,6 +145,10 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
     this.isStreaming = false;
     this.stats.isStreaming = false;
     this.currentCallId = null;
+    this.inboundStream?.end();
+    this.outboundStream?.end();
+    this.inboundStream = null;
+    this.outboundStream = null;
 
     if (this.dumpWriteStream) {
       this.dumpWriteStream.end();
@@ -158,6 +179,7 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
 
     this.stats.bytesSent += chunk.length;
     this.stats.framesSent++;
+    this.logger.debug(`Outbound audio write bytes=${chunk.length} timestamp=${new Date().toISOString()}`);
 
     try {
       await this.transport.write(chunk);
@@ -166,6 +188,7 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
       if (this.listenerCount('error') > 0) {
         this.emit('error', writeErr as Error);
       }
+      throw writeErr;
     }
   }
 
@@ -174,11 +197,11 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
   }
 
   getInboundStream(): Readable | null {
-    return null;
+    return this.inboundStream;
   }
 
   getOutboundStream(): Writable | null {
-    return null;
+    return this.outboundStream;
   }
 
   private handleIncomingRawAudio(chunk: Buffer): void {
@@ -186,11 +209,13 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
 
     this.stats.bytesReceived += chunk.length;
     this.stats.framesReceived++;
+    this.logger.debug(`Inbound audio chunk bytes=${chunk.length} timestamp=${new Date().toISOString()}`);
 
     // Write to raw diagnostic file dump (clearly labeled as unvalidated raw stream)
     if (this.dumpWriteStream) {
       this.dumpWriteStream.write(chunk);
     }
+    this.inboundStream?.write(chunk);
 
     // Heuristic raw byte stream energy metric for visual activity indicators.
     // Note: Does NOT assume linear PCM format or perform speculative decoding.

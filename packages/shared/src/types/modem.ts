@@ -117,6 +117,7 @@ export interface UrcEvent {
     | 'RING'
     | 'CLIP'
     | 'NO_CARRIER'
+    | 'NO_ANSWER'
     | 'BUSY'
     | 'VOICE_CALL_BEGIN'
     | 'VOICE_CALL_END'

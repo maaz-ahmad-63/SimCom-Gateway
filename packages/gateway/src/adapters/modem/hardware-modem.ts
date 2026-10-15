@@ -44,6 +44,7 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectAttempts = 0;
   private isClosing = false;
+  private serialFailureHandled = false;
   private readonly logger: Logger;
 
   constructor(options: HardwareModemOptions = {}) {
@@ -129,6 +130,7 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
           baudRate: this.config.atBaudRate,
         });
       }
+      this.queue.markTransportReady();
 
       this.setConnectionState('INITIALIZING');
 
@@ -167,6 +169,7 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
 
       // Reconnect counter reset on successful initialization
       this.reconnectAttempts = 0;
+      this.serialFailureHandled = false;
       this.setConnectionState('READY');
       this.logger.info(`Hardware modem on ${this.config.atPort} ready for cellular operations`);
     } catch (initErr) {
@@ -192,6 +195,7 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
 
     try {
       this.queue.reset();
+      this.queue.markTransportClosing();
       await this.transport.close();
     } finally {
       this.setConnectionState('DISCONNECTED');
@@ -310,8 +314,9 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
   }
 
   private handleSerialFailure(error: Error): void {
-    if (this.isClosing) return;
+    if (this.isClosing || this.serialFailureHandled) return;
 
+    this.serialFailureHandled = true;
     this.setConnectionState('ERROR');
     if (this.listenerCount('error') > 0) {
       this.emit('error', error);

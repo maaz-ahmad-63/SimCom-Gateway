@@ -8,7 +8,7 @@ import {
 } from '@sim-gateway/shared';
 import { ISerialTransport } from './serial-transport.js';
 import { AtParser } from './at-parser.js';
-import { createLogger, Logger } from '../../core/logger.js';
+import { createLogger, Logger, redactDiagnosticText } from '../../core/logger.js';
 
 interface QueuedCommand {
   command: string;
@@ -33,6 +33,7 @@ export class AtCommandQueue extends EventEmitter {
   private isProcessing = false;
   private lastCommunicationTime: string | null = null;
   private lastAtStatus: AtCommunicationStatus = 'UNKNOWN';
+  private transportFailureHandled = false;
 
   constructor(transport: ISerialTransport, options: AtCommandQueueOptions = {}) {
     super();
@@ -66,6 +67,14 @@ export class AtCommandQueue extends EventEmitter {
 
   getAtCommunicationStatus(): AtCommunicationStatus {
     return this.lastAtStatus;
+  }
+
+  markTransportReady(): void {
+    this.transportFailureHandled = false;
+  }
+
+  markTransportClosing(): void {
+    this.transportFailureHandled = true;
   }
 
   /**
@@ -167,6 +176,7 @@ export class AtCommandQueue extends EventEmitter {
    */
   private processLine(line: string): void {
     if (!line) return; // Ignore blank lines
+    this.logger.debug(`Modem response line: ${redactDiagnosticText(line)}`);
 
     // 1. Echo filter: if modem echoes the sent command back, ignore it
     if (this.activeCommand && line === this.activeCommand.command) {
@@ -215,6 +225,16 @@ export class AtCommandQueue extends EventEmitter {
 
     const isCallProgressTerminal =
       isDialOrAnswerInFlight && (line === 'BUSY' || line === 'NO CARRIER' || line === 'NO ANSWER');
+
+    if (isDialOrAnswerInFlight && line === 'CONNECT') {
+      this.finishActiveCommand(true);
+      const connected = AtParser.parseUrc(line);
+      if (connected) {
+        this.logger.info(`Call connected: ${line}`);
+        this.emit('urc', connected);
+      }
+      return;
+    }
 
     // Distinguish command responses from unsolicited URCs
     const isExpectedCommandResponse =
@@ -330,6 +350,9 @@ export class AtCommandQueue extends EventEmitter {
    * Handles serial transport disconnects or fatal hardware errors.
    */
   private handleTransportFailure(error: Error): void {
+    if (this.transportFailureHandled) return;
+
+    this.transportFailureHandled = true;
     this.clearActiveTimer();
     this.lastAtStatus = 'DISCONNECTED';
     this.logger.error(`Serial transport failure: ${error.message}`);
@@ -364,6 +387,7 @@ export class AtCommandQueue extends EventEmitter {
    * Clear state and pending commands (for manual reset or disconnect cleanup).
    */
   reset(): void {
+    this.transportFailureHandled = false;
     this.clearActiveTimer();
     const err = new SerialPortDisconnectedError(this.transport.path, 'Command queue manually reset');
     if (this.activeCommand) {

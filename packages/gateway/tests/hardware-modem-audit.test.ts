@@ -311,6 +311,10 @@ describe('Phase 4.1: Hardware-Readiness Deep Audit & Regression Suite', () => {
       // Start session
       await audioAdapter.startSession('call-audit-123');
       expect(audioAdapter.getStats().isStreaming).toBe(true);
+      const inboundStream = audioAdapter.getInboundStream();
+      expect(inboundStream).not.toBeNull();
+      const streamedChunks: Buffer[] = [];
+      inboundStream?.on('data', (chunk: Buffer) => streamedChunks.push(chunk));
 
       // Feed raw arbitrary bytes
       const testChunk = Buffer.from([0x01, 0xFE, 0x80, 0x7F, 0x00, 0xFF]);
@@ -320,6 +324,19 @@ describe('Phase 4.1: Hardware-Readiness Deep Audit & Regression Suite', () => {
       expect(frames[0].data).toEqual(testChunk);
       expect(frames[0].isSimulated).toBe(false);
       expect(audioAdapter.getStats().bytesReceived).toBe(testChunk.length);
+      audioTransport.feedIncomingData(Buffer.from([0x10, 0x20]));
+      expect(streamedChunks).toHaveLength(2);
+      expect(Buffer.concat(streamedChunks)).toEqual(Buffer.concat([testChunk, Buffer.from([0x10, 0x20])]));
+
+      const outboundStream = audioAdapter.getOutboundStream();
+      expect(outboundStream).not.toBeNull();
+      await new Promise<void>((resolve, reject) => {
+        outboundStream?.write(Buffer.from([0x30, 0x40]), (error) => {
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+      expect(audioTransport.getWrittenHistory()).toContain('0@');
 
       // Stop session is safe and idempotent
       await audioAdapter.stopSession();
@@ -339,6 +356,79 @@ describe('Phase 4.1: Hardware-Readiness Deep Audit & Regression Suite', () => {
       expect(() => {
         audioTransport.simulateDisconnect(new Error('Audio serial glitch'));
       }).not.toThrow();
+    });
+
+    it('records bounded audio transport diagnostics without recording audio content', async () => {
+      const audioTransport = new FakeSerialTransport('COM19', 115200);
+      const audioAdapter = new Sim7600HardwareAudioAdapter({
+        audioPort: 'COM19',
+        enableDumps: false,
+        transport: audioTransport,
+      });
+      const diagnostics: Array<{
+        timestamp: string;
+        event: 'inbound' | 'outbound' | 'stream_error' | 'stats';
+        bytes?: number;
+        success?: boolean;
+        message?: string;
+        isStreaming?: boolean;
+      }> = [];
+      const record = (
+        event: 'inbound' | 'outbound' | 'stream_error' | 'stats',
+        details: Omit<(typeof diagnostics)[number], 'timestamp' | 'event'> = {}
+      ) => {
+        if (diagnostics.length < 20) {
+          diagnostics.push({ timestamp: new Date().toISOString(), event, ...details });
+        }
+      };
+
+      await audioAdapter.startSession('diagnostic-call');
+      const inbound = audioAdapter.getInboundStream();
+      const outbound = audioAdapter.getOutboundStream();
+      inbound?.on('data', (chunk: Buffer) => record('inbound', { bytes: chunk.length }));
+      inbound?.on('error', (error: Error) =>
+        record('stream_error', { message: error.message })
+      );
+      outbound?.on('error', (error: Error) =>
+        record('stream_error', { message: error.message })
+      );
+      audioAdapter.on('stats', (stats) =>
+        record('stats', {
+          bytes: stats.bytesReceived + stats.bytesSent,
+          isStreaming: stats.isStreaming,
+        })
+      );
+
+      audioTransport.feedIncomingData(Buffer.alloc(7, 0));
+      await new Promise<void>((resolve, reject) => {
+        outbound?.write(Buffer.alloc(5, 0), (error) => {
+          if (error) {
+            record('outbound', { bytes: 5, success: false, message: error.message });
+            reject(error);
+          } else {
+            record('outbound', { bytes: 5, success: true });
+            resolve();
+          }
+        });
+      });
+      outbound?.destroy(new Error('diagnostic stream error'));
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(diagnostics.length).toBeGreaterThan(0);
+      expect(diagnostics.length).toBeLessThanOrEqual(20);
+      expect(diagnostics.every((entry) => entry.timestamp.length > 0)).toBe(true);
+      expect(diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ event: 'inbound', bytes: 7 }),
+          expect.objectContaining({ event: 'outbound', bytes: 5, success: true }),
+          expect.objectContaining({ event: 'stream_error' }),
+        ])
+      );
+      expect(diagnostics.some((entry) => entry.event === 'stats')).toBe(true);
+      expect(diagnostics.some((entry) => 'message' in entry && entry.message?.includes('0'))).toBe(
+        false
+      );
+      await audioAdapter.stopSession();
     });
   });
 

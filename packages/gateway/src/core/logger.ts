@@ -42,6 +42,13 @@ function sanitizeValue(key: string, value: unknown): unknown {
   return value;
 }
 
+export function redactDiagnosticText(value: string): string {
+  return value
+    .replace(/(ATD)\s*([+0-9][0-9\s-]{5,})(;?)/gi, '$1[REDACTED]$3')
+    .replace(/(\+CLIP:\s*")[^"]+(")/gi, '$1[REDACTED]$2')
+    .replace(/\b\d{7,}\b/g, '[REDACTED]');
+}
+
 export class Logger {
   readonly module: string;
 
@@ -66,7 +73,8 @@ export class Logger {
   private formatMessage(level: LogLevel, message: string, meta?: unknown): string {
     const timestamp = new Date().toISOString();
     const tag = level.toUpperCase().padEnd(5);
-    const cleanMessage = typeof message === 'string' ? sanitizeValue('', message) : message;
+    const cleanMessage =
+      typeof message === 'string' ? redactDiagnosticText(sanitizeValue('', message) as string) : message;
     let output = `${timestamp} [${tag}] [${this.module}] ${cleanMessage}`;
 
     if (meta !== undefined) {
