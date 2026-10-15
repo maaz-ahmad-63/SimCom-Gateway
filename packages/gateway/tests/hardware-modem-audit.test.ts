@@ -449,6 +449,9 @@ describe('Phase 4.1: Hardware-Readiness Deep Audit & Regression Suite', () => {
       expect(authResp.body.isSimulated).toBe(false);
       expect(authResp.body.modem.atPort).toBe('COM20');
       expect(authResp.body.modem.audioPort).toBe('COM19');
+      expect(authResp.body.modem.connectionState).toBe('DISCONNECTED');
+      expect(authResp.body.modem.simStatus).toBe('DISCONNECTED');
+      expect(authResp.body.modem.atStatus).toBe('DISCONNECTED');
 
       dbClose(server);
     });

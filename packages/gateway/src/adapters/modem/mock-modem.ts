@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import {
+  AtCommunicationStatus,
   IModemAdapter,
   ModemConnectionState,
   ModemDeviceInfo,
@@ -7,6 +8,7 @@ import {
   ModemNetworkStatus,
   ModemPortConfig,
   ModemSignalQuality,
+  SimPinStatus,
   UrcEvent,
   ClipUrcEvent,
   CallEndUrcEvent,
@@ -34,6 +36,7 @@ export class MockModemAdapter extends EventEmitter implements IModemAdapter {
   private ringCount = 0;
   private activeCallRemoteNumber: string | null = null;
   private callStartTimestamp: number | null = null;
+  private lastCommunicationTime: string | null = null;
   private readonly options: Required<MockModemOptions>;
 
   constructor(options: MockModemOptions = {}) {
@@ -70,6 +73,7 @@ export class MockModemAdapter extends EventEmitter implements IModemAdapter {
     await this.delay(100);
 
     this.connectionState = 'READY';
+    this.lastCommunicationTime = new Date().toISOString();
     this.emit('connection_state', this.connectionState);
   }
 
@@ -80,6 +84,7 @@ export class MockModemAdapter extends EventEmitter implements IModemAdapter {
   }
 
   async executeCommand(command: string, timeoutMs = 5000): Promise<string> {
+    this.lastCommunicationTime = new Date().toISOString();
     const trimmed = command.trim();
     await this.delay(40); // Realistic UART propagation latency
 
@@ -232,6 +237,24 @@ export class MockModemAdapter extends EventEmitter implements IModemAdapter {
       imsi: '404000000000001',
       isSimulated: true,
     };
+  }
+
+  async getSimStatus(): Promise<SimPinStatus> {
+    if (this.connectionState === 'DISCONNECTED') {
+      return 'DISCONNECTED';
+    }
+    return 'READY';
+  }
+
+  getLastCommunicationTime(): string | null {
+    return this.lastCommunicationTime;
+  }
+
+  getAtCommunicationStatus(): AtCommunicationStatus {
+    if (this.connectionState === 'DISCONNECTED') {
+      return 'DISCONNECTED';
+    }
+    return 'OK';
   }
 
   // ===========================================================================

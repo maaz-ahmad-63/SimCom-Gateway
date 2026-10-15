@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { SerialPort } from 'serialport';
 import { SerialPortDisconnectedError } from '@sim-gateway/shared';
+import { createLogger, Logger } from '../../core/logger.js';
 
 export interface SerialTransportOptions {
   path: string;
@@ -24,13 +25,14 @@ export interface ISerialTransport extends EventEmitter {
 }
 
 /**
- * Real Node.js SerialPort transport targeting Windows COM ports (e.g. COM14).
+ * Real Node.js SerialPort transport targeting Windows COM ports (e.g. COM20).
  * Configured with exclusive port locking on Windows.
  */
 export class NodeSerialTransport extends EventEmitter implements ISerialTransport {
   readonly path: string;
   readonly baudRate: number;
   private readonly lock: boolean;
+  private readonly logger: Logger;
   private port: SerialPort | null = null;
 
   constructor(options: SerialTransportOptions) {
@@ -38,6 +40,7 @@ export class NodeSerialTransport extends EventEmitter implements ISerialTranspor
     this.path = options.path;
     this.baudRate = options.baudRate;
     this.lock = options.lock ?? true;
+    this.logger = createLogger(`Serial:${this.path}`);
   }
 
   isOpen(): boolean {
@@ -51,6 +54,8 @@ export class NodeSerialTransport extends EventEmitter implements ISerialTranspor
 
     const targetPath = overrides?.path ?? this.path;
     const targetBaud = overrides?.baudRate ?? this.baudRate;
+
+    this.logger.info(`Opening serial port '${targetPath}' at ${targetBaud} baud (lock: ${this.lock})`);
 
     return new Promise((resolve, reject) => {
       try {
@@ -67,6 +72,7 @@ export class NodeSerialTransport extends EventEmitter implements ISerialTranspor
           },
           (err) => {
             if (err) {
+              this.logger.error(`SerialPort construction error on '${targetPath}': ${err.message}`);
               this.port = null;
               reject(err);
             }
@@ -78,15 +84,18 @@ export class NodeSerialTransport extends EventEmitter implements ISerialTranspor
         });
 
         this.port.on('error', (err: Error) => {
+          this.logger.error(`Serial port '${targetPath}' error: ${err.message}`);
           this.emit('error', err);
         });
 
         this.port.on('close', () => {
+          this.logger.warn(`Serial port '${targetPath}' closed`);
           this.emit('close');
         });
 
         this.port.open((openErr) => {
           if (openErr) {
+            this.logger.error(`Failed to open serial port '${targetPath}': ${openErr.message}`);
             this.port = null;
             reject(
               new SerialPortDisconnectedError(
@@ -95,10 +104,12 @@ export class NodeSerialTransport extends EventEmitter implements ISerialTranspor
               )
             );
           } else {
+            this.logger.info(`Serial port '${targetPath}' opened successfully`);
             resolve();
           }
         });
       } catch (constructionErr) {
+        this.logger.error(`Serial port '${targetPath}' unexpected error: ${(constructionErr as Error).message}`);
         this.port = null;
         reject(constructionErr);
       }
@@ -116,6 +127,7 @@ export class NodeSerialTransport extends EventEmitter implements ISerialTranspor
       this.port = null;
       if (port) {
         port.close(() => {
+          this.logger.info(`Serial port '${this.path}' closed cleanly`);
           resolve();
         });
       } else {
@@ -132,13 +144,17 @@ export class NodeSerialTransport extends EventEmitter implements ISerialTranspor
       );
     }
 
+    this.logger.debug(`Writing to '${this.path}': ${typeof data === 'string' ? data.trim() : `${data.length} bytes`}`);
+
     return new Promise((resolve, reject) => {
       this.port!.write(data, (err) => {
         if (err) {
+          this.logger.error(`Serial write error on '${this.path}': ${err.message}`);
           reject(err);
         } else {
           this.port!.drain((drainErr) => {
             if (drainErr) {
+              this.logger.error(`Serial drain error on '${this.path}': ${drainErr.message}`);
               reject(drainErr);
             } else {
               resolve();

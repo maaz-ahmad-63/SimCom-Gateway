@@ -1,4 +1,11 @@
-import { ModemConnectionState, ModemDeviceInfo, ModemNetworkStatus, ModemSignalQuality } from './modem.js';
+import {
+  AtCommunicationStatus,
+  ModemConnectionState,
+  ModemDeviceInfo,
+  ModemNetworkStatus,
+  ModemSignalQuality,
+  SimPinStatus,
+} from './modem.js';
 import { CallSession } from './call.js';
 
 export interface GatewayHealthStatus {
@@ -12,6 +19,9 @@ export interface GatewayHealthStatus {
     info: ModemDeviceInfo | null;
     signal: ModemSignalQuality | null;
     network: ModemNetworkStatus | null;
+    simStatus?: SimPinStatus | null;
+    atStatus?: AtCommunicationStatus | null;
+    lastCommunicationTime?: string | null;
     atPort: string;
     audioPort: string;
   };

@@ -2,11 +2,13 @@ import { EventEmitter } from 'node:events';
 import {
   AtCommandError,
   AtCommandTimeoutError,
+  AtCommunicationStatus,
   SerialPortDisconnectedError,
   UrcEvent,
 } from '@sim-gateway/shared';
 import { ISerialTransport } from './serial-transport.js';
 import { AtParser } from './at-parser.js';
+import { createLogger, Logger } from '../../core/logger.js';
 
 interface QueuedCommand {
   command: string;
@@ -22,17 +24,21 @@ export interface AtCommandQueueOptions {
 export class AtCommandQueue extends EventEmitter {
   private readonly transport: ISerialTransport;
   private readonly defaultTimeoutMs: number;
+  private readonly logger: Logger;
   private queue: QueuedCommand[] = [];
   private activeCommand: QueuedCommand | null = null;
   private responseBuffer: string[] = [];
   private lineAccumulator = '';
   private timeoutTimer: NodeJS.Timeout | null = null;
   private isProcessing = false;
+  private lastCommunicationTime: string | null = null;
+  private lastAtStatus: AtCommunicationStatus = 'UNKNOWN';
 
   constructor(transport: ISerialTransport, options: AtCommandQueueOptions = {}) {
     super();
     this.transport = transport;
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? 5000;
+    this.logger = createLogger(`ATQueue:${transport.path}`);
 
     this.transport.on('data', (chunk: Buffer) => {
       this.handleIncomingChunk(chunk);
@@ -54,11 +60,20 @@ export class AtCommandQueue extends EventEmitter {
     });
   }
 
+  getLastCommunicationTime(): string | null {
+    return this.lastCommunicationTime;
+  }
+
+  getAtCommunicationStatus(): AtCommunicationStatus {
+    return this.lastAtStatus;
+  }
+
   /**
    * Execute an AT command. Queues the command if another command is currently in flight.
    */
   async execute(command: string, timeoutMs?: number): Promise<string> {
     if (!this.transport.isOpen()) {
+      this.lastAtStatus = 'DISCONNECTED';
       throw new SerialPortDisconnectedError(
         this.transport.path,
         `Cannot execute '${command}': Serial port '${this.transport.path}' is not open`
@@ -92,6 +107,8 @@ export class AtCommandQueue extends EventEmitter {
     this.activeCommand = item;
     this.responseBuffer = [];
 
+    this.logger.debug(`Dispatching AT command: ${item.command} (timeout: ${item.timeoutMs}ms)`);
+
     // Set command timeout
     this.timeoutTimer = setTimeout(() => {
       this.handleTimeout();
@@ -105,6 +122,8 @@ export class AtCommandQueue extends EventEmitter {
       this.clearActiveTimer();
       this.activeCommand = null;
       this.isProcessing = false;
+      this.lastAtStatus = 'ERROR';
+      this.logger.error(`Failed to write command '${item.command}': ${(writeErr as Error).message}`);
       item.reject(writeErr as Error);
       this.processNext();
       return;
@@ -117,6 +136,7 @@ export class AtCommandQueue extends EventEmitter {
    * Chunks incoming data and buffers lines on \n or \r boundaries.
    */
   private handleIncomingChunk(chunk: Buffer): void {
+    this.lastCommunicationTime = new Date().toISOString();
     this.lineAccumulator += chunk.toString('utf-8');
 
     let newlineIndex: number;
@@ -208,6 +228,7 @@ export class AtCommandQueue extends EventEmitter {
     if (!isCallProgressTerminal && !isExpectedCommandResponse && AtParser.isUrc(line)) {
       const urc = AtParser.parseUrc(line);
       if (urc) {
+        this.logger.info(`URC received [${urc.type}]: ${line}`);
         this.emit('urc', urc);
         return;
       }
@@ -228,7 +249,7 @@ export class AtCommandQueue extends EventEmitter {
         const foundPrefix = linePrefixMatch[1];
         const expectedPrefix = this.getExpectedResponsePrefix(this.activeCommand.command);
         if (expectedPrefix && foundPrefix !== expectedPrefix) {
-          // Stale line from mismatched command - discard!
+          this.logger.debug(`Discarding mismatched AT prefix '${foundPrefix}' while executing '${this.activeCommand.command}'`);
           return;
         }
       }
@@ -239,6 +260,7 @@ export class AtCommandQueue extends EventEmitter {
       // Line received with no command in-flight and not caught as URC
       const urc = AtParser.parseUrc(line);
       if (urc) {
+        this.logger.info(`URC received (unsolicited) [${urc.type}]: ${line}`);
         this.emit('urc', urc);
       }
     }
@@ -257,8 +279,13 @@ export class AtCommandQueue extends EventEmitter {
     const fullResponse = this.responseBuffer.join('\n');
 
     if (isSuccess) {
+      this.lastAtStatus = 'OK';
+      this.lastCommunicationTime = new Date().toISOString();
+      this.logger.debug(`AT command '${current.command}' completed successfully -> ${fullResponse || 'OK'}`);
       current.resolve(fullResponse ? `${fullResponse}\nOK` : 'OK');
     } else {
+      this.lastAtStatus = 'ERROR';
+      this.logger.warn(`AT command '${current.command}' failed: ${errorMessage ?? fullResponse ?? 'ERROR'}`);
       current.reject(
         new AtCommandError(
           current.command,
@@ -282,6 +309,9 @@ export class AtCommandQueue extends EventEmitter {
     const current = this.activeCommand;
     this.activeCommand = null;
 
+    this.lastAtStatus = 'TIMEOUT';
+    this.logger.warn(`AT command '${current.command}' timed out after ${current.timeoutMs}ms`);
+
     // Record stale command to discard delayed responses that arrive late
     const prefix = this.getExpectedResponsePrefix(current.command);
     this.staleCommandsToClean.push({
@@ -301,6 +331,8 @@ export class AtCommandQueue extends EventEmitter {
    */
   private handleTransportFailure(error: Error): void {
     this.clearActiveTimer();
+    this.lastAtStatus = 'DISCONNECTED';
+    this.logger.error(`Serial transport failure: ${error.message}`);
 
     // Reject active command
     if (this.activeCommand) {

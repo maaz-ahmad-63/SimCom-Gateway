@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import os from 'node:os';
 import {
+  AtCommunicationStatus,
   GatewayHealthStatus,
   IAudioAdapter,
   ICallSessionManager,
@@ -8,6 +9,7 @@ import {
   ModemDeviceInfo,
   ModemNetworkStatus,
   ModemSignalQuality,
+  SimPinStatus,
 } from '@sim-gateway/shared';
 import { GatewayConfigInput } from '@sim-gateway/shared';
 
@@ -25,17 +27,45 @@ export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
     let modemInfo: ModemDeviceInfo | null = null;
     let signal: ModemSignalQuality | null = null;
     let network: ModemNetworkStatus | null = null;
+    let simStatus: SimPinStatus | null = null;
+    let atStatus: AtCommunicationStatus = 'UNKNOWN';
+    let lastCommunicationTime: string | null = null;
 
-    try {
-      if (deps.modem.getConnectionState() === 'READY') {
-        [modemInfo, signal, network] = await Promise.all([
+    const connectionState = deps.modem.getConnectionState();
+
+    if (deps.modem.getLastCommunicationTime) {
+      lastCommunicationTime = deps.modem.getLastCommunicationTime();
+    }
+
+    if (deps.modem.getAtCommunicationStatus) {
+      atStatus = deps.modem.getAtCommunicationStatus();
+    } else {
+      atStatus = connectionState === 'READY' ? 'OK' : connectionState === 'DISCONNECTED' ? 'DISCONNECTED' : 'UNKNOWN';
+    }
+
+    if (connectionState === 'DISCONNECTED') {
+      simStatus = 'DISCONNECTED';
+      atStatus = 'DISCONNECTED';
+    } else if (connectionState === 'READY') {
+      try {
+        const [infoRes, sigRes, netRes, simRes] = await Promise.all([
           deps.modem.getDeviceInfo().catch(() => null),
           deps.modem.getSignalQuality().catch(() => null),
           deps.modem.getNetworkStatus().catch(() => null),
+          deps.modem.getSimStatus ? deps.modem.getSimStatus().catch(() => 'ERROR' as SimPinStatus) : Promise.resolve(null),
         ]);
+        modemInfo = infoRes;
+        signal = sigRes;
+        network = netRes;
+        simStatus = simRes;
+      } catch {
+        // Continue with partial health data
       }
-    } catch {
-      // Continue with partial health data
+    } else if (connectionState === 'ERROR') {
+      simStatus = 'ERROR';
+      atStatus = 'ERROR';
+    } else {
+      simStatus = 'UNKNOWN';
     }
 
     const health: GatewayHealthStatus = {
@@ -44,10 +74,13 @@ export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
       isSimulated: deps.modem.isSimulated,
       driverType: deps.modem.driverType,
       modem: {
-        connectionState: deps.modem.getConnectionState(),
+        connectionState,
         info: modemInfo,
         signal,
         network,
+        simStatus,
+        atStatus,
+        lastCommunicationTime,
         atPort: deps.config.atPort,
         audioPort: deps.config.audioPort,
       },

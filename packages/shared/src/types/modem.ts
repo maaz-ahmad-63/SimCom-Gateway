@@ -25,7 +25,16 @@ export type SimPinStatus =
   | 'SIM_PIN'
   | 'SIM_PUK'
   | 'ERROR'
-  | 'UNKNOWN';
+  | 'UNKNOWN'
+  | 'UNAVAILABLE'
+  | 'DISCONNECTED';
+
+export type AtCommunicationStatus =
+  | 'OK'
+  | 'TIMEOUT'
+  | 'ERROR'
+  | 'UNKNOWN'
+  | 'DISCONNECTED';
 
 export interface ModemSignalQuality {
   /** Raw RSSI from AT+CSQ (0-31, or 99 for unknown) */
@@ -154,6 +163,9 @@ export interface IModemAdapter {
   getSignalQuality(): Promise<ModemSignalQuality>;
   getNetworkStatus(): Promise<ModemNetworkStatus>;
   getDeviceInfo(): Promise<ModemDeviceInfo>;
+  getSimStatus?(): Promise<SimPinStatus>;
+  getLastCommunicationTime?(): string | null;
+  getAtCommunicationStatus?(): AtCommunicationStatus;
 
   /** Event listeners */
   on(event: 'urc', listener: (urc: UrcEvent) => void): this;

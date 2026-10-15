@@ -1,8 +1,14 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { gatewayConfigSchema, GatewayConfigInput } from '@sim-gateway/shared';
 
-// Load .env if present
+const currentFile = fileURLToPath(import.meta.url);
+const currentDir = path.dirname(currentFile);
+
+// Load .env from process.cwd() or fallback to repository root
 dotenv.config();
+dotenv.config({ path: path.resolve(currentDir, '../../../.env') });
 
 export function loadConfig(overrides: Partial<GatewayConfigInput> = {}): GatewayConfigInput {
   const driver = overrides.modemDriver ?? process.env.MODEM_DRIVER ?? 'mock';

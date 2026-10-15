@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import {
+  AtCommunicationStatus,
   IModemAdapter,
   ModemConnectionState,
   ModemDeviceInfo,
@@ -7,6 +8,7 @@ import {
   ModemNetworkStatus,
   ModemPortConfig,
   ModemSignalQuality,
+  SimPinStatus,
   UrcEvent,
   AtCommandError,
   SerialPortDisconnectedError,
@@ -14,6 +16,7 @@ import {
 import { ISerialTransport, NodeSerialTransport } from './serial-transport.js';
 import { AtCommandQueue } from './at-command-queue.js';
 import { AtParser } from './at-parser.js';
+import { createLogger, Logger } from '../../core/logger.js';
 
 export interface HardwareModemOptions {
   atPort?: string;
@@ -28,7 +31,7 @@ export interface HardwareModemOptions {
 
 /**
  * Physical SIMCOM SIM7600EI hardware modem adapter.
- * Communicates over serial transport (e.g. COM14 on Windows host) using AT commands and URCs.
+ * Communicates over serial transport (e.g. COM20 on Windows host) using AT commands and URCs.
  */
 export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapter {
   readonly driverType: ModemDriverType = 'hardware';
@@ -41,6 +44,7 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
   private reconnectTimer: NodeJS.Timeout | null = null;
   private reconnectAttempts = 0;
   private isClosing = false;
+  private readonly logger: Logger;
 
   constructor(options: HardwareModemOptions = {}) {
     super();
@@ -56,6 +60,8 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
       reconnectIntervalMs: options.reconnectIntervalMs ?? 3000,
       maxReconnectAttempts: options.maxReconnectAttempts ?? 10,
     };
+
+    this.logger = createLogger(`Modem:${this.config.atPort}`);
 
     // Inject transport (for tests) or create NodeSerialTransport
     this.transport =
@@ -99,7 +105,9 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
 
   private setConnectionState(state: ModemConnectionState): void {
     if (this.connectionState !== state) {
+      const prev = this.connectionState;
       this.connectionState = state;
+      this.logger.info(`Connection state changed: ${prev} -> ${state}`);
       this.emit('connection_state', state);
     }
   }
@@ -110,6 +118,7 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
     }
 
     this.isClosing = false;
+    this.logger.info(`Initializing hardware modem on ${this.config.atPort} @ ${this.config.atBaudRate} baud`);
     this.setConnectionState('CONNECTING');
 
     try {
@@ -131,6 +140,7 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
         await this.queue.execute('AT', 2000);
       } catch {
         // Retry once after short delay in case modem was waking up
+        this.logger.debug('Modem AT sync retry after 200ms delay...');
         await this.delay(200);
         await this.queue.execute('AT', 2000);
       }
@@ -158,7 +168,9 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
       // Reconnect counter reset on successful initialization
       this.reconnectAttempts = 0;
       this.setConnectionState('READY');
+      this.logger.info(`Hardware modem on ${this.config.atPort} ready for cellular operations`);
     } catch (initErr) {
+      this.logger.error(`Modem initialization failed on ${this.config.atPort}: ${(initErr as Error).message}`);
       this.setConnectionState('ERROR');
       if (this.listenerCount('error') > 0) {
         this.emit('error', initErr as Error);
@@ -311,13 +323,25 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
   }
 
   /** Query current SIM PIN/PUK/Ready status directly */
-  async getSimStatus(): Promise<string> {
+  async getSimStatus(): Promise<SimPinStatus> {
     try {
       const response = await this.queue.execute('AT+CPIN?', 3000);
       return AtParser.parseCpin(response);
-    } catch {
+    } catch (err) {
+      this.logger.warn(`Failed to query SIM status: ${(err as Error).message}`);
       return 'ERROR';
     }
+  }
+
+  getLastCommunicationTime(): string | null {
+    return this.queue.getLastCommunicationTime();
+  }
+
+  getAtCommunicationStatus(): AtCommunicationStatus {
+    if (this.connectionState === 'DISCONNECTED') {
+      return 'DISCONNECTED';
+    }
+    return this.queue.getAtCommunicationStatus();
   }
 
   private scheduleReconnect(): void {

@@ -86,9 +86,12 @@ describe('Integration: API Auth & Gateway Health', () => {
     expect(body.modem.network.operatorName).toBe('Vi India');
     expect(body.modem.signal.bars).toBeGreaterThanOrEqual(1);
 
-    // Ports
+    // Ports & Diagnostic Telemetry
     expect(body.modem.atPort).toBe('COM20');
     expect(body.modem.audioPort).toBe('COM19');
+    expect(body.modem.simStatus).toBe('READY');
+    expect(body.modem.atStatus).toBe('OK');
+    expect(body.modem.lastCommunicationTime).toBeDefined();
 
     // System metrics
     expect(body.system.platform).toBeDefined();

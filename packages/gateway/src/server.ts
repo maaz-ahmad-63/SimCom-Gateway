@@ -25,6 +25,7 @@ import { createCallsRouter } from './api/routes/calls.js';
 import { createMockRouter } from './api/routes/mock.js';
 import { GatewaySocketServer } from './api/socket/socket-server.js';
 import { loadConfig } from './config/index.js';
+import { createLogger } from './core/logger.js';
 
 export interface GatewayServerOptions {
   config?: Partial<GatewayConfigInput>;
@@ -215,7 +216,10 @@ export function createGatewayServer(
     audioPort: config.audioPort,
   });
 
+  const logger = createLogger('Server');
+
   const start = async (): Promise<void> => {
+    logger.info(`Starting gateway server in ${config.modemDriver} mode on ${config.host}:${config.port}`);
     if (modem.getConnectionState() === 'DISCONNECTED') {
       await modem.initialize({
         atPort: config.atPort,
@@ -227,12 +231,14 @@ export function createGatewayServer(
 
     await new Promise<void>((resolve) => {
       httpServer.listen(config.port, config.host, () => {
+        logger.info(`HTTP and Socket.IO server listening on http://${config.host}:${config.port}`);
         resolve();
       });
     });
   };
 
   const close = async (): Promise<void> => {
+    logger.info('Closing gateway server connections...');
     await socketServer.close();
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
@@ -241,6 +247,7 @@ export function createGatewayServer(
       await modem.close();
     }
     db.close();
+    logger.info('Gateway server shutdown complete');
   };
 
   return {
