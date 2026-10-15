@@ -1,0 +1,21 @@
+{
+  "name": "sim7600ei-cellular-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone SIM7600EI Cellular Gateway with Mock Modem, Audio Diagnostics, and AI Voice Bridge",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run --workspaces --if-present build",
+    "test": "npm run --workspaces --if-present test",
+    "lint": "npm run --workspaces --if-present lint",
+    "dev:gateway": "npm run --workspace=@sim-gateway/gateway dev",
+    "start:gateway": "npm run --workspace=@sim-gateway/gateway start",
+    "dev:dashboard": "npm run --workspace=@sim-gateway/dashboard dev",
+    "start:dashboard": "npm run --workspace=@sim-gateway/dashboard start"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
