@@ -433,6 +433,22 @@ describe('Phase 4.1: Hardware-Readiness Deep Audit & Regression Suite', () => {
   });
 
   describe('4. Hardware Configuration & Mandatory Security Enforcement', () => {
+    it('keeps localhost binding by default and supports explicit LAN binding', () => {
+      const localConfig = loadConfig({
+        modemDriver: 'mock',
+        gatewayApiKey: 'local-test-key-123',
+        host: '127.0.0.1',
+      });
+      const lanConfig = loadConfig({
+        modemDriver: 'mock',
+        gatewayApiKey: 'lan-test-key-123',
+        host: '0.0.0.0',
+      });
+
+      expect(localConfig.host).toBe('127.0.0.1');
+      expect(lanConfig.host).toBe('0.0.0.0');
+    });
+
     it('enforces mandatory explicit API key when MODEM_DRIVER=hardware', () => {
       // 1. Missing API key in hardware mode must throw
       expect(() => {

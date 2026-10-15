@@ -77,7 +77,7 @@ New-NetFirewallRule -DisplayName "SIM7600 Gateway API" -Direction Inbound -Local
 Create `.env` in the root of the project on the Windows PC:
 
 ```env
-# Network Binding (Listen on all local network interfaces)
+# Network Binding (listen on all local network interfaces only when explicitly enabled)
 PORT=4000
 HOST=0.0.0.0
 NODE_ENV=production
@@ -85,6 +85,8 @@ NODE_ENV=production
 # Mandatory Security Token (Must be at least 8 characters; never use development placeholders)
 GATEWAY_API_KEY=your-secure-production-secret-token-32chars
 CORS_ORIGIN=http://192.168.1.50:3000
+
+# HOST defaults to 127.0.0.1 when omitted; use 0.0.0.0 only for private-LAN access
 
 # Physical Modem Driver (Strictly selects Sim7600HardwareAdapter - no mock fallback)
 MODEM_DRIVER=hardware
@@ -110,6 +112,13 @@ AUDIO_USB_DIAGNOSTIC_ENABLED=false
 # Database Persistence
 SQLITE_DB_PATH=./data/gateway.sqlite
 ```
+
+The gateway defaults to `HOST=127.0.0.1` when `HOST` is omitted. Set
+`HOST=0.0.0.0` only on the private Windows LAN host when remote dashboard
+access is required. API-key authentication remains mandatory for every
+`/api` route and Socket.IO connection; binding to `0.0.0.0` does not disable
+authentication. Restrict the Windows firewall rule to the trusted private
+network where possible.
 
 The sample rate, channel count, and bit depth above are target configuration
 values only. The repository does not include a SIM7600EI audio protocol
