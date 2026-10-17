@@ -1,0 +1,300 @@
+# AI voice agent
+
+An optional layer that turns the gateway into a phone-call agent:
+
+```
+caller audio -> audio source -> endpointer -> pre-STT gate -> STT -> LLM -> TTS -> audio sink -> caller
+```
+
+It is **off by default**, runs inside the existing gateway process, and talks to the modem only through
+the gateway's own `IAudioAdapter` and call events. It never answers, dials, hangs up (unless you opt in,
+see below), sends an AT command, or touches `AT+CPCMREG`.
+
+**Status: the AI loop is verified offline (mocks only). Nothing here has been run on a real call.**
+Live handling stays blocked until incoming speech and outgoing playback are proven on the hardware
+(`docs/USB_PCM_HARDWARE_RESULTS.md`).
+
+## Where it came from
+
+The source project (`labs-sizh-voicely`) is a Python/LiveKit-agents service: WebRTC rooms, SIP trunks,
+Supabase/Firebase, Twilio billing. None of that applies to a USB modem, and its LiveKit plugins cannot be
+called from Node. What was reusable was its **decisions**, so those were ported to TypeScript:
+
+| Source | Ported to | Notes |
+|---|---|---|
+| `stt_config.py`, `llm_config.py`, `service_factory.py`, `tts/*.py` | `src/ai/catalog.ts` | Slugs, model ids, voices, aliases and per-family request parameters verbatim |
+| `deepgram_stt.py`, `groqwhisper_stt.py` | `providers/stt.ts` | One request per utterance instead of LiveKit streaming; AU/global Deepgram endpoints as in the source |
+| `groq_llm.py`, `openai_llm.py`, `telnyx_llm.py` | `providers/llm.ts` | One OpenAI-compatible streaming client; Telnyx `region`/`mode`/thinking options from the source |
+| `cartesia_tts.py`, `deepgram_tts.py` | `providers/tts.ts` | Raw 16-bit PCM requested at the sink's exact rate |
+| `prompts/system_prompt.txt` | `src/ai/prompt.ts` | Rules kept; caller-phone-number block and booking rules dropped |
+| `output_filter.py` | `src/ai/text.ts` | Ported with one bug fixed (see below) |
+| `agent_models.strip_end_call` | `src/ai/text.ts` | Text after `END_CALL` is now discarded, as the prompt requires |
+| Turn handling (VAD, 1.0-3.0 s endpointing, VAD interruption) | `src/ai/endpointer.ts`, `conversation.ts` | Energy VAD instead of Silero/ONNX (no new dependency) |
+
+Not ported (so the gateway says so instead of falling back): AssemblyAI, Deepgram Flux, Soniox, Cartesia
+STT; Gemini; ElevenLabs, Inworld, Murf, Sarvam, Soniox TTS; Deepgram's `flux-*` v2 voices; the
+idle-follow-up manager; fallback chains; Supabase/Firebase/Twilio/LiveKit/SIP/recording/ledger code.
+
+No new npm dependency was added (Node 22's `fetch`, `FormData`, `AbortSignal.any` are enough).
+
+**Licence:** the source has no LICENSE file. It is treated as your own code.
+
+## Files
+
+`packages/gateway/src/ai/`: `catalog.ts`, `config.ts`, `prompt.ts`, `text.ts`, `audio.ts`, `endpointer.ts`,
+`conversation.ts` (one session per call), `orchestrator.ts` (binds sessions to gateway calls),
+`readiness.ts`, `gateway-adapters.ts` (the only SIM7600EI-specific code), `providers/{types,http,stt,llm,tts,mock,index}.ts`.
+Also `src/api/routes/ai.ts`, `scripts/ai-loop.ts`, and small hooks in `server.ts` and
+`diagnostics/usb-pcm-verification.ts`. Tests: `tests/ai/*.test.ts`.
+
+## Stages
+
+**A. Independent loop (no modem, no call).** `npm run ai:loop` below. Providers are fully mockable.
+
+**B. Gateway integration.** An agent attaches to a call only if AI is enabled and configured, the call is
+the current ACTIVE call, readiness passes, and the call is either armed by you
+(`POST /api/ai/calls/:id/arm`) or matches `AI_AUTO_HANDLE` (default `off`). One agent, one call: history,
+tasks and audio are keyed by call id; frames are dropped unless that call is still ACTIVE.
+
+**C. Audio validation.** The engine accepts only 16-bit mono little-endian PCM at a rate you configure
+(`AI_AUDIO_SAMPLE_RATE`, never defaulted). Before any paid STT request an utterance must be non-empty,
+long enough, above the line's noise floor, and (optionally) show a pitch; **this is a hint that speech is
+plausible, never proof it is intelligible.** TTS is requested in the sink's exact format and validated
+(whole samples; a WAV reply must declare exactly that format). Playback is paced against a real-time clock
+and counted from the audio adapter, so a dropped chunk is not reported as played.
+
+**D. Readiness.** `GET /api/ai/readiness` reads state only (no network, no AT command, no audio) and
+passes only when: AI is enabled and valid; provider keys are set; the modem is READY; a call is ACTIVE; the
+audio format is configured; **and** `AI_AUDIO_INBOUND_VERIFIED` / `AI_AUDIO_OUTBOUND_VERIFIED` are set *and*
+USB audio is observed flowing on the wire. A flag alone, or bytes alone, never passes. Default result: **not
+ready**.
+
+## Configure and run (Windows)
+
+Add the `AI_*` and provider key entries from `.env.example` to your `.env` (existing entries are untouched;
+this was not edited for you). Minimum for the offline loop with real providers:
+
+```powershell
+AI_ENABLED=true
+AI_STT=nova-3
+AI_LLM=groq_qwen_3_8_27b
+AI_TTS=cartesia
+AI_TTS_VOICE=katie
+DEEPGRAM_API_KEY=...
+GROQ_API_KEY=...
+CARTESIA_API_KEY=...
+```
+
+Test without a phone call (from `packages\gateway`):
+
+```powershell
+npm run ai:loop -- --mock                                   # offline, no keys, no network
+npm run ai:loop -- --live --text "What are your opening hours?"   # real LLM + TTS, STT skipped (costs money)
+npm run ai:loop -- --live --input .\caller.wav               # real STT + LLM + TTS (costs money)
+```
+It writes `ai-loop-reply.wav` so you can listen to the reply. `--live` is required for any real request.
+
+Gateway endpoints (existing API-key auth): `GET /api/ai/readiness`, `GET /api/ai/status`,
+`POST /api/ai/calls/:id/arm`, `POST /api/ai/calls/:id/disarm`.
+
+## Behaviour you can rely on
+
+- **No automatic call control.** `END_CALL` raises an alert; it hangs up only with `AI_ALLOW_AGENT_HANGUP=true`,
+  and then it is attempted once and never retried.
+- **Failures stay inside the AI.** A provider error fails that turn only. After
+  `AI_MAX_CONSECUTIVE_FAILURES` the agent stops answering and raises one alert; the call is untouched.
+  Retries are bounded (`AI_MAX_RETRIES`) and only for idempotent provider requests.
+- **Cancellation.** A new caller utterance (barge-in) or the call ending cancels STT/LLM/TTS requests and
+  playback in flight; utterances that pile up are merged into one turn, so one caller turn never gets two replies.
+- **Privacy and cost.** No raw audio is recorded unless you turn on diagnostic recording in the dashboard (off by
+  default, bounded, local files only). Transcripts are not logged or shown unless `AI_LOG_TRANSCRIPTS=true` or the
+  dashboard's "Show recognized and generated text" is on.
+  Keys are read only when a call attaches and are redacted from errors. Per-turn timings and token/character/
+  audio-second counts are in `/api/ai/status`.
+- **COM26 is shared safely.** The AI agent and the PCM verification tests refuse to run at the same time.
+
+## Control center (dashboard: AI Agent page)
+
+The dashboard's **AI Agent** page (`/ai`) manages everything above without editing `.env`. It extends the
+existing dashboard and gateway; no new service, and it never touches the modem (no AT commands, no call
+control, no PCM registration).
+
+| Tab | What it does |
+| --- | --- |
+| Overview | Readiness checklist (what is needed to *transcribe* vs to *reply*), mode, live session meters, the two audio confirmations, provider health, today's usage |
+| Live Inspector | Every caller turn through 8 stages: PCM captured, PCM validated, sent to STT, STT result, LLM request, LLM response, TTS generated, playback. Each has its own status, timestamp, latency and failure reason |
+| Speech-to-Text | Provider/model, language, timeouts, live audio meters and recent results, test with a saved recording |
+| Language Model | Model, max tokens, fixed per-model parameters (read-only), latency/tokens/cost, text-only test |
+| Text-to-Speech | Provider, voice, gateway sample rate, compatibility with the phone line, browser-only preview |
+| Agent | The single agent profile: name, enabled, instructions, greeting, language, allow hang-up |
+| API Keys | Add/replace/check/remove provider keys (write-only) |
+| Usage & Logs | Totals and estimated cost, turn log, clear logs, optional diagnostic recording |
+
+**Modes.** `Off` does nothing. `Passive` (the default whenever AI is enabled) transcribes caller audio and shows
+it in the inspector; the LLM and TTS stages show **not run** and nothing is ever generated or sent to the caller.
+`Active` (replies) needs *every* readiness check to pass, applies to the current call only, and returns to
+passive when the call ends or the gateway restarts.
+
+**Readiness never comes from mock mode.** On the mock driver the `hardware` check fails and replies stay
+blocked. Replies also need two confirmations that only you can make: (1) a real passive call produced a live
+transcript that matched what the caller said (the gateway refuses the confirmation until it has recorded a
+transcript from a real, non-simulated call with a real provider), and (2) a remote party heard a blind tone
+written to the audio port. Changing the gateway sample rate removes both confirmations.
+
+**Keys.** Stored encrypted (AES-256-GCM) in the gateway's SQLite database, using `AI_SECRETS_MASTER_KEY` from
+`.env`. They are never returned by any endpoint, never logged and never put in an error. A key saved in the
+dashboard takes precedence over `.env`; removing it falls back to `.env`. Status is reported as three separate
+facts: present (`missing` / `.env` / `stored`), and the last check (`not checked` / `ok` / `rejected` /
+`unreachable`). "Check with provider" makes one read-only request to the provider's own listing endpoint.
+Those endpoints (Deepgram `/v1/projects`, Groq and OpenAI `/models`, Telnyx `/v2/ai/openai/models`, Cartesia
+`/voices`) were chosen from provider conventions and are **not yet exercised against a live account**.
+
+**Limits worth knowing.** STT is batch (one request per finished utterance): there are no partial transcripts.
+Only providers marked implemented can be selected; the others are listed with "not ported". The model
+parameters the dashboard can change are `max tokens` and the timeouts; temperature and reasoning settings are
+fixed per model family by the gateway. Costs are *estimates* from the source project's price table and show
+`n/a` when any used model has no price. Mock-provider runs are never counted as usage.
+
+**Settings precedence and timing.** Values saved in the dashboard live in the database and override `.env`.
+A change applies to the next call; a call already in progress keeps the settings it started with. Transcript
+text is shown and stored only while "Show recognized and generated text" is on (default off).
+
+**API** (all under `/api/ai`, API-key protected): `GET /state`, `/catalog`, `/settings`, `/agent`, `/credentials`,
+`/events`, `/sessions`, `/usage`, `/turns`, `/recordings`, `/test/tts/compatibility`; `PUT /settings`, `/agent`,
+`/credentials/:name`; `POST /mode`, `/attestations/:inbound|outbound`, `/credentials/:name/validate`,
+`/test/stt|llm|tts` (each requires `confirmBilling: true`), `/calls/:id/arm|disarm`; `DELETE /credentials/:name`,
+`/attestations/:kind`, `/turns`. Live events: Socket.IO `ai:event`.
+
+### Windows: first real session
+
+1. In `packages\gateway\.env` add `AI_SECRETS_MASTER_KEY=<16+ random characters>` (once, never change it). You do
+   not need `AI_ENABLED=true`: the agent is enabled from the dashboard. Also set `AUDIO_USB_DIAGNOSTIC_ENABLED=true`
+   (the activate route is refused without it) and, for the tone test in step 7,
+   `AUDIO_USB_PCM_OUTBOUND_TONE_TEST_ENABLED=true`. The gateway must run with `MODEM_DRIVER=hardware`: on the mock
+   driver every check that depends on real hardware fails by design. Restart the gateway.
+2. Dashboard → **AI Agent → API Keys**: add the Deepgram key (and Groq/OpenAI/Telnyx and Cartesia keys for the
+   models you will use). Press **Check with provider** for each and read the result.
+3. **Text-to-Speech** tab: set the gateway audio sample rate (use the rate you verified; 8000 is SIMCom's
+   documented rate, not a proven one). **Agent** tab: tick *Agent enabled*, write instructions, save.
+4. **Speech-to-Text** tab → test with an existing recording (it is billed; it does not count as live evidence).
+5. **Language Model** tab → run the text-only test. **Text-to-Speech** tab → generate a browser preview. These
+   are separate from any call and send nothing to the modem.
+6. Place or answer a real call as usual and activate USB audio for it with the existing documented step
+   (`POST /api/gateway/audio/usb-diagnostic {"action":"activate"}`, see `docs/WINDOWS_HARDWARE_INTEGRATION.md`;
+   the dashboard never sends it because it changes the modem's PCM registration). On **Overview**, once
+   *Caller audio arriving* passes, press **Attach to this call** (passive). Turn on *Show
+   recognized and generated text* in the inspector, talk, and read each stage. If STT results do not match what
+   was said, stop: the audio path is not proven and nothing below should be done. In the live meters, compare
+   *Observed rate* with the assumed rate (they must agree) and the RMS with the *Speech level threshold* on the
+   Speech-to-Text tab. Speech on this modem is quiet (about 0.005 RMS); the default threshold is 0.003, and audio
+   below it is never sent to the provider. The inspector shows PCM received, audio submitted and the provider's
+   result as separate stages; only you can judge whether the words are right.
+7. Only if the transcripts matched: confirm *Caller audio is intelligible* with a note. Run the blind tone test
+   with the existing USB PCM tools and a second phone; only if it was heard, confirm *Agent audio is audible*.
+8. With every check passing, **Enable replies** (two clicks) on a call you control. It reverts to passive when
+   the call ends.
+
+### One-shot test response (does the AI's voice reach the other party?)
+
+On **Overview**, during an ACTIVE call with the AI attached in passive mode, **Generate & Play Test Response**
+makes exactly one reply: the caller's latest voiced transcript (at most 60 s old) goes to the configured LLM,
+the reply to the configured TTS, and the audio through the same paced USB playback the live pipeline uses.
+It is a separate gate from "Enable replies": it does not need the outbound confirmation (it is how you get
+it), but it needs a real ACTIVE call, an attached passive session, a recent voiced transcript, all provider
+keys, audio bytes flowing (so the USB registration is valid), and a PCM rate that agrees with what the module
+reports (`AT+CPCMFRM`) and with the rate actually arriving. Results are shown for LLM, TTS, playback
+submission (some bytes accepted by the port) and playback completion (all bytes written in real time)
+separately. None of them means the other party heard it: after the test, ask them, and confirm *Agent audio is
+audible* only if they did. The test never changes the mode, hangs up, repeats, or marks anything verified.
+API: `POST /api/ai/calls/:id/test-response` with `confirmBilling` and `confirmPlayToCaller` both `true`;
+readiness is `testResponse` in `GET /api/ai/state`.
+
+## Hands-free calling (incoming call to hang-up)
+
+Reference audit (`labs-sizh-voicely-main`, Python on LiveKit Agents): its transport is LiveKit rooms/SIP and its
+turn handling is Silero VAD with 1.0–3.0 s endpointing and VAD interruption (`services/llm/agent_service.py`
+~1308–1371). Neither LiveKit nor WebRTC is used here: the modem's audio is already raw PCM in the gateway process,
+so a bridge would only add a server, a codec hop and latency. Reused/adapted:
+
+| Reference | Here |
+| --- | --- |
+| `AgentSession` conversation loop, VAD endpointing (1.0 s silence), barge-in | `ConversationSession` + `EnergyEndpointer` (already ported earlier) |
+| `services/llm/idle_manager.py` + follow-up/goodbye tables in `llm_config.py` | **new** `src/ai/idle.ts` (same 15 s / 9 s / 8 s stages, en/ar/hi lines) |
+| END_CALL protocol, output filter, prompt, provider tables | already ported |
+| Streaming STT plugins | not ported: one request per utterance is bounded, testable offline and fast enough on 8 kHz phone audio; a WebSocket STT is a later, separately verified step |
+
+New in the gateway: `src/ai/automation.ts` answers after N rings (counting each ring/caller-ID cycle once, including
+the first), activates USB audio once when an eligible call becomes ACTIVE, and waits for real bytes. The
+orchestrator then attaches (listening only) and, when automatic replies are on and every readiness check passes,
+the agent speaks. It also starts the idle follow-ups, enforces the per-call AI time limit, and retries one turn after
+a provider-failure cool-down. Pending caller audio is capped at 30 s.
+
+All switches are off by default (dashboard Agent tab → Call automation, or `AI_AUTO_*` in `.env`).
+**Automatic replies cannot be saved until both audio confirmations exist**, are withdrawn if a confirmation is
+removed or the sample rate changes, and even when on they only apply while the *entire* readiness check passes
+right now; otherwise the call is attached passively. Manual attach, passive mode and the one-shot test are unchanged.
+
+What the inspector reports separately, per turn: audio received (meters), transcription completed, LLM generated,
+TTS generated, playback written ("written to the audio port; whether the caller heard it is not verified"). *Caller
+heard it* exists only as your confirmation on the Overview tab; no write, byte count or completed playback sets it.
+
+### Conversation mode (operator-enabled, per call)
+
+On **Overview → Conversation mode**, **Start conversation** (two-step confirmation) makes the AI answer every
+finished caller utterance on that call, with no click per turn: listening → transcribing → generating reply →
+speaking → listening again. It attaches the AI first if needed. It is per call: it never carries over to the next
+call, **Stop conversation** (or hang-up) ends it at once including speech in progress, and the persistent
+mode, the audio confirmations and the one-shot test response are untouched. Passive transcription stays the
+default. API: `POST /api/ai/calls/:id/conversation` with `{ "enabled": true, "confirmBilling": true,
+"confirmPlayToCaller": true }` (disable needs only `{ "enabled": false }`); readiness is `conversation` in
+`GET /api/ai/state` and per-session phase, last-turn stage timings and last error are
+`sessions[].conversation`.
+
+It needs the same output-path checks as the test response (real ACTIVE call, valid config and all keys, audio
+bytes flowing, PCM rate agreeing with the module) but not a fresh transcript; the operator's explicit click is the
+permission for this call. It never marks "agent audio audible" as verified.
+
+**Half-duplex turn-taking (default).** The gateway's audio port reads and writes independently (code-verified:
+`hardware-audio.ts` writes playback and reads capture on separate paths, so frames keep arriving during
+playback), but what comes back on the downlink while the agent speaks is **not verified on this hardware**:
+the caller's phone can feed the agent's voice back. So while the agent plays audio (and for
+`AI_PLAYBACK_GUARD_MS`, default 500 ms, after) caller audio is measured but not transcribed, and any half-heard
+utterance is dropped. The caller therefore has to wait for the agent to finish; barge-in during speech is off.
+Barge-in remains available only with `AI_HALF_DUPLEX=false`, which should be switched on only after a real call shows
+the agent does not hear itself. If the caller speaks while the agent is still *generating* (before it speaks), the
+newest utterance wins and the earlier turn is cancelled and merged, so one caller turn never gets two replies.
+
+### Safe real-hardware plan (do in order; stop at the first surprise)
+
+1. Rebuild and restart with everything off (outside a call). Confirm Agent tab → Call automation shows
+   "Never speaks by itself".
+2. **Passive auto-attach only.** Turn on *Activate USB audio automatically*, set *Attach automatically* to Incoming
+   calls, leave *Answer automatically* and replies off. Call the SIM from another phone and answer by hand. Expect
+   inspector markers: "USB audio activated automatically", "Audio bytes are flowing", "AI attached". Speak; read the
+   transcripts. Hang up from the far end: the AI must detach, no further provider requests.
+3. **Auto-answer.** Enable *Answer incoming calls automatically* (2 rings). Call again: it should answer after two
+   rings and attach as above. Check the call list shows one answered call, and that a second ring burst does not answer twice.
+4. **Prove outbound audio first.** With a call up, run the one-shot test response and the blind tone test with a person
+   on the far end. Only if they clearly heard it, confirm both Overview confirmations.
+5. **Automatic replies.** Enable *Let the agent speak without a click*. Call, hold 3–4 exchanges, interrupt it
+   mid-sentence, stay silent for 30 s (expect two follow-ups, then a goodbye; it hangs up only if *Let the agent end the
+   call* is on), then hang up from the far end mid-reply. Confirm: playback stops, the AI detaches, no more LLM/TTS calls.
+6. Watch for: audio bytes arriving at the assumed rate (Observed rate tile), modem drops mid-call (USB recovery re-checks
+   the registration), and the per-call time limit (the AI detaches, the call continues).
+
+Blockers that remain until you test them: uplink audibility on this firmware (unverified), behaviour of
+`AT+CPCMREG` re-registration after a mid-call USB drop (the earlier hardware returned an AT error), and real
+provider latency on a phone line.
+
+## Notes on the port
+
+- **Output-filter bug fixed.** The source's `ProtocolTextFilter.finish()` treats any trailing text that is a
+  prefix of `call tool=` as an unfinished control tag, so a reply ending in "call" (including the `CALL` of
+  `END_CALL`) was silently dropped. Only `<` and `[` tag openers are withheld now.
+- **Groq Whisper bills a minimum of 10 s per request**, so very short utterances cost the same as 10 s.
+- **STT is per utterance, not streaming**, which adds latency (roughly the STT round trip) compared with the
+  source; it is the simplest thing that can be bounded, cancelled and tested.
+- Provider request shapes were checked against each provider's published reference where it states them;
+  Deepgram's TTS reference does not list the `linear16`/8 kHz values, so its reply is validated, not trusted.
+  Groq's page does not state the auth header; `Authorization: Bearer` is the OpenAI-compatible convention.
+  None of this has been exercised against a live account.

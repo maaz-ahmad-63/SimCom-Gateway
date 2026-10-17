@@ -13,13 +13,16 @@ import {
   AtCommandError,
   SerialPortDisconnectedError,
 } from '@sim-gateway/shared';
-import { ISerialTransport, NodeSerialTransport } from './serial-transport.js';
+import { describeClose, ISerialTransport, NodeSerialTransport, SerialCloseInfo } from './serial-transport.js';
 import { AtCommandQueue } from './at-command-queue.js';
 import { AtParser } from './at-parser.js';
-import { createLogger, Logger } from '../../core/logger.js';
+import { createLogger, Logger, redactDiagnosticText } from '../../core/logger.js';
 
 export interface HardwareModemOptions {
-  atPort?: string;
+  /** COM port of the AT interface. Required: Windows reassigns COM numbers, so none is assumed. */
+  atPort: string;
+  /** Recorded in the port config only; this adapter never opens the audio port. */
+  audioPort?: string;
   atBaudRate?: number;
   commandTimeoutMs?: number;
   dialTimeoutMs?: number;
@@ -31,7 +34,7 @@ export interface HardwareModemOptions {
 
 /**
  * Physical SIMCOM SIM7600EI hardware modem adapter.
- * Communicates over serial transport (e.g. COM20 on Windows host) using AT commands and URCs.
+ * Communicates over serial transport (a COM port on the Windows host) using AT commands and URCs.
  */
 export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapter {
   readonly driverType: ModemDriverType = 'hardware';
@@ -42,18 +45,25 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
   private queue: AtCommandQueue;
   private config: ModemPortConfig;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private initAttempts = 0;
+  private initInFlight: Promise<void> | null = null;
+  private lastInit: { at: string; ok: boolean; durationMs: number; step: string; error?: string } | null = null;
+  private lastFailure: { at: string; message: string } | null = null;
+  private nextReconnectAt: number | null = null;
+  private lastStateChangeAt: string | null = null;
+  private releasingHandle = false;
   private reconnectAttempts = 0;
   private isClosing = false;
   private serialFailureHandled = false;
   private readonly logger: Logger;
 
-  constructor(options: HardwareModemOptions = {}) {
+  constructor(options: HardwareModemOptions) {
     super();
 
     this.config = {
-      atPort: options.atPort ?? 'COM20',
+      atPort: options.atPort,
       atBaudRate: options.atBaudRate ?? 115200,
-      audioPort: 'COM19',
+      audioPort: options.audioPort ?? '',
       audioBaudRate: 115200,
       commandTimeoutMs: options.commandTimeoutMs ?? 5000,
       dialTimeoutMs: options.dialTimeoutMs ?? 20000,
@@ -91,13 +101,44 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
       this.handleSerialFailure(err);
     });
 
-    this.transport.on('close', () => {
+    this.transport.on('close', (info?: SerialCloseInfo) => {
+      // Releasing a failed handle before a reconnect is this adapter's own doing, not a new failure.
+      if (this.releasingHandle) return;
       if (!this.isClosing && this.connectionState !== 'DISCONNECTED') {
         this.handleSerialFailure(
-          new SerialPortDisconnectedError(this.config.atPort, 'Modem serial connection closed')
+          new SerialPortDisconnectedError(this.config.atPort, `Modem serial connection ${describeClose(info)}`)
         );
       }
     });
+  }
+
+  /** What the adapter knows about its own connection and recovery. Sends no AT command. */
+  getDiagnostics(): {
+    connectionState: ModemConnectionState;
+    port: string;
+    autoReconnect: boolean;
+    initAttempts: number;
+    reconnectAttempts: number;
+    maxReconnectAttempts: number | null;
+    reconnectScheduled: boolean;
+    nextReconnectInMs: number | null;
+    lastStateChangeAt: string | null;
+    lastInit: { at: string; ok: boolean; durationMs: number; step: string; error?: string } | null;
+    lastFailure: { at: string; message: string } | null;
+  } {
+    return {
+      connectionState: this.connectionState,
+      port: this.config.atPort,
+      autoReconnect: Boolean(this.config.autoReconnect),
+      initAttempts: this.initAttempts,
+      reconnectAttempts: this.reconnectAttempts,
+      maxReconnectAttempts: this.config.maxReconnectAttempts ?? null,
+      reconnectScheduled: this.reconnectTimer !== null,
+      nextReconnectInMs: this.nextReconnectAt === null ? null : Math.max(0, this.nextReconnectAt - Date.now()),
+      lastStateChangeAt: this.lastStateChangeAt,
+      lastInit: this.lastInit,
+      lastFailure: this.lastFailure,
+    };
   }
 
   getConnectionState(): ModemConnectionState {
@@ -108,22 +149,51 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
     if (this.connectionState !== state) {
       const prev = this.connectionState;
       this.connectionState = state;
+      this.lastStateChangeAt = new Date().toISOString();
       this.logger.info(`Connection state changed: ${prev} -> ${state}`);
       this.emit('connection_state', state);
     }
   }
 
-  async initialize(configOverrides?: Partial<ModemPortConfig>): Promise<void> {
+  /**
+   * Connect and initialize. Concurrent calls (a manual start racing a scheduled reconnect) share one run, so two
+   * attempts can never fight over the same port.
+   */
+  initialize(configOverrides?: Partial<ModemPortConfig>): Promise<void> {
+    if (this.initInFlight) return this.initInFlight;
+    const run = this.runInitialize(configOverrides).finally(() => {
+      if (this.initInFlight === run) this.initInFlight = null;
+    });
+    this.initInFlight = run;
+    return run;
+  }
+
+  private async runInitialize(configOverrides?: Partial<ModemPortConfig>): Promise<void> {
     if (configOverrides) {
       this.config = { ...this.config, ...configOverrides };
     }
 
     this.isClosing = false;
-    this.logger.info(`Initializing hardware modem on ${this.config.atPort} @ ${this.config.atBaudRate} baud`);
+    const attempt = ++this.initAttempts;
+    const initStartedAt = Date.now();
+    let step = 'open-port';
+    this.logger.info(
+      `Modem init start: attempt=${attempt} port=${this.config.atPort} baud=${this.config.atBaudRate} previousState=${this.connectionState} reconnects=${this.reconnectAttempts}`
+    );
     this.setConnectionState('CONNECTING');
 
     try {
-      // 1. Open Serial Port
+      // 1. Open Serial Port. After a serial failure the old handle is released first: a driver error (Windows
+      //    error 31, a USB reset) does not always close it, and reusing it would only fail again.
+      if (this.serialFailureHandled && this.transport.isOpen()) {
+        this.logger.warn(`Releasing the failed handle on ${this.config.atPort} before reconnecting`);
+        this.releasingHandle = true;
+        try {
+          await this.transport.close();
+        } finally {
+          this.releasingHandle = false;
+        }
+      }
       if (!this.transport.isOpen()) {
         await this.transport.open({
           path: this.config.atPort,
@@ -133,6 +203,7 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
       this.queue.markTransportReady();
 
       this.setConnectionState('INITIALIZING');
+      step = 'at-sync';
 
       // 2. UART Stabilization delay
       await this.delay(100);
@@ -149,18 +220,23 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
 
       // 4. Modem initialization sequence:
       // ATE0: Disable echo so responses are clean
+      step = 'ATE0';
       await this.queue.execute('ATE0', 2000);
 
       // AT+CMEE=2: Enable verbose error reporting
+      step = 'AT+CMEE';
       await this.queue.execute('AT+CMEE=2', 2000);
 
       // AT+CLIP=1: Enable Caller ID URCs (+CLIP: "+91...",145)
+      step = 'AT+CLIP';
       await this.queue.execute('AT+CLIP=1', 2000);
 
       // AT+CRC=1: Enable cellular extended ring reporting
+      step = 'AT+CRC';
       await this.queue.execute('AT+CRC=1', 2000);
 
       // 5. Check SIM card presence
+      step = 'AT+CPIN';
       const cpinResp = await this.queue.execute('AT+CPIN?', 3000);
       const pinStatus = AtParser.parseCpin(cpinResp);
       if (pinStatus !== 'READY') {
@@ -171,8 +247,15 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
       this.reconnectAttempts = 0;
       this.serialFailureHandled = false;
       this.setConnectionState('READY');
+      this.lastInit = { at: new Date().toISOString(), ok: true, durationMs: Date.now() - initStartedAt, step: 'done' };
+      this.logger.info(`Modem init ok: attempt=${attempt} port=${this.config.atPort} durationMs=${Date.now() - initStartedAt}`);
       this.logger.info(`Hardware modem on ${this.config.atPort} ready for cellular operations`);
     } catch (initErr) {
+      this.lastInit = { at: new Date().toISOString(), ok: false, durationMs: Date.now() - initStartedAt, step, error: redactDiagnosticText((initErr as Error).message) };
+      this.lastFailure = { at: this.lastInit.at, message: this.lastInit.error ?? 'initialization failed' };
+      this.logger.error(
+        `Modem init failed: attempt=${attempt} port=${this.config.atPort} step=${step} durationMs=${Date.now() - initStartedAt} autoReconnect=${Boolean(this.config.autoReconnect)} error="${redactDiagnosticText((initErr as Error).message)}"`
+      );
       this.logger.error(`Modem initialization failed on ${this.config.atPort}: ${(initErr as Error).message}`);
       this.setConnectionState('ERROR');
       if (this.listenerCount('error') > 0) {
@@ -317,6 +400,7 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
     if (this.isClosing || this.serialFailureHandled) return;
 
     this.serialFailureHandled = true;
+    this.lastFailure = { at: new Date().toISOString(), message: redactDiagnosticText(error.message) };
     this.setConnectionState('ERROR');
     if (this.listenerCount('error') > 0) {
       this.emit('error', error);
@@ -362,15 +446,19 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
           new Error(`Max reconnect attempts (${this.config.maxReconnectAttempts}) reached for ${this.config.atPort}`)
         );
       }
+      this.logger.error(`Modem reconnect abandoned: attempts=${this.reconnectAttempts} port=${this.config.atPort}`);
       this.setConnectionState('DISCONNECTED');
       return;
     }
 
     this.reconnectAttempts++;
     const interval = (this.config.reconnectIntervalMs ?? 3000) * Math.min(this.reconnectAttempts, 4);
+    this.logger.warn(`Modem reconnect scheduled: attempt=${this.reconnectAttempts} delayMs=${interval} port=${this.config.atPort}`);
 
+    this.nextReconnectAt = Date.now() + interval;
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectTimer = null;
+      this.nextReconnectAt = null;
       if (this.isClosing) return;
 
       try {

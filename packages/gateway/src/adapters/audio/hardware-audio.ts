@@ -9,11 +9,12 @@ import {
   AudioStreamStats,
   IAudioAdapter,
 } from '@sim-gateway/shared';
-import { ISerialTransport, NodeSerialTransport } from '../modem/serial-transport.js';
+import { describeClose, ISerialTransport, NodeSerialTransport, SerialCloseInfo } from '../modem/serial-transport.js';
 import { createLogger, Logger } from '../../core/logger.js';
 
 export interface HardwareAudioOptions {
-  audioPort?: string;
+  /** COM port of the USB audio interface. Required: Windows reassigns COM numbers, so none is assumed. */
+  audioPort: string;
   audioBaudRate?: number;
   sampleRate?: number;
   enableDumps?: boolean;
@@ -43,19 +44,20 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
   private readonly options: Required<HardwareAudioOptions>;
   private readonly logger: Logger;
 
-  constructor(options: HardwareAudioOptions = {}) {
+  constructor(options: HardwareAudioOptions) {
     super();
 
     this.options = {
-      audioPort: options.audioPort ?? 'COM19',
+      audioPort: options.audioPort,
       audioBaudRate: options.audioBaudRate ?? 115200,
       sampleRate: options.sampleRate ?? 8000,
-      enableDumps: options.enableDumps ?? true,
+      // Unrestricted whole-call dumping is opt-in; use the bounded PCM capture test instead.
+      enableDumps: options.enableDumps ?? false,
       dumpDir: options.dumpDir ?? './audio-dumps',
       transport:
         options.transport ??
         new NodeSerialTransport({
-          path: options.audioPort ?? 'COM19',
+          path: options.audioPort,
           baudRate: options.audioBaudRate ?? 115200,
           lock: true,
         }),
@@ -63,8 +65,12 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
 
     this.transport = this.options.transport;
     this.logger = createLogger(`Audio:${this.options.audioPort}`);
+    this.logger.info(
+      `Raw whole-call audio dump is ${this.options.enableDumps ? 'ENABLED (unbounded)' : 'disabled'}`
+    );
 
     this.stats = {
+      lastFrameAt: null,
       bytesReceived: 0,
       bytesSent: 0,
       framesReceived: 0,
@@ -85,6 +91,30 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
         this.emit('error', err);
       }
     });
+
+    this.transport.on('close', (info?: SerialCloseInfo) => {
+      this.handleUnexpectedClose(info);
+    });
+  }
+
+  /**
+   * The port closing while a session is streaming (USB reset, driver drop) used to be silent:
+   * isStreaming stayed true, no frames arrived, and writes were skipped without any error.
+   * stopSession() clears isStreaming before it closes the port, so a normal stop never lands here.
+   */
+  private handleUnexpectedClose(info?: SerialCloseInfo): void {
+    if (!this.isStreaming) return;
+    this.markNotStreaming();
+    const message = `Audio port '${this.options.audioPort}' ${describeClose(info)} while the session was streaming`;
+    this.logger.error(message);
+    if (this.listenerCount('error') > 0) {
+      this.emit('error', new Error(message));
+    }
+  }
+
+  private markNotStreaming(): void {
+    this.isStreaming = false;
+    this.stats.isStreaming = false;
   }
 
   async startSession(callId: string): Promise<void> {
@@ -104,15 +134,11 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
 
     // Open audio COM port if not already open
     try {
-      if (!this.transport.isOpen()) {
-        await this.transport.open({
-          path: this.options.audioPort,
-          baudRate: this.options.audioBaudRate,
-        });
-      }
+      await this.openPort();
       this.logger.info(`Audio transport '${this.options.audioPort}' opened for call ${callId}`);
     } catch (err) {
-      // Audio open failure shouldn't crash the voice call session
+      // Audio open failure shouldn't crash the voice call session, but the session is not streaming
+      this.markNotStreaming();
       if (this.listenerCount('error') > 0) {
         this.emit(
           'error',
@@ -135,6 +161,36 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
         // Continue even if dump file creation fails
       }
     }
+  }
+
+  private async openPort(): Promise<void> {
+    if (!this.transport.isOpen()) {
+      await this.transport.open({
+        path: this.options.audioPort,
+        baudRate: this.options.audioBaudRate,
+      });
+    }
+  }
+
+  /**
+   * Reopen the audio port for the session in progress after the port closed under it (for example
+   * a USB drop). One attempt, no retry: on failure it throws and the session stays not-streaming.
+   * Reopening the port does not re-register the module's USB audio (AT+CPCMREG); the caller must
+   * verify that separately.
+   */
+  async recoverSession(): Promise<void> {
+    if (!this.currentCallId) {
+      throw new Error('No audio session to recover');
+    }
+    // Mark first so closing a stale handle is not reported as an unexpected close.
+    this.markNotStreaming();
+    if (this.transport.isOpen()) {
+      await this.transport.close();
+    }
+    await this.openPort();
+    this.isStreaming = true;
+    this.stats.isStreaming = true;
+    this.logger.info(`Audio transport '${this.options.audioPort}' reopened for call ${this.currentCallId}`);
   }
 
   async stopSession(): Promise<void> {
@@ -177,12 +233,13 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
       return;
     }
 
-    this.stats.bytesSent += chunk.length;
-    this.stats.framesSent++;
     this.logger.debug(`Outbound audio write bytes=${chunk.length} timestamp=${new Date().toISOString()}`);
 
     try {
       await this.transport.write(chunk);
+      // Counted only after the serial write succeeded, so failed writes never inflate the totals.
+      this.stats.bytesSent += chunk.length;
+      this.stats.framesSent++;
     } catch (writeErr) {
       this.stats.droppedFrames++;
       if (this.listenerCount('error') > 0) {
@@ -209,6 +266,7 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
 
     this.stats.bytesReceived += chunk.length;
     this.stats.framesReceived++;
+    this.stats.lastFrameAt = Date.now();
     this.logger.debug(`Inbound audio chunk bytes=${chunk.length} timestamp=${new Date().toISOString()}`);
 
     // Write to raw diagnostic file dump (clearly labeled as unvalidated raw stream)

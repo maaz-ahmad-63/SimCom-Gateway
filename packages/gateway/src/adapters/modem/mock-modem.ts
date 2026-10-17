@@ -100,6 +100,9 @@ export class MockModemAdapter extends EventEmitter implements IModemAdapter {
     if (trimmed === 'AT+CPIN?') {
       return '+CPIN: READY\nOK';
     }
+    if (trimmed === 'AT+CEER') {
+      return '+CEER: Normal call clearing (simulated)\nOK';
+    }
     if (trimmed === 'AT+CSQ') {
       return `+CSQ: ${this.rssi},99\nOK`;
     }

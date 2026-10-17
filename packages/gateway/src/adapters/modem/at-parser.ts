@@ -74,6 +74,24 @@ export class AtParser {
   }
 
   /**
+   * Parse the answer to AT+CEER (extended error report: why the last call ended or failed).
+   * SIM7600 answers `+CEER: <text or numeric cause>`; the text is returned as the module reports it.
+   * Anything that is not an OK/ERROR terminal and is not a +CEER line is kept in `other` so nothing the
+   * module said is silently dropped.
+   */
+  static parseCeer(response: string): { reports: string[]; other: string[] } {
+    const reports: string[] = [];
+    const other: string[] = [];
+    for (const raw of response.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line === 'OK') continue;
+      if (line.startsWith('+CEER:')) reports.push(line.slice('+CEER:'.length).trim());
+      else other.push(line);
+    }
+    return { reports, other };
+  }
+
+  /**
    * Identifies whether an incoming line is an Unsolicited Result Code (URC).
    */
   static isUrc(line: string): boolean {
@@ -250,6 +268,34 @@ export class AtParser {
   /**
    * Parse signal quality response: "+CSQ: 24,99"
    */
+  /**
+   * Parse AT+CLCC: `+CLCC: <idx>,<dir>,<stat>,<mode>,<mprty>[,<number>,<type>...]`.
+   * stat 0 = active, 1 = held, 2 = dialing, 3 = alerting, 4 = incoming, 5 = waiting; mode 0 = voice.
+   * The remote number is deliberately not returned.
+   */
+  static parseClcc(response: string): Array<{ index: number; direction: number; status: number; mode: number }> {
+    const calls: Array<{ index: number; direction: number; status: number; mode: number }> = [];
+    for (const line of response.split(/\r?\n/)) {
+      const match = line.trim().match(/^\+CLCC:\s*(\d+),(\d+),(\d+),(\d+)/i);
+      if (match) {
+        calls.push({
+          index: parseInt(match[1], 10),
+          direction: parseInt(match[2], 10),
+          status: parseInt(match[3], 10),
+          mode: parseInt(match[4], 10),
+        });
+      }
+    }
+    return calls;
+  }
+
+  /** Parse the integer list after a `+PREFIX:` line, e.g. `+CPCMREG: 1` or `+CPCMBANDWIDTH: 1,0`. */
+  static parsePrefixedIntegers(response: string, prefix: string): number[] | null {
+    const escaped = prefix.replace(/[^A-Za-z0-9]/g, '\\$&');
+    const match = response.match(new RegExp(`\\+${escaped}:\\s*(-?\\d+(?:\\s*,\\s*-?\\d+)*)`, 'i'));
+    return match ? match[1].split(',').map((value) => parseInt(value.trim(), 10)) : null;
+  }
+
   static parseCsq(response: string): ModemSignalQuality {
     const match = response.match(/\+CSQ:\s*(\d+),(\d+)/i);
     const rssi = match ? parseInt(match[1], 10) : 99;

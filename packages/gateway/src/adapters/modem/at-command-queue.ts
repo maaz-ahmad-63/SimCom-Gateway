@@ -6,7 +6,7 @@ import {
   SerialPortDisconnectedError,
   UrcEvent,
 } from '@sim-gateway/shared';
-import { ISerialTransport } from './serial-transport.js';
+import { describeClose, ISerialTransport, SerialCloseInfo } from './serial-transport.js';
 import { AtParser } from './at-parser.js';
 import { createLogger, Logger, redactDiagnosticText } from '../../core/logger.js';
 
@@ -51,11 +51,11 @@ export class AtCommandQueue extends EventEmitter {
       );
     });
 
-    this.transport.on('close', () => {
+    this.transport.on('close', (info?: SerialCloseInfo) => {
       this.handleTransportFailure(
         new SerialPortDisconnectedError(
           this.transport.path,
-          `Serial transport '${this.transport.path}' closed`
+          `Serial transport '${this.transport.path}' ${describeClose(info)}`
         )
       );
     });
@@ -113,6 +113,10 @@ export class AtCommandQueue extends EventEmitter {
 
     this.isProcessing = true;
     const item = this.queue.shift()!;
+    // A command that timed out and is now being asked again: its leftover marker must not swallow this
+    // attempt's genuine answer (otherwise one unanswered query makes every later identical query fail too,
+    // each timeout leaving a new marker). A late answer to the old attempt is the same query's answer.
+    this.staleCommandsToClean = this.staleCommandsToClean.filter((stale) => stale.command !== item.command);
     this.activeCommand = item;
     this.responseBuffer = [];
 
@@ -168,6 +172,7 @@ export class AtCommandQueue extends EventEmitter {
     if (trimmed.startsWith('AT+COPS')) return '+COPS:';
     if (trimmed.startsWith('AT+CLCC')) return '+CLCC:';
     if (trimmed.startsWith('AT+CCLK')) return '+CCLK:';
+    if (trimmed.startsWith('AT+CEER')) return '+CEER:';
     return null;
   }
 

@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import {
+  AiInspectorEvent,
   AudioFrame,
   AudioStreamStats,
   CallSession,
@@ -21,6 +22,7 @@ export interface GatewayEventMap {
     message: string;
     timestamp: string;
   }) => void;
+  'ai:event': (event: AiInspectorEvent) => void;
   'error': (error: Error) => void;
 }
 

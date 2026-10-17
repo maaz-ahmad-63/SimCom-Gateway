@@ -36,6 +36,8 @@ export interface AudioFrame {
 }
 
 export interface AudioStreamStats {
+  /** Epoch ms of the last inbound chunk, or null if none yet. Bytes arriving is not proof of speech. */
+  lastFrameAt: number | null;
   bytesReceived: number;
   bytesSent: number;
   framesReceived: number;
@@ -66,6 +68,12 @@ export interface IAudioAdapter {
   
   /** Write raw PCM/binary audio chunk to the modem playback line */
   writeAudioChunk(chunk: Buffer): Promise<void>;
+
+  /**
+   * Reopen the audio port for the session already in progress (after the port closed under it).
+   * Throws if the port cannot be opened; no retries are attempted here.
+   */
+  recoverSession?(): Promise<void>;
 
   /** Get live audio stream statistics */
   getStats(): AudioStreamStats;

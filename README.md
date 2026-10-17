@@ -4,7 +4,7 @@ A high-reliability, standalone cellular gateway for the **SIMCOM SIM7600EI** LTE
 
 ## System Overview
 
-- **Gateway Backend (`packages/gateway`)**: Node.js + TypeScript service managing AT commands, exclusive COM port locking (`COM14` AT, `COM13` audio), call sessions, and SQLite persistence.
+- **Gateway Backend (`packages/gateway`)**: Node.js + TypeScript service managing AT commands, exclusive COM port locking (AT and USB-audio COM ports set via `MODEM_AT_PORT` / `MODEM_AUDIO_PORT`; never assumed), call sessions, and SQLite persistence.
 - **Shared Contracts (`packages/shared`)**: Single source of truth for TypeScript interfaces, Zod validation schemas, and Socket.IO events.
 - **Modern Dashboard (`packages/dashboard`)**: Next.js + Tailwind CSS + shadcn/ui dark UI for call monitoring and gateway telemetry.
 

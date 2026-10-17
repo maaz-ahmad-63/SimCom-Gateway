@@ -222,14 +222,14 @@ export default function SettingsPage() {
           <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/80">
             <span className="text-slate-500 text-[10px] uppercase">Modem AT Port</span>
             <div className="text-slate-200 font-semibold mt-0.5">
-              {health?.modem.atPort || 'COM20'} (115200 baud)
+              {health?.modem.atPort || 'not configured'} (115200 baud)
             </div>
           </div>
 
           <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/80">
             <span className="text-slate-500 text-[10px] uppercase">USB Audio Port</span>
             <div className="text-slate-200 font-semibold mt-0.5">
-              {health?.modem.audioPort || 'COM19'} (115200 baud)
+              {health?.modem.audioPort || 'not configured'} (115200 baud)
             </div>
           </div>
         </div>

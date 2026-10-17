@@ -30,6 +30,23 @@ export const triggerMockInboundSchema = z.object({
   ringCount: z.number().int().min(1).max(20).optional().default(5),
 });
 
+/**
+ * Strict boolean for env-style values. z.coerce.boolean() is unsafe here because it turns the
+ * string "false" into true. Unset or empty falls back to the field default; anything that is
+ * not an obvious boolean is rejected instead of guessed.
+ */
+const envBoolean = (defaultValue: boolean) =>
+  z.preprocess((value) => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === '') return undefined;
+      if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+      if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+    }
+    return value;
+  }, z.boolean().default(defaultValue));
+
 export const gatewayConfigSchema = z.object({
   port: z.coerce.number().int().min(1024).max(65535).default(4000),
   host: z.string().default('127.0.0.1'),
@@ -40,14 +57,19 @@ export const gatewayConfigSchema = z.object({
   audioPort: z.string().default('COM19'),
   audioBaudRate: z.coerce.number().default(115200),
   audioSampleRate: z.coerce.number().default(8000),
-  enableAudioDumps: z.coerce.boolean().default(true),
-  enableUsbAudioDiagnostic: z.coerce.boolean().default(false),
+  /** Unrestricted whole-call raw dump. Off by default; the bounded PCM capture test is the safe alternative. */
+  enableAudioDumps: envBoolean(false),
+  enableUsbAudioDiagnostic: envBoolean(false),
+  /** Opt-in: capture <= 5 s of the USB audio stream during an ACTIVE call. */
+  enableUsbPcmCaptureTest: envBoolean(false),
+  /** Opt-in, separate: write a short low-volume tone to the USB audio port during an ACTIVE call. */
+  enableUsbPcmOutboundToneTest: envBoolean(false),
   audioDumpDir: z.string().default('./audio-dumps'),
   sqliteDbPath: z.string().default('./data/gateway.sqlite'),
   gatewayApiKey: z.string().min(8, 'API Key must be at least 8 characters'),
   commandTimeoutMs: z.coerce.number().default(5000),
   dialTimeoutMs: z.coerce.number().default(20000),
-  autoReconnect: z.coerce.boolean().default(true),
+  autoReconnect: envBoolean(true),
 });
 
 export type DialRequestInput = z.infer<typeof dialRequestSchema>;

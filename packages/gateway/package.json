@@ -8,6 +8,8 @@
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
+    "usb-pcm:inspect": "tsx scripts/usb-pcm-inspect.ts",
+    "ai:loop": "tsx scripts/ai-loop.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage"

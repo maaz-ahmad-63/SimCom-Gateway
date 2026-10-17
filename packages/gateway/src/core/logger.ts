@@ -42,10 +42,34 @@ function sanitizeValue(key: string, value: unknown): unknown {
   return value;
 }
 
+export interface RecentLogEntry {
+  at: string;
+  level: LogLevel;
+  module: string;
+  /** The full formatted line, already redacted. */
+  line: string;
+}
+
+const RECENT_LOG_LIMIT = 500;
+const recentLogs: RecentLogEntry[] = [];
+
+function keepRecent(level: LogLevel, module: string, line: string): void {
+  recentLogs.push({ at: line.slice(0, 24), level, module, line });
+  if (recentLogs.length > RECENT_LOG_LIMIT) recentLogs.splice(0, recentLogs.length - RECENT_LOG_LIMIT);
+}
+
+/** The newest log lines at or above a level (info by default), oldest first. Nothing persists beyond the process. */
+export function getRecentLogs(limit = 100, minLevel: LogLevel = 'info'): RecentLogEntry[] {
+  const floor = LEVEL_PRIORITY[minLevel];
+  return recentLogs.filter((e) => LEVEL_PRIORITY[e.level] >= floor).slice(-limit);
+}
+
 export function redactDiagnosticText(value: string): string {
   return value
     .replace(/(ATD)\s*([+0-9][0-9\s-]{5,})(;?)/gi, '$1[REDACTED]$3')
     .replace(/(\+CLIP:\s*")[^"]+(")/gi, '$1[REDACTED]$2')
+    .replace(/\b(?:sk|gsk|pk|xox[bp])[-_][A-Za-z0-9_-]{8,}/gi, '[REDACTED]')
+    .replace(/\b(api[-_]?key|token|secret)=\S+/gi, '$1=[REDACTED]')
     .replace(/\b\d{7,}\b/g, '[REDACTED]');
 }
 
@@ -97,19 +121,25 @@ export class Logger {
 
   info(message: string, meta?: unknown): void {
     if (this.shouldLog('info')) {
-      console.log(this.formatMessage('info', message, meta));
+      const line = this.formatMessage('info', message, meta);
+      keepRecent('info', this.module, line);
+      console.log(line);
     }
   }
 
   warn(message: string, meta?: unknown): void {
     if (this.shouldLog('warn')) {
-      console.warn(this.formatMessage('warn', message, meta));
+      const line = this.formatMessage('warn', message, meta);
+      keepRecent('warn', this.module, line);
+      console.warn(line);
     }
   }
 
   error(message: string, meta?: unknown): void {
     if (this.shouldLog('error')) {
-      console.error(this.formatMessage('error', message, meta));
+      const line = this.formatMessage('error', message, meta);
+      keepRecent('error', this.module, line);
+      console.error(line);
     }
   }
 

@@ -10,6 +10,12 @@ const currentDir = path.dirname(currentFile);
 dotenv.config();
 dotenv.config({ path: path.resolve(currentDir, '../../../.env') });
 
+/** Env value, or undefined when unset/blank so schema defaults apply (a blank `KEY=` is "unset"). */
+function envString(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  return value ? value : undefined;
+}
+
 export function loadConfig(overrides: Partial<GatewayConfigInput> = {}): GatewayConfigInput {
   const driver = overrides.modemDriver ?? process.env.MODEM_DRIVER ?? 'mock';
   const rawApiKey = overrides.gatewayApiKey ?? process.env.GATEWAY_API_KEY;
@@ -26,26 +32,44 @@ export function loadConfig(overrides: Partial<GatewayConfigInput> = {}): Gateway
         'Security Error: An explicit, secure GATEWAY_API_KEY (minimum 8 characters) is mandatory when running with MODEM_DRIVER=hardware. Default development placeholders are strictly forbidden.'
       );
     }
+
+    // COM numbers are reassigned by Windows whenever the modem re-enumerates, so no port is assumed.
+    const atPort = (overrides.atPort ?? envString('MODEM_AT_PORT'))?.trim();
+    const audioPort = (overrides.audioPort ?? envString('MODEM_AUDIO_PORT'))?.trim();
+    if (!atPort || !audioPort) {
+      throw new Error(
+        'Configuration Error: MODEM_AT_PORT and MODEM_AUDIO_PORT must both be set explicitly when running with MODEM_DRIVER=hardware. List the live ports with: powershell -File tools/inspect-sim7600-windows.ps1 -List'
+      );
+    }
+    if (atPort.toUpperCase() === audioPort.toUpperCase()) {
+      throw new Error(
+        `Configuration Error: MODEM_AT_PORT and MODEM_AUDIO_PORT must be different ports (both are ${atPort}).`
+      );
+    }
   }
 
+  // Booleans are passed through as raw env strings; the shared schema parses them strictly.
+  // In mock mode the port names below are cosmetic placeholders only.
   const rawConfig = {
     port: process.env.PORT ?? 4000,
     host: process.env.HOST ?? '127.0.0.1',
     corsOrigin: process.env.CORS_ORIGIN ?? 'http://localhost:3000',
     modemDriver: driver,
-    atPort: process.env.MODEM_AT_PORT ?? 'COM20',
+    atPort: envString('MODEM_AT_PORT'),
     atBaudRate: process.env.MODEM_AT_BAUD ?? 115200,
-    audioPort: process.env.MODEM_AUDIO_PORT ?? 'COM19',
+    audioPort: envString('MODEM_AUDIO_PORT'),
     audioBaudRate: process.env.MODEM_AUDIO_BAUD ?? 115200,
     audioSampleRate: process.env.AUDIO_SAMPLE_RATE ?? 8000,
-    enableAudioDumps: process.env.AUDIO_ENABLE_RAW_DUMP ?? true,
-    enableUsbAudioDiagnostic: process.env.AUDIO_USB_DIAGNOSTIC_ENABLED ?? false,
+    enableAudioDumps: process.env.AUDIO_ENABLE_RAW_DUMP,
+    enableUsbAudioDiagnostic: process.env.AUDIO_USB_DIAGNOSTIC_ENABLED,
+    enableUsbPcmCaptureTest: process.env.AUDIO_USB_PCM_CAPTURE_TEST_ENABLED,
+    enableUsbPcmOutboundToneTest: process.env.AUDIO_USB_PCM_OUTBOUND_TONE_TEST_ENABLED,
     audioDumpDir: process.env.AUDIO_DUMP_DIRECTORY ?? './audio-dumps',
     sqliteDbPath: process.env.SQLITE_DB_PATH ?? './data/gateway.sqlite',
     gatewayApiKey: rawApiKey ?? 'dev-secret-api-key-sim7600ei',
     commandTimeoutMs: process.env.MODEM_COMMAND_TIMEOUT_MS ?? 5000,
     dialTimeoutMs: process.env.MODEM_DIAL_TIMEOUT_MS ?? 20000,
-    autoReconnect: process.env.MODEM_AUTO_RECONNECT ?? true,
+    autoReconnect: process.env.MODEM_AUTO_RECONNECT,
     ...overrides,
   };
 

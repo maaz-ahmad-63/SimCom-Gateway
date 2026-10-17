@@ -169,6 +169,11 @@ export class GatewaySocketServer {
       this.io.emit('gateway:alert', alert);
     });
 
+    // AI pipeline inspector events (already stripped of text unless the operator enabled transcripts)
+    this.options.eventBus.on('ai:event', (event) => {
+      this.io.emit('ai:event', event);
+    });
+
     // Audio adapter live VU meter / RMS events (throttled to 10Hz)
     if (this.options.audio) {
       this.options.audio.on('audio_frame', (frame) => {

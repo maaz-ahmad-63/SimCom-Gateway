@@ -25,7 +25,7 @@ export function VuMeter() {
         <div className="flex items-center gap-2">
           <Activity className="w-4 h-4 text-cyan-400" />
           <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-            Audio Stream (COM19)
+            Audio Stream
           </h3>
         </div>
 

@@ -26,6 +26,15 @@ import { createMockRouter } from './api/routes/mock.js';
 import { GatewaySocketServer } from './api/socket/socket-server.js';
 import { loadConfig } from './config/index.js';
 import { createLogger } from './core/logger.js';
+import { UsbPcmVerifier } from './diagnostics/usb-pcm-verification.js';
+import { acquireInstanceLock, InstanceLock } from './core/instance-lock.js';
+import { createAiRouter } from './api/routes/ai.js';
+import { AiCallOrchestrator } from './ai/orchestrator.js';
+import { AiRuntime } from './ai/runtime.js';
+import { AiSettingsService } from './ai/settings.js';
+import { AiUsageStore } from './ai/usage-store.js';
+import { FetchLike, ProviderSet } from './ai/providers/index.js';
+import { AgentAudioSink, AudioFormat, CallerAudioSource } from './ai/audio.js';
 
 export interface GatewayServerOptions {
   config?: Partial<GatewayConfigInput>;
@@ -35,6 +44,28 @@ export interface GatewayServerOptions {
   repository?: GatewayRepository;
   callManager?: ICallSessionManager;
   eventBus?: GatewayEventBus;
+  /** Directory for serial-port ownership locks (hardware mode). Defaults to the OS temp dir. */
+  instanceLockDir?: string;
+  /** AI agent test seams. In production none of these is set: env + real providers + the SIM7600EI audio adapter. */
+  ai?: {
+    env?: Record<string, string | undefined>;
+    providers?: ProviderSet;
+    fetchImpl?: FetchLike;
+    /** Test seam: let a mock modem/audio satisfy the AI hardware check. Never set in production. */
+    allowSimulatedHardware?: boolean;
+    /** Test seams for timing of the hands-free workflow. Never set in production. */
+    hardwarePortLister?: () => Promise<import('./api/routes/hardware.js').RawPortInfo[]>;
+    idleWaitsMs?: readonly [number, number, number];
+    callLimitMs?: number;
+    automationAudioWaitMs?: number;
+    automationPollMs?: number;
+    /** Test seam: fixed AI runtime mode. Never set in production. */
+    mode?: 'off' | 'passive' | 'active';
+    transports?: (
+      call: import('@sim-gateway/shared').CallSession,
+      format: AudioFormat
+    ) => { source: CallerAudioSource; sink: AgentAudioSink };
+  };
 }
 
 export interface GatewayServerInstance {
@@ -46,6 +77,8 @@ export interface GatewayServerInstance {
   callManager: ICallSessionManager;
   repository: GatewayRepository;
   eventBus: GatewayEventBus;
+  aiOrchestrator: AiCallOrchestrator;
+  aiRuntime: AiRuntime;
   db: DatabaseType;
   config: GatewayConfigInput;
   start: () => Promise<void>;
@@ -73,6 +106,7 @@ export function createGatewayServer(
     (config.modemDriver === 'hardware'
       ? new Sim7600HardwareAdapter({
           atPort: config.atPort,
+          audioPort: config.audioPort,
           atBaudRate: config.atBaudRate,
           commandTimeoutMs: config.commandTimeoutMs,
           dialTimeoutMs: config.dialTimeoutMs,
@@ -110,6 +144,51 @@ export function createGatewayServer(
       enableUsbAudioDiagnostic: config.enableUsbAudioDiagnostic,
     });
 
+  // AI voice agent: optional and inert unless enabled. Settings saved from the dashboard are layered over
+  // .env; a bad AI setting disables the agent and is reported, it never stops the gateway.
+  const aiEnv = options.ai?.env ?? process.env;
+  const aiSettings = new AiSettingsService(repository, aiEnv);
+  const aiUsage = new AiUsageStore(db);
+  const usbPcmVerifierRef: { current?: UsbPcmVerifier } = {};
+  const aiRuntime = new AiRuntime({
+    settings: aiSettings,
+    usage: aiUsage,
+    modem,
+    audio,
+    callManager,
+    eventBus,
+    recordingsDir: config.audioDumpDir,
+    providers: options.ai?.providers,
+    fetchImpl: options.ai?.fetchImpl,
+    transports: options.ai?.transports,
+    allowSimulatedHardware: options.ai?.allowSimulatedHardware,
+    forceMode: options.ai?.mode,
+    idleWaitsMs: options.ai?.idleWaitsMs,
+    callLimitMs: options.ai?.callLimitMs,
+    automationAudioWaitMs: options.ai?.automationAudioWaitMs,
+    automationPollMs: options.ai?.automationPollMs,
+    audioPortBusy: () => usbPcmVerifierRef.current?.isBusy === true,
+  });
+  const aiOrchestrator = aiRuntime.orchestrator;
+  if (aiRuntime.config.config.enabled) {
+    for (const message of aiRuntime.config.errors) logger.error(`AI agent disabled by configuration: ${message}`);
+    for (const message of aiRuntime.config.warnings) logger.warn(`AI agent: ${message}`);
+  }
+
+  const usbPcmVerifier =
+    config.enableUsbPcmCaptureTest || config.enableUsbPcmOutboundToneTest
+      ? new UsbPcmVerifier({
+          audio,
+          callManager,
+          outputDir: config.audioDumpDir,
+          captureEnabled: config.enableUsbPcmCaptureTest,
+          outboundToneEnabled: config.enableUsbPcmOutboundToneTest,
+          externalBusyReason: () =>
+            aiOrchestrator.hasActiveSession ? 'The AI agent is using the audio port for this call' : null,
+        })
+      : undefined;
+  usbPcmVerifierRef.current = usbPcmVerifier;
+
   // 4. Persistence Event Hookup (Safely recording calls to SQLite)
   eventBus.on('call:started', (session) => {
     try {
@@ -132,7 +211,8 @@ export function createGatewayServer(
       repository.recordCallEvent(
         event.callId,
         'STATE_CHANGED',
-        undefined,
+        // Why the state changed (never identifiers): lets a later investigation tell BEGIN from CONNECT.
+        { trigger: event.trigger ?? null, triggerLine: event.triggerLine ?? null, at: event.timestamp },
         event.previousState,
         event.currentState
       );
@@ -182,10 +262,21 @@ export function createGatewayServer(
   app.use(
     '/api/gateway',
     createGatewayRouter({
+      usbPcmVerifier,
       modem,
       audio,
       callManager,
       config,
+      listPorts: options.ai?.hardwarePortLister,
+    })
+  );
+
+  app.use(
+    '/api/ai',
+    createAiRouter({
+      runtime: aiRuntime,
+      settings: aiSettings,
+      usage: aiUsage,
     })
   );
 
@@ -221,20 +312,40 @@ export function createGatewayServer(
     audioPort: config.audioPort,
   });
 
+  let instanceLock: InstanceLock | null = null;
+  const releaseInstanceLock = (): void => {
+    process.off('exit', releaseInstanceLock);
+    instanceLock?.release();
+    instanceLock = null;
+  };
+
   const start = async (): Promise<void> => {
     logger.info(`Starting gateway server in ${config.modemDriver} mode on ${config.host}:${config.port}`);
+    // Claim the serial ports before anything opens them; a second gateway fails here, naming the owner.
+    if (config.modemDriver === 'hardware' && !instanceLock) {
+      instanceLock = acquireInstanceLock([config.atPort, config.audioPort], options.instanceLockDir);
+      process.once('exit', releaseInstanceLock);
+      logger.info(`Serial port ownership recorded for ${config.atPort} and ${config.audioPort} (pid ${process.pid})`);
+    }
     if (modem.getConnectionState() === 'DISCONNECTED') {
-      await modem.initialize({
-        atPort: config.atPort,
-        atBaudRate: config.atBaudRate,
-        audioPort: config.audioPort,
-        audioBaudRate: config.audioBaudRate,
-      });
+      try {
+        await modem.initialize({
+          atPort: config.atPort,
+          atBaudRate: config.atBaudRate,
+          audioPort: config.audioPort,
+          audioBaudRate: config.audioBaudRate,
+        });
+      } catch (error) {
+        // A failed start must not keep claiming ports it never managed to open.
+        releaseInstanceLock();
+        throw error;
+      }
     }
 
     await new Promise<void>((resolve) => {
       httpServer.listen(config.port, config.host, () => {
         logger.info(`HTTP and Socket.IO server listening on http://${config.host}:${config.port}`);
+        aiRuntime.start();
         resolve();
       });
     });
@@ -242,6 +353,7 @@ export function createGatewayServer(
 
   const close = async (): Promise<void> => {
     logger.info('Closing gateway server connections...');
+    await aiRuntime.stop();
     await socketServer.close();
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
@@ -250,6 +362,7 @@ export function createGatewayServer(
       await modem.close();
     }
     db.close();
+    releaseInstanceLock();
     logger.info('Gateway server shutdown complete');
   };
 
@@ -262,6 +375,8 @@ export function createGatewayServer(
     callManager,
     repository,
     eventBus,
+    aiOrchestrator,
+    aiRuntime,
     db,
     config,
     start,

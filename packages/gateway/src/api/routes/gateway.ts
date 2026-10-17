@@ -12,16 +12,32 @@ import {
   SimPinStatus,
 } from '@sim-gateway/shared';
 import { GatewayConfigInput } from '@sim-gateway/shared';
+import {
+  AtCommandError,
+  AtCommandTimeoutError,
+  SerialPortDisconnectedError,
+} from '@sim-gateway/shared';
+import { AtParser } from '../../adapters/modem/at-parser.js';
+import { redactDiagnosticText } from '../../core/logger.js';
+import type { UsbPcmTestError, UsbPcmVerifier } from '../../diagnostics/usb-pcm-verification.js';
+import { createHardwareRouter, RawPortInfo } from './hardware.js';
 
 export interface GatewayRouteDependencies {
+  usbPcmVerifier?: UsbPcmVerifier;
   modem: IModemAdapter;
   audio?: IAudioAdapter;
   callManager: ICallSessionManager;
   config: GatewayConfigInput;
+  /** Test seam for the Hardware page's port listing. */
+  listPorts?: () => Promise<RawPortInfo[]>;
 }
 
 export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
   const router = Router();
+
+  // Hardware Operations: status, port discovery, logs and the redacted report. Read-only and AT-free (except
+  // /hardware/modem-info, which refuses while any call exists).
+  router.use('/hardware', createHardwareRouter(deps));
 
   router.get('/health', async (_req: Request, res: Response) => {
     let modemInfo: ModemDeviceInfo | null = null;
@@ -97,6 +113,55 @@ export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
     res.json(health);
   });
 
+  /**
+   * Why did the last call end or fail? Runs AT+CEER through the modem's own command queue (the same
+   * serialized path as every other command; no second handle on the AT port). Read-only on the modem.
+   * The answer is only meaningful right after a failed or ended call, so ask promptly.
+   */
+  router.get('/diagnostics/ceer', async (req: Request, res: Response) => {
+    const requested = Number(req.query.timeoutMs);
+    const timeoutMs = Number.isFinite(requested) ? Math.min(15_000, Math.max(500, requested)) : 5000;
+    const call = deps.callManager.getCurrentCall();
+    const base = {
+      command: 'AT+CEER',
+      isSimulated: deps.modem.isSimulated,
+      driverType: deps.modem.driverType,
+      callState: call?.state ?? null,
+      timestamp: new Date().toISOString(),
+    };
+    try {
+      const response = await deps.modem.executeCommand('AT+CEER', timeoutMs);
+      const parsed = AtParser.parseCeer(response);
+      res.json({
+        ...base,
+        terminal: 'OK',
+        // Digit runs (phone numbers) are masked the same way the logs mask them.
+        reports: parsed.reports.map(redactDiagnosticText),
+        other: parsed.other.map(redactDiagnosticText),
+        note: 'The module\'s own report of why the last call ended or failed. Only meaningful right after that call.',
+      });
+    } catch (error) {
+      if (error instanceof AtCommandTimeoutError) {
+        res.status(504).json({ ...base, error: 'The modem did not answer AT+CEER in time', code: 'MODEM_TIMEOUT', timeoutMs });
+        return;
+      }
+      if (error instanceof SerialPortDisconnectedError) {
+        res.status(503).json({ ...base, error: 'The modem AT port is not connected', code: 'MODEM_DISCONNECTED' });
+        return;
+      }
+      if (error instanceof AtCommandError) {
+        res.status(502).json({
+          ...base,
+          error: redactDiagnosticText(error.message),
+          code: 'MODEM_ERROR',
+          response: redactDiagnosticText(error.rawResponse ?? ''),
+        });
+        return;
+      }
+      res.status(500).json({ ...base, error: 'AT+CEER failed', code: 'INTERNAL_ERROR' });
+    }
+  });
+
   router.post('/audio/usb-diagnostic', async (req: Request, res: Response) => {
     if (deps.config.enableUsbAudioDiagnostic !== true) {
       res.status(404).json({ error: 'USB audio diagnostic is disabled' });
@@ -120,10 +185,51 @@ export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
         res.json((await deps.callManager.deactivateUsbAudioDiagnostic()) ?? { active: false });
         return;
       }
-      res.status(400).json({ error: "action must be 'activate' or 'deactivate'" });
+      if (action === 'recover') {
+        if (!deps.callManager.recoverUsbAudio) {
+          res.status(501).json({ error: 'USB audio recovery is unavailable' });
+          return;
+        }
+        res.json(await deps.callManager.recoverUsbAudio('manual'));
+        return;
+      }
+      if (action === 'status') {
+        res.json(deps.callManager.getUsbAudioStatus?.() ?? { registrationActive: false, needsRecovery: false, lastRecovery: null });
+        return;
+      }
+      res.status(400).json({ error: "action must be 'activate', 'deactivate', 'recover' or 'status'" });
     } catch (error) {
       res.status(409).json({ error: (error as Error).message });
     }
+  });
+
+  router.post('/audio/usb-pcm/capture', async (_req: Request, res: Response) => {
+    if (!deps.usbPcmVerifier || deps.config.enableUsbPcmCaptureTest !== true) {
+      res.status(404).json({ error: 'USB PCM capture test is disabled' });
+      return;
+    }
+    try {
+      res.json(await deps.usbPcmVerifier.captureInbound());
+    } catch (error) {
+      res.status((error as UsbPcmTestError).status ?? 409).json({ error: (error as Error).message });
+    }
+  });
+
+  router.post('/audio/usb-pcm/tone', async (req: Request, res: Response) => {
+    if (!deps.usbPcmVerifier || deps.config.enableUsbPcmOutboundToneTest !== true) {
+      res.status(404).json({ error: 'USB PCM outbound tone test is disabled' });
+      return;
+    }
+    try {
+      res.json(await deps.usbPcmVerifier.playOutboundTone(req.body ?? {}));
+    } catch (error) {
+      res.status((error as UsbPcmTestError).status ?? 409).json({ error: (error as Error).message });
+    }
+  });
+
+  router.post('/audio/usb-pcm/abort', (_req: Request, res: Response) => {
+    deps.usbPcmVerifier?.abort();
+    res.json({ aborted: true });
   });
 
   return router;

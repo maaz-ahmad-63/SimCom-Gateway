@@ -300,6 +300,121 @@ describe('CallSessionManager', () => {
     await modem.close();
   });
 
+  describe('inbound ringing is not rejected by its own URCs', () => {
+    const ring = (type: 'RING' | 'CLIP', phoneNumber?: string) =>
+      type === 'RING'
+        ? { raw: '+CRING: VOICE', type: 'RING', timestamp: new Date().toISOString(), isSimulated: false }
+        : {
+            raw: `+CLIP: "${phoneNumber}",145`,
+            type: 'CLIP',
+            phoneNumber,
+            typeOfAddress: 145,
+            timestamp: new Date().toISOString(),
+            isSimulated: false,
+          };
+
+    it('keeps ringing and sends no AT+CHUP when +CRING is followed by +CLIP', async () => {
+      const { modem, eventBus, manager } = createHarness();
+      await modem.initialize();
+      const hangup = vi.spyOn(modem, 'hangup');
+      const ended: CallSession[] = [];
+      eventBus.on('call:ended', (s) => ended.push(s));
+
+      modem.emit('urc', ring('RING'));
+      const callId = manager.getCurrentCall()?.id;
+      modem.emit('urc', ring('CLIP', '+919123456789'));
+
+      expect(hangup).not.toHaveBeenCalled();
+      expect(ended).toHaveLength(0);
+      expect(manager.getCurrentCall()?.id).toBe(callId);
+      expect(manager.getCurrentCall()?.state).toBe('INBOUND_RINGING');
+      expect(manager.getCurrentCall()?.remoteNumber).toBe('+919123456789');
+      await modem.close();
+    });
+
+    it('survives repeated ring cycles and can still be answered', async () => {
+      const { modem, manager } = createHarness();
+      await modem.initialize();
+      const hangup = vi.spyOn(modem, 'hangup');
+
+      for (let i = 0; i < 4; i++) {
+        modem.emit('urc', ring('RING'));
+        modem.emit('urc', ring('CLIP', '+919123456789'));
+      }
+
+      expect(hangup).not.toHaveBeenCalled();
+      expect(manager.getCurrentCall()?.state).toBe('INBOUND_RINGING');
+      await manager.answer();
+      expect(manager.getCurrentCall()?.state).toBe('ACTIVE');
+      await manager.hangup();
+      await modem.close();
+    });
+
+    it('records a missed call only when the caller hangs up', async () => {
+      const { modem, eventBus, manager } = createHarness();
+      await modem.initialize();
+      const ended: CallSession[] = [];
+      eventBus.on('call:ended', (s) => ended.push(s));
+
+      modem.emit('urc', ring('RING'));
+      modem.emit('urc', ring('CLIP', '+919123456789'));
+      modem.emit('urc', {
+        raw: 'NO CARRIER',
+        type: 'NO_CARRIER',
+        timestamp: new Date().toISOString(),
+        isSimulated: false,
+      });
+
+      expect(ended).toHaveLength(1);
+      expect(ended[0].outcome).toBe('missed');
+      expect(manager.getCurrentCall()).toBeNull();
+      await modem.close();
+    });
+
+    it('still rejects with AT+CHUP when a different call state is busy', async () => {
+      const { modem, manager } = createHarness();
+      await modem.initialize();
+      await manager.dial({ phoneNumber: '+919876543210' });
+      const hangup = vi.spyOn(modem, 'hangup');
+
+      modem.emit('urc', ring('CLIP', '+919999999999'));
+
+      expect(hangup).toHaveBeenCalledTimes(1);
+      expect(manager.getCurrentCall()?.state).toBe('DIALING');
+      await manager.hangup();
+      await modem.close();
+    });
+
+    it('replaces a stale ringing session instead of rejecting the new call', async () => {
+      const { modem, eventBus, manager } = createHarness();
+      await modem.initialize();
+      const hangup = vi.spyOn(modem, 'hangup');
+      const ended: CallSession[] = [];
+      eventBus.on('call:ended', (s) => ended.push(s));
+      vi.useFakeTimers();
+      try {
+        modem.emit('urc', ring('CLIP', '+919111111111'));
+        const staleId = manager.getCurrentCall()?.id;
+
+        // Caller vanished without NO CARRIER; a new call arrives long after the last ring
+        vi.advanceTimersByTime(60_000);
+        modem.emit('urc', ring('RING'));
+        modem.emit('urc', ring('CLIP', '+919222222222'));
+
+        expect(hangup).not.toHaveBeenCalled();
+        expect(ended).toHaveLength(1);
+        expect(ended[0].id).toBe(staleId);
+        expect(ended[0].outcome).toBe('missed');
+        expect(manager.getCurrentCall()?.id).not.toBe(staleId);
+        expect(manager.getCurrentCall()?.state).toBe('INBOUND_RINGING');
+        expect(manager.getCurrentCall()?.remoteNumber).toBe('+919222222222');
+      } finally {
+        vi.useRealTimers();
+      }
+      await modem.close();
+    });
+  });
+
   it('strictly enforces single concurrency lock on outbound calls', async () => {
     const { modem, manager } = createHarness();
     await modem.initialize();

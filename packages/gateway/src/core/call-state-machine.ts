@@ -30,6 +30,11 @@ export class CallStateMachine {
     return { ...this.currentSession };
   }
 
+  /** Update the remote party number (e.g. when +CLIP follows an anonymous RING). */
+  setRemoteNumber(remoteNumber: string): void {
+    this.currentSession.remoteNumber = remoteNumber;
+  }
+
   canTransitionTo(nextState: CallState): boolean {
     const allowed = VALID_TRANSITIONS[this.currentSession.state];
     return allowed.includes(nextState);

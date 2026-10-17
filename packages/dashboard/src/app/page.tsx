@@ -7,6 +7,7 @@ import { VuMeter } from '../components/dashboard/VuMeter';
 import { ModemTelemetryCard } from '../components/dashboard/ModemTelemetryCard';
 import { QuickInboundTrigger } from '../components/dashboard/QuickInboundTrigger';
 import { RecentCallsList } from '../components/dashboard/RecentCallsList';
+import { AiStatusCard } from '../components/dashboard/AiStatusCard';
 import { AlertCircle, X } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -72,6 +73,7 @@ export default function DashboardPage() {
         {/* Right Column (1 col) */}
         <div className="space-y-6">
           <ModemTelemetryCard />
+          <AiStatusCard />
           <QuickInboundTrigger />
         </div>
       </div>

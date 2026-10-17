@@ -482,14 +482,16 @@ describe('Phase 4.1: Hardware-Readiness Deep Audit & Regression Suite', () => {
         });
       }).toThrow(/GATEWAY_API_KEY.*mandatory/i);
 
-      // 5. Valid strong key in hardware mode succeeds and defaults to COM20/COM19
+      // 5. Valid strong key plus explicitly configured ports succeeds; ports are never assumed
       const validHwConfig = loadConfig({
         modemDriver: 'hardware',
         gatewayApiKey: 'secure-windows-hardware-key-32ch',
+        atPort: 'COM22',
+        audioPort: 'COM26',
       });
       expect(validHwConfig.modemDriver).toBe('hardware');
-      expect(validHwConfig.atPort).toBe('COM20');
-      expect(validHwConfig.audioPort).toBe('COM19');
+      expect(validHwConfig.atPort).toBe('COM22');
+      expect(validHwConfig.audioPort).toBe('COM26');
 
       // 6. Mock mode succeeds without custom key and uses mock dev default
       const mockConfig = loadConfig({

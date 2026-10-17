@@ -4,11 +4,13 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
+  Bot,
   History,
   LayoutDashboard,
   PhoneCall,
   Sliders,
   Cpu,
+  Wrench,
   Volume2,
 } from 'lucide-react';
 import { useGateway } from '../../lib/context/GatewayContext';
@@ -16,7 +18,9 @@ import { useGateway } from '../../lib/context/GatewayContext';
 const navItems = [
   { href: '/', label: 'Overview', icon: LayoutDashboard },
   { href: '/dialer', label: 'Dialer & Live', icon: PhoneCall, showActivePill: true },
+  { href: '/ai', label: 'AI Agent', icon: Bot },
   { href: '/calls', label: 'Call History', icon: History },
+  { href: '/hardware', label: 'Hardware', icon: Wrench },
   { href: '/settings', label: 'Settings', icon: Sliders },
 ];
 
@@ -77,7 +81,7 @@ export function Navigation() {
               <Cpu className="w-3 h-3 text-slate-500" /> AT Port
             </span>
             <span className="text-slate-300 font-semibold">
-              {health?.modem.atPort || 'COM20'}
+              {health?.modem.atPort || 'not configured'}
             </span>
           </div>
           <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
@@ -85,7 +89,7 @@ export function Navigation() {
               <Volume2 className="w-3 h-3 text-slate-500" /> Audio Port
             </span>
             <span className="text-slate-300 font-semibold">
-              {health?.modem.audioPort || 'COM19'}
+              {health?.modem.audioPort || 'not configured'}
             </span>
           </div>
         </div>

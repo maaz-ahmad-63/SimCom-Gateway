@@ -60,6 +60,38 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    name: '002_ai_turn_log',
+    up: (db: DatabaseType) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ai_turns (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          call_id TEXT NOT NULL,
+          at TEXT NOT NULL,
+          status TEXT NOT NULL,
+          reason TEXT,
+          stt_ms REAL,
+          llm_first_token_ms REAL,
+          tts_first_ms REAL,
+          total_ms REAL,
+          utterance_ms REAL,
+          stt_seconds REAL NOT NULL DEFAULT 0,
+          llm_prompt_tokens INTEGER,
+          llm_completion_tokens INTEGER,
+          tts_chars INTEGER NOT NULL DEFAULT 0,
+          stt_key TEXT,
+          llm_key TEXT,
+          tts_key TEXT,
+          mock INTEGER NOT NULL DEFAULT 0,
+          transcript TEXT,
+          reply TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_ai_turns_at ON ai_turns(at DESC);
+        CREATE INDEX IF NOT EXISTS idx_ai_turns_call ON ai_turns(call_id, at);
+      `);
+    },
+  },
 ];
 
 export function runMigrations(db: DatabaseType): void {

@@ -170,6 +170,10 @@ export class GatewayRepository {
       .run(key, value);
   }
 
+  deleteSetting(key: string): void {
+    this.db.prepare('DELETE FROM gateway_settings WHERE key = ?').run(key);
+  }
+
   private mapRowToSession(row: CallDbRow): CallSession {
     let metadata: Record<string, unknown> | undefined;
     if (row.metadata) {

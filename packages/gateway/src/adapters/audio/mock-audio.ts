@@ -18,6 +18,7 @@ export class MockAudioAdapter extends EventEmitter implements IAudioAdapter {
   private outboundStream: PassThrough | null = null;
 
   private stats: AudioStreamStats = {
+    lastFrameAt: null,
     bytesReceived: 0,
     bytesSent: 0,
     framesReceived: 0,
@@ -70,6 +71,7 @@ export class MockAudioAdapter extends EventEmitter implements IAudioAdapter {
       const rms = this.calculateRms(buffer);
       this.stats.bytesReceived += buffer.length;
       this.stats.framesReceived++;
+      this.stats.lastFrameAt = Date.now();
       this.stats.currentRmsInbound = rms;
 
       const frame: AudioFrame = {

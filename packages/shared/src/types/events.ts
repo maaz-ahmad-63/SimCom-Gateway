@@ -1,6 +1,7 @@
 import { CallSession, CallStateChangeEvent, DialRequest, DtmfRequest } from './call.js';
 import { ModemSignalQuality, ModemNetworkStatus, UrcEvent } from './modem.js';
 import { GatewayHealthStatus } from './gateway.js';
+import { AiInspectorEvent } from './ai-control.js';
 
 /**
  * Socket.IO Typed Contract definitions.
@@ -35,6 +36,9 @@ export interface ServerToClientEvents {
     outboundRms: number;
     timestamp: number;
   }) => void;
+
+  /** AI pipeline inspector event (stage timings, status, optional transcript text) */
+  'ai:event': (event: AiInspectorEvent) => void;
 
   /** System alerts, notifications, or errors */
   'gateway:alert': (alert: {
