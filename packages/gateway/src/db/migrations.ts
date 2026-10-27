@@ -92,6 +92,28 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 3,
+    name: '003_ai_turn_latency_metrics',
+    up: (db: DatabaseType) => {
+      // Additive only: every column is nullable, so existing rows read NULL ("not recorded") and old writers keep working.
+      // ADD COLUMN is not idempotent in SQLite, so a column that is already there is skipped.
+      const existing = new Set((db.prepare('PRAGMA table_info(ai_turns)').all() as { name: string }[]).map((c) => c.name));
+      const columns: Array<[string, 'REAL' | 'INTEGER']> = [
+        ['first_audio_ms', 'REAL'],
+        ['perceived_first_audio_ms', 'REAL'],
+        ['endpoint_ms', 'REAL'],
+        ['stt_waited_ms', 'REAL'],
+        ['speculative_stt', 'INTEGER'],
+        ['late_frames', 'INTEGER'],
+        ['risk_frames', 'INTEGER'],
+        ['knowledge_hits', 'INTEGER'],
+      ];
+      for (const [name, type] of columns) {
+        if (!existing.has(name)) db.exec(`ALTER TABLE ai_turns ADD COLUMN ${name} ${type}`);
+      }
+    },
+  },
 ];
 
 export function runMigrations(db: DatabaseType): void {

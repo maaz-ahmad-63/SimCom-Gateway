@@ -371,6 +371,16 @@ export class AiCallOrchestrator extends EventEmitter {
         // Text only exists on the result while the operator enabled transcripts.
         transcript: result.transcript ?? null,
         reply: result.reply ?? null,
+        firstAudioMs: m.firstAudioMs,
+        perceivedFirstAudioMs: m.perceivedFirstAudioMs,
+        endpointMs: m.timeline?.endpointMs ?? null,
+        sttWaitedMs: m.sttWaitedMs,
+        // Whether a speculative transcript was used only means something when speech-to-text was part of this turn.
+        speculativeStt: sttSubmitted ? m.speculativeStt : null,
+        // Frame counts only describe a turn that actually played audio; a turn with no playback has none to report.
+        lateFrames: m.firstAudioMs === null ? null : m.lateFrames,
+        riskFrames: m.firstAudioMs === null ? null : m.riskFrames,
+        knowledgeHits: m.knowledgeHits,
       });
     } catch (error) {
       this.logger.warn(`Could not record AI turn: ${(error as Error).message}`);

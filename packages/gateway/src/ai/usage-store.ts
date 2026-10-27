@@ -20,6 +20,18 @@ export interface TurnRecord {
   mock: boolean;
   transcript?: string | null;
   reply?: string | null;
+  /**
+   * Latency and quality metrics. Optional so older callers still compile; omitted or null means "not available for
+   * this turn" and is stored as NULL. A measured 0 or false is stored as 0.
+   */
+  firstAudioMs?: number | null;
+  perceivedFirstAudioMs?: number | null;
+  endpointMs?: number | null;
+  sttWaitedMs?: number | null;
+  speculativeStt?: boolean | null;
+  lateFrames?: number | null;
+  riskFrames?: number | null;
+  knowledgeHits?: number | null;
 }
 
 interface Row {
@@ -49,8 +61,9 @@ export class AiUsageStore {
     this.db
       .prepare(
         `INSERT INTO ai_turns (call_id, at, status, reason, stt_ms, llm_first_token_ms, tts_first_ms, total_ms, utterance_ms,
-           stt_seconds, llm_prompt_tokens, llm_completion_tokens, tts_chars, stt_key, llm_key, tts_key, mock, transcript, reply)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           stt_seconds, llm_prompt_tokens, llm_completion_tokens, tts_chars, stt_key, llm_key, tts_key, mock, transcript, reply,
+           first_audio_ms, perceived_first_audio_ms, endpoint_ms, stt_waited_ms, speculative_stt, late_frames, risk_frames, knowledge_hits)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         turn.callId,
@@ -71,7 +84,15 @@ export class AiUsageStore {
         turn.selection.tts,
         turn.mock ? 1 : 0,
         turn.transcript ?? null,
-        turn.reply ?? null
+        turn.reply ?? null,
+        turn.firstAudioMs ?? null,
+        turn.perceivedFirstAudioMs ?? null,
+        turn.endpointMs ?? null,
+        turn.sttWaitedMs ?? null,
+        turn.speculativeStt === undefined || turn.speculativeStt === null ? null : turn.speculativeStt ? 1 : 0,
+        turn.lateFrames ?? null,
+        turn.riskFrames ?? null,
+        turn.knowledgeHits ?? null
       );
   }
 

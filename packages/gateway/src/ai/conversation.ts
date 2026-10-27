@@ -45,6 +45,8 @@ export interface TurnMetrics {
   speculativeStt: boolean;
   /** Absolute monotonic marks the timeline is computed from (internal). */
   marks: TurnMarks;
+  /** Passages retrieved for this turn; null when no knowledge base is configured or the turn never reached the model. */
+  knowledgeHits: number | null;
 }
 
 /** Offsets in ms from the end of the caller's speech. Null where a stage did not happen in this turn. */
@@ -210,6 +212,7 @@ const emptyMetrics = (utteranceMs: number): TurnMetrics => ({
   sttWaitedMs: null,
   speculativeStt: false,
   marks: {},
+  knowledgeHits: null,
 });
 
 /** Waits for a promise, but stops waiting (rejecting as a cancellation) when the signal aborts. */
@@ -1068,6 +1071,7 @@ export class ConversationSession {
     };
 
     const built = await this.buildSystem(transcript);
+    metrics.knowledgeHits = this.knowledge ? built.hits.length : null;
     if (signal.aborted) return outcome({ status: 'cancelled', reason: 'aborted', assessment });
     const producer = (async () => {
       this.trace(turnId, 'llm-request', 'ok', {
