@@ -204,14 +204,75 @@ describe('AiUsageStore.record with the new metrics', () => {
     expect(lastRow(s.db)).toMatchObject({ stt_ms: 300, llm_first_token_ms: 150, tts_first_ms: 200, total_ms: 2000, tts_chars: 40 });
   });
 
-  it('leaves the API-facing log entry and the totals unchanged', () => {
+  it('leaves the totals unchanged', () => {
     const s = store();
     s.store.record({ ...baseTurn, firstAudioMs: 500, lateFrames: 2 });
-    const entry = s.store.recent(1)[0];
-    expect(Object.keys(entry).sort()).toEqual(
-      ['id', 'callId', 'at', 'status', 'reason', 'sttMs', 'llmFirstTokenMs', 'ttsFirstMs', 'totalMs', 'utteranceMs', 'sttSeconds', 'llmPromptTokens', 'llmCompletionTokens', 'ttsChars', 'transcript', 'reply'].sort()
-    );
     expect(s.store.totals().turns).toBe(1);
+    expect(Object.keys(s.store.totals()).sort()).toEqual(
+      ['calls', 'turns', 'sttSeconds', 'llmPromptTokens', 'llmCompletionTokens', 'ttsChars', 'failures', 'estimatedCostUsd', 'costNote'].sort()
+    );
+  });
+});
+
+const OLD_ENTRY_KEYS = ['id', 'callId', 'at', 'status', 'reason', 'sttMs', 'llmFirstTokenMs', 'ttsFirstMs', 'totalMs', 'utteranceMs', 'sttSeconds', 'llmPromptTokens', 'llmCompletionTokens', 'ttsChars', 'transcript', 'reply'];
+const NEW_ENTRY_KEYS = ['firstAudioMs', 'perceivedFirstAudioMs', 'endpointMs', 'sttWaitedMs', 'speculativeStt', 'lateFrames', 'riskFrames', 'knowledgeHits'];
+
+describe('AiUsageStore.recent exposes the new metrics (the /api/ai/turns entries)', () => {
+  function store(): { db: DatabaseType; store: AiUsageStore } {
+    const db = tempDb();
+    runMigrations(db);
+    return { db, store: new AiUsageStore(db) };
+  }
+
+  it('adds exactly the eight metric keys and nothing else to each entry', () => {
+    const s = store();
+    s.store.record(baseTurn);
+    expect(Object.keys(s.store.recent(1)[0]).sort()).toEqual([...OLD_ENTRY_KEYS, ...NEW_ENTRY_KEYS].sort());
+  });
+
+  it('returns populated values with speculativeStt as a real boolean', () => {
+    const s = store();
+    s.store.record({ ...baseTurn, firstAudioMs: 812.5, perceivedFirstAudioMs: 1290, endpointMs: 650, sttWaitedMs: 40, speculativeStt: true, lateFrames: 3, riskFrames: 1, knowledgeHits: 2 });
+    const entry = s.store.recent(1)[0];
+    expect(entry).toMatchObject({ firstAudioMs: 812.5, perceivedFirstAudioMs: 1290, endpointMs: 650, sttWaitedMs: 40, speculativeStt: true, lateFrames: 3, riskFrames: 1, knowledgeHits: 2 });
+    expect(entry.speculativeStt).toBe(true); // not the integer 1
+  });
+
+  it('returns measured zeros and false as they are, not as null', () => {
+    const s = store();
+    s.store.record({ ...baseTurn, firstAudioMs: 0, perceivedFirstAudioMs: 0, endpointMs: 0, sttWaitedMs: 0, speculativeStt: false, lateFrames: 0, riskFrames: 0, knowledgeHits: 0 });
+    const entry = s.store.recent(1)[0];
+    expect(entry).toMatchObject({ firstAudioMs: 0, perceivedFirstAudioMs: 0, endpointMs: 0, sttWaitedMs: 0, speculativeStt: false, lateFrames: 0, riskFrames: 0, knowledgeHits: 0 });
+    expect(entry.speculativeStt).toBe(false); // not the integer 0
+  });
+
+  it('returns null for every new metric on a turn that recorded none', () => {
+    const s = store();
+    s.store.record(baseTurn);
+    const entry = s.store.recent(1)[0] as unknown as Record<string, unknown>;
+    for (const k of NEW_ENTRY_KEYS) expect(entry[k], k).toBeNull();
+  });
+
+  it('keeps every pre-existing field exactly as it was, and old rows read null for the new ones', () => {
+    const db = oldSchemaDb();
+    db.prepare(
+      `INSERT INTO ai_turns (call_id, at, status, reason, stt_ms, llm_first_token_ms, tts_first_ms, total_ms, utterance_ms,
+         stt_seconds, llm_prompt_tokens, llm_completion_tokens, tts_chars, stt_key, llm_key, tts_key, mock, transcript, reply)
+       VALUES ('old-1', '2026-10-01T00:00:00.000Z', 'completed', NULL, 301.5, 120, 210, 1800, 1100, 1.1, 12, 7, 33, 'nova-3', 'groq_qwen_3_8_27b', 'cartesia', 0, NULL, NULL)`
+    ).run();
+    runMigrations(db);
+    const entry = new AiUsageStore(db).recent(1)[0] as unknown as Record<string, unknown>;
+    expect(entry).toMatchObject({ callId: 'old-1', at: '2026-10-01T00:00:00.000Z', status: 'completed', reason: null, sttMs: 301.5, llmFirstTokenMs: 120, ttsFirstMs: 210, totalMs: 1800, utteranceMs: 1100, sttSeconds: 1.1, llmPromptTokens: 12, llmCompletionTokens: 7, ttsChars: 33, transcript: null, reply: null });
+    for (const k of NEW_ENTRY_KEYS) expect(entry[k], k).toBeNull();
+  });
+
+  it('does not add transcript text or provider details: the log only carries what it did before', () => {
+    const s = store();
+    s.store.record({ ...baseTurn, firstAudioMs: 500 });
+    const entry = s.store.recent(1)[0] as unknown as Record<string, unknown>;
+    expect(entry.transcript).toBeNull();
+    expect(entry.reply).toBeNull();
+    for (const k of ['sttKey', 'llmKey', 'ttsKey', 'stt_key', 'llm_key', 'tts_key', 'mock']) expect(k in entry, k).toBe(false);
   });
 });
 
@@ -302,6 +363,28 @@ describe('gateway persists the metrics of a real turn, and the test-call path st
     // The pre-existing columns are still filled.
     expect(row.stt_ms).not.toBeNull();
     expect(row.llm_first_token_ms).not.toBeNull();
+
+    // The same turn through the HTTP API.
+    const res = await h.api('get', `/api/ai/turns?callId=${call.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.turns).toHaveLength(1);
+    const turn = res.body.turns[0];
+    expect(turn).toMatchObject({ status: 'completed', callId: call.id });
+    expect(turn.firstAudioMs).toBe(row.first_audio_ms);
+    expect(turn.perceivedFirstAudioMs).toBe(row.perceived_first_audio_ms);
+    expect(turn.endpointMs).toBe(row.endpoint_ms);
+    expect(turn.sttWaitedMs).toBe(row.stt_waited_ms);
+    expect(typeof turn.speculativeStt).toBe('boolean'); // never the stored 0/1
+    expect(turn.speculativeStt).toBe(row.speculative_stt === 1);
+    expect(turn.lateFrames).toBe(row.late_frames);
+    expect(turn.riskFrames).toBe(row.risk_frames);
+    expect(turn.knowledgeHits).toBeNull();
+    // Existing consumers still find everything they read, and /usage has no per-turn metrics added.
+    for (const k of OLD_ENTRY_KEYS) expect(k in turn, k).toBe(true);
+    expect(turn.transcript).toBeNull(); // transcripts stay off unless the operator enabled them
+    const usage = (await h.api('get', '/api/ai/usage?range=all')).body;
+    expect(Object.keys(usage).sort()).toEqual(['range', 'totals']);
+    expect(Object.keys(usage.totals).sort()).toEqual(['calls', 'turns', 'sttSeconds', 'llmPromptTokens', 'llmCompletionTokens', 'ttsChars', 'failures', 'estimatedCostUsd', 'costNote'].sort());
   });
 
   it('logs an operator test call with NULL for every new metric', async () => {
@@ -311,6 +394,8 @@ describe('gateway persists the metrics of a real turn, and the test-call path st
     const row = h.server.db.prepare("SELECT * FROM ai_turns WHERE call_id = 'test:llm'").get() as Record<string, unknown>;
     expect(row).toBeTruthy();
     for (const c of NEW_COLUMNS) expect(row[c], c).toBeNull();
-    expect((await h.api('get', '/api/ai/turns')).body.turns.length).toBe(1);
+    const turns = (await h.api('get', '/api/ai/turns')).body.turns;
+    expect(turns.length).toBe(1);
+    for (const k of NEW_ENTRY_KEYS) expect(turns[0][k], k).toBeNull(); // present in the response, null = not available
   });
 });

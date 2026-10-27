@@ -51,6 +51,14 @@ interface Row {
   tts_chars: number;
   transcript: string | null;
   reply: string | null;
+  first_audio_ms: number | null;
+  perceived_first_audio_ms: number | null;
+  endpoint_ms: number | null;
+  stt_waited_ms: number | null;
+  speculative_stt: number | null;
+  late_frames: number | null;
+  risk_frames: number | null;
+  knowledge_hits: number | null;
 }
 
 /** Per-turn log and usage totals. Text columns stay NULL unless the operator turned transcripts on. */
@@ -118,6 +126,15 @@ export class AiUsageStore {
       ttsChars: r.tts_chars,
       transcript: r.transcript,
       reply: r.reply,
+      // `?? null` keeps NULL as "not available" and 0 as a measured zero (0 is not nullish).
+      firstAudioMs: r.first_audio_ms ?? null,
+      perceivedFirstAudioMs: r.perceived_first_audio_ms ?? null,
+      endpointMs: r.endpoint_ms ?? null,
+      sttWaitedMs: r.stt_waited_ms ?? null,
+      speculativeStt: r.speculative_stt === null || r.speculative_stt === undefined ? null : r.speculative_stt !== 0,
+      lateFrames: r.late_frames ?? null,
+      riskFrames: r.risk_frames ?? null,
+      knowledgeHits: r.knowledge_hits ?? null,
     }));
   }
 

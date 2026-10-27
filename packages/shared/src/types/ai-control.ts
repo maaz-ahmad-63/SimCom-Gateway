@@ -213,6 +213,26 @@ export interface AiTurnLogEntry {
   /** Only present while transcripts are enabled and were stored. */
   transcript: string | null;
   reply: string | null;
+  /**
+   * Latency and quality metrics. null means "not available for this turn" (including every turn logged before they
+   * were recorded); 0 and false are measured values.
+   */
+  /** Turn start to the first reply audio written (after the endpointing wait). */
+  firstAudioMs: number | null;
+  /** End of the caller's speech to the first reply audio written: what the caller waited. A write, not proof it was heard. */
+  perceivedFirstAudioMs: number | null;
+  /** How long the endpointer waited in silence before deciding the caller had finished. */
+  endpointMs: number | null;
+  /** How long the turn actually waited for the transcript (about 0 when a speculative one was ready). */
+  sttWaitedMs: number | null;
+  /** The transcript came from the speculative request started during the caller's pause. */
+  speculativeStt: boolean | null;
+  /** Playback frames written late; the caller may have heard gaps. null when the turn played no audio. */
+  lateFrames: number | null;
+  /** Frames later than the write-ahead could cover: an audible gap is possible. null when the turn played no audio. */
+  riskFrames: number | null;
+  /** Knowledge passages retrieved for the turn; null when no knowledge base is configured. */
+  knowledgeHits: number | null;
 }
 
 export interface AiAudioMeter {

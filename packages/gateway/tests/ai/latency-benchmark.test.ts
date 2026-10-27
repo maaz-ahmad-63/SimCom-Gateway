@@ -113,11 +113,12 @@ describe.skipIf(!run)('latency benchmark: how long the engine makes the caller w
   it('measures every configuration', async () => {
     const q = 'What time do you open?';
     results['A  original defaults (1000 ms wait, no overlap)'] = await oneTurn({ AI_VAD_ADAPTIVE: 'false', AI_SPECULATIVE_STT: 'false', AI_VAD_MIN_SILENCE_MS: '1000' }, [q]);
-    results['B  your current .env (800 ms wait, no overlap)'] = await oneTurn({ AI_VAD_ADAPTIVE: 'false', AI_SPECULATIVE_STT: 'false', AI_VAD_MIN_SILENCE_MS: '800' }, [q]);
+    results['B  800 ms wait, no overlap (an earlier .env value)'] = await oneTurn({ AI_VAD_ADAPTIVE: 'false', AI_SPECULATIVE_STT: 'false', AI_VAD_MIN_SILENCE_MS: '800' }, [q]);
     results['C  new defaults (800 ms ceiling, speculative STT)'] = await oneTurn({ AI_VAD_MIN_SILENCE_MS: '800' }, [q]);
     results['D  C plus early commit (opt-in)'] = await oneTurn({ AI_VAD_MIN_SILENCE_MS: '800', AI_EARLY_COMMIT: 'true' }, [q]);
     results['E  original defaults, 2nd turn of a quick talker'] = await secondTurnAfterPauses({ AI_VAD_ADAPTIVE: 'false', AI_SPECULATIVE_STT: 'false', AI_VAD_MIN_SILENCE_MS: '1000' });
     results['F  new defaults,      2nd turn of a quick talker'] = await secondTurnAfterPauses({ AI_VAD_MIN_SILENCE_MS: '1000' });
+    results['G  current .env (650 ms ceiling, same as C otherwise)'] = await oneTurn({ AI_VAD_MIN_SILENCE_MS: '650' }, [q]);
 
     const lines = Object.entries(results).map(([k, v]) => `${k.padEnd(56)} ${String(Math.round(v)).padStart(5)} ms from the end of speech to the first audio written`);
     console.log(`\nLATENCY BENCHMARK (providers fixed at STT ${STT_MS} ms, LLM ${LLM_MS} ms, TTS ${TTS_MS} ms)\n${lines.join('\n')}\n`);
