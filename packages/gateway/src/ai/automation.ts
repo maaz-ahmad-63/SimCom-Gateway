@@ -1,4 +1,4 @@
-import { CallSession, CallStateChangeEvent, ICallSessionManager, UrcEvent } from '@sim-gateway/shared';
+import { AtCommandError, CallSession, CallStateChangeEvent, ICallSessionManager, UrcEvent } from '@sim-gateway/shared';
 import { GatewayEventBus } from '../core/event-bus.js';
 import { createLogger } from '../core/logger.js';
 import { AiConfig } from './config.js';
@@ -21,6 +21,19 @@ export interface AutomationDeps {
   /** How long to wait for audio bytes after USB audio is activated. */
   audioWaitMs?: number;
   pollMs?: number;
+  /** Pause before the first USB audio activation: the module is not always ready in the instant the call connects. */
+  activationSettleMs?: number;
+  /** Pause between retries after the module REJECTED the activation (AT ERROR). Timeouts and disconnects are never retried. */
+  activationRetryMs?: number;
+  /** Total activation attempts per call (default 3). */
+  activationAttempts?: number;
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** The module answered and said no. Anything else (timeout, disconnect) leaves the registration state unknown, so it is not retried. */
+function isRejection(error: unknown): boolean {
+  return error instanceof AtCommandError || /^USB audio activation rejected/.test((error as Error)?.message ?? '');
 }
 
 /**
@@ -148,6 +161,57 @@ export class AiCallAutomation {
 
   // ---- 2. USB audio -------------------------------------------------------------------------------
 
+  /**
+   * Registers USB audio for this call. The module can answer AT+CPCMREG=1 with AT ERROR in the first moments of a
+   * call, so activation waits briefly and, only when the module REJECTED it (so nothing was registered), tries again
+   * a bounded number of times. It never retries after a timeout or disconnect, never when registration is already
+   * active, and never once the call has ended. Returns true when audio is registered.
+   */
+  private async activateWithRetry(call: CallSession): Promise<boolean> {
+    const manager = this.deps.manager;
+    const settleMs = this.deps.activationSettleMs ?? 1500;
+    const retryMs = this.deps.activationRetryMs ?? 1500;
+    const attempts = Math.max(1, this.deps.activationAttempts ?? 3);
+    const stillThisCall = () => {
+      const current = manager.getCurrentCall();
+      return current?.id === call.id && current.state === 'ACTIVE';
+    };
+    if (settleMs > 0) await sleep(settleMs);
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      if (!stillThisCall()) return false; // the call ended meanwhile: nothing to report
+      if (manager.isUsbAudioDiagnosticActive?.()) return true; // registered meanwhile (for example by the operator): never double-register
+      try {
+        const activation = await manager.activateUsbAudioDiagnostic!();
+        const f = activation.moduleAudioFormat;
+        this.deps.mark(call.id, {
+          turnId: null,
+          stage: 'call',
+          status: 'ok',
+          detail: `USB audio activated automatically (AT+CPCMREG=1 accepted${attempt > 1 ? `, attempt ${attempt}` : ''})`,
+          data: { cpcmfrm: f?.cpcmfrm ?? null, attempt },
+        });
+        return true;
+      } catch (error) {
+        const message = (error as Error).message;
+        if (/already active/.test(message)) return true;
+        if (!isRejection(error) || attempt === attempts) {
+          const detail = `Automatic USB audio activation failed: ${message}${attempt > 1 ? ` (after ${attempt} attempts)` : ''}`;
+          this.deps.mark(call.id, { turnId: null, stage: 'call', status: 'failed', detail });
+          this.deps.alert('error', detail);
+          return false;
+        }
+        this.deps.mark(call.id, {
+          turnId: null,
+          stage: 'call',
+          status: 'skipped',
+          detail: `USB audio activation was rejected by the module (${message}); retrying in ${(retryMs / 1000).toFixed(1)} s (attempt ${attempt} of ${attempts})`,
+        });
+        await sleep(retryMs);
+      }
+    }
+    return false;
+  }
+
   private async handleState(event: CallStateChangeEvent): Promise<void> {
     if (event.currentState !== 'ACTIVE') return;
     const call = event.session;
@@ -165,22 +229,7 @@ export class AiCallAutomation {
     if (manager.isUsbAudioDiagnosticActive?.()) {
       this.deps.mark(call.id, { turnId: null, stage: 'call', status: 'ok', detail: 'USB audio was already activated for this call' });
     } else {
-      try {
-        const activation = await manager.activateUsbAudioDiagnostic();
-        const f = activation.moduleAudioFormat;
-        this.deps.mark(call.id, {
-          turnId: null,
-          stage: 'call',
-          status: 'ok',
-          detail: 'USB audio activated automatically (AT+CPCMREG=1 accepted)',
-          data: { cpcmfrm: f?.cpcmfrm ?? null },
-        });
-      } catch (error) {
-        const detail = `Automatic USB audio activation failed: ${(error as Error).message}`;
-        this.deps.mark(call.id, { turnId: null, stage: 'call', status: 'failed', detail });
-        this.deps.alert('error', detail);
-        return;
-      }
+      if (!(await this.activateWithRetry(call))) return;
     }
 
     // Registration accepted is not audio. Wait for actual bytes, and say plainly if none come.
@@ -197,7 +246,14 @@ export class AiCallAutomation {
       if (Date.now() >= deadline) break;
       await new Promise((resolve) => setTimeout(resolve, pollMs));
     }
-    const detail = `USB audio was activated but no audio bytes arrived within ${Math.round(waitMs / 1000)} s; the AI will not attach until they do`;
+    // What the module itself reported about its audio path right after activation (read-only queries made then).
+    const format = manager.getUsbAudioStatus?.().moduleAudioFormat;
+    const moduleSays = !format
+      ? ''
+      : format.cpcmfrm === null
+        ? '; the module did not report an audio format (AT+CPCMFRM? came back empty), so its USB audio path is probably not up'
+        : `; the module reports audio format CPCMFRM=${format.cpcmfrm}${format.cpcmbandwidth ? ` bandwidth=${format.cpcmbandwidth.volte},${format.cpcmbandwidth.novolte}` : ''}`;
+    const detail = `USB audio was activated but no audio bytes arrived within ${Math.round(waitMs / 1000)} s${moduleSays}; the AI will not attach until they do`;
     this.deps.mark(call.id, { turnId: null, stage: 'call', status: 'failed', detail });
     this.deps.alert('warn', detail);
   }

@@ -71,7 +71,14 @@ describe('Groq Whisper STT', () => {
     expect(form.get('model')).toBe('whisper-large-v3-turbo');
     expect(form.get('response_format')).toBe('json');
     expect((form.get('file') as File).type).toBe('audio/wav');
-    expect(form.has('language')).toBe(false);
+    // The language is always stated, English included, so Whisper never guesses it from a short clip.
+    expect(form.get('language')).toBe('en');
+  });
+
+  it('sends the configured non-English language too', async () => {
+    const { impl, requests } = fakeFetch([json({ text: 'namaste' })]);
+    await new GroqWhisperStt({ ...base, fetchImpl: impl, model: 'whisper-large-v3-turbo', language: 'hi-IN' }).transcribe(speechPcm(500), FORMAT_8K, signal());
+    expect((requests[0].body as FormData).get('language')).toBe('hi');
   });
 });
 

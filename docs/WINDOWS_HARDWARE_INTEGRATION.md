@@ -65,20 +65,20 @@ one, naming its PID. A lock left by a crashed process is replaced automatically.
 
 ### Hardware Operations (dashboard `/hardware` and `tools/ai-caller.ps1`)
 
-Read-only status for the AT port, audio port, USB audio registration, fresh PCM and verified playback. These are
-reported as separate layers: an open port is not registration, registration is not fresh bytes, and playback is
-never marked verified automatically.
+`.	oolsi-caller.ps1` with no arguments opens the **AI Caller Operations Menu** (health, port detection, modem
+info, logs, report, start gateway/dashboard, USB audio status/activate/deactivate). Direct commands still work:
 
 ```powershell
-.	oolsi-caller.ps1 status        # layers, ports, reconnect state, last failure
-.	oolsi-caller.ps1 ports         # discovered SIMCom ports by USB interface; suggests MODEM_AT_PORT / MODEM_AUDIO_PORT
-.	oolsi-caller.ps1 modem-info    # signal / SIM (AT commands; the gateway refuses during a call)
-.	oolsi-caller.ps1 logs -Level error
-.	oolsi-caller.ps1 report -OutFile report.txt   # redacted, safe to paste
+.	oolsi-caller.ps1 status | health | ports | modem-info | logs | report
+.	oolsi-caller.ps1 start-gateway | start-dashboard | start-all
+.	oolsi-caller.ps1 usb-status | usb-activate | usb-deactivate
 ```
 
-The script and page never open COM ports, dial, answer, restart the gateway or toggle USB registration. If the
-configured ports are stale after re-enumeration, the suggested `.env` change must be applied by hand.
+Port open, USB audio registration and fresh PCM are reported as separate layers; playback is never marked verified.
+The tool uses only the gateway HTTP API (never a COM port), never prints the API key, never edits `.env`, and
+never dials or answers. `modem-info` is refused during a call. `usb-activate` needs an ACTIVE call and a typed
+`ACTIVATE`; `usb-deactivate` is refused while any call exists and needs a typed `DEACTIVATE`. Tests (fake gateway,
+no hardware): `powershell -NoProfile -File tools	estsi-caller.tests.ps1`.
 
 ### Read-only hardware identification
 

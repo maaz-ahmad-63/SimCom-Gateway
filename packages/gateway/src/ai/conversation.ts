@@ -1,9 +1,12 @@
 import { performance } from 'node:perf_hooks';
 import type { AiConversationPhase, AiInspectorEvent } from '@sim-gateway/shared';
 import { AgentAudioSink, AudioFormat, checkPcmBuffer, PlayResult } from './audio.js';
+import { ChunkQueue } from './chunk-queue.js';
 import { AiConfig } from './config.js';
 import { assessUtterance, UtteranceAssessment } from './endpointer.js';
 import { AiProviderError, ChatMessage, LlmUsage, ProviderSet } from './providers/types.js';
+import { formatKnowledge, KNOWLEDGE_RULES, KnowledgeHit, KnowledgeProvider } from './knowledge.js';
+import { CallNotes } from './memory.js';
 import { extractEndCall, hasSpeechContent, ProtocolTextFilter, SentenceSplitter } from './text.js';
 
 export type TurnStatus = 'completed' | 'skipped' | 'cancelled' | 'failed';
@@ -26,6 +29,54 @@ export interface TurnMetrics {
   firstAudioMs: number | null;
   /** Frames written late during playback (an underrun risk); 0 means the modem was kept fed. */
   lateFrames: number;
+  /** Frames written later than the write-ahead could cover: an audible gap is possible (a subset of lateFrames in spirit). */
+  riskFrames: number;
+  /**
+   * What the caller waited: from the moment they stopped talking to the first reply audio written to the audio port.
+   * Null when the endpointer supplied no end-of-speech time or no audio was written. A write is not a sound heard:
+   * the line, the network and the caller's phone add delay that cannot be measured here.
+   */
+  perceivedFirstAudioMs: number | null;
+  /** Every stage as an offset in ms from the end of the caller's speech (see TurnTimeline). */
+  timeline: TurnTimeline | null;
+  /** How long this turn actually waited for the transcript (0 when a speculative one was already done). */
+  sttWaitedMs: number | null;
+  /** True when the transcript came from the speculative request started during the caller's pause. */
+  speculativeStt: boolean;
+  /** Absolute monotonic marks the timeline is computed from (internal). */
+  marks: TurnMarks;
+}
+
+/** Offsets in ms from the end of the caller's speech. Null where a stage did not happen in this turn. */
+export interface TurnTimeline {
+  /** How long the endpointer waited in silence before deciding the caller had finished. */
+  endpointMs: number | null;
+  turnStartMs: number | null;
+  sttDoneMs: number | null;
+  llmFirstTokenMs: number | null;
+  ttsFirstAudioMs: number | null;
+  firstWriteMs: number | null;
+  turnEndMs: number | null;
+}
+
+export interface TurnMarks {
+  speechEnd?: number;
+  endpointed?: number;
+  turnStart?: number;
+  sttDone?: number;
+  llmFirst?: number;
+  ttsFirst?: number;
+  firstWrite?: number;
+  end?: number;
+}
+
+/** When the caller's utterance really ended and was detected, and the speculative transcript (if any) to reuse. */
+export interface UtteranceTiming {
+  speechEndedAt?: number;
+  endpointedAt?: number;
+  speculativeId?: number;
+  /** This utterance began as an interruption of the agent, so it is checked against what the agent had just said. */
+  afterBargeIn?: boolean;
 }
 
 export interface TurnResult {
@@ -74,7 +125,28 @@ export interface ConversationDeps {
   trace?: (event: TraceInput) => void;
   /** Transcribe only: no LLM, no TTS, nothing is ever sent to the caller. Switchable with setPassive(). */
   passive?: boolean;
+  /**
+   * Shared across calls: fixed lines (the greeting, "are you still there?") are synthesized once and replayed from
+   * memory afterwards. Owned by the caller (the orchestrator), so it is empty for every new orchestrator.
+   */
+  fixedAudioCache?: Map<string, Buffer>;
+  /** Verified company knowledge, retrieved per question (see knowledge.ts). Absent means none is configured. */
+  knowledge?: KnowledgeProvider | null;
 }
+
+/** A reply being synthesized and downloaded while it plays. */
+interface TtsStreamHandle {
+  chunks: AsyncIterable<Buffer>;
+  /** The provider's failure, once it has happened (the same object that the chunk iterator throws). */
+  error: () => unknown;
+  /** The whole audio, only when requested up front and the stream completed. */
+  audio: () => Buffer | null;
+  /** Bytes of audio that have arrived so far, and whether the download has finished. */
+  received: () => number;
+  completed: () => boolean;
+}
+
+const MAX_FIXED_LINES = 24;
 
 class AsyncQueue<T> {
   private items: T[] = [];
@@ -132,7 +204,32 @@ const emptyMetrics = (utteranceMs: number): TurnMetrics => ({
   usage: null,
   firstAudioMs: null,
   lateFrames: 0,
+  riskFrames: 0,
+  perceivedFirstAudioMs: null,
+  timeline: null,
+  sttWaitedMs: null,
+  speculativeStt: false,
+  marks: {},
 });
+
+/** Waits for a promise, but stops waiting (rejecting as a cancellation) when the signal aborts. */
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new AiProviderError('turn', 'stt', 'cancelled', { aborted: true }));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new AiProviderError('turn', 'stt', 'cancelled', { aborted: true }));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (v) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(e);
+      }
+    );
+  });
+}
 
 const isAbort = (error: unknown): boolean =>
   (error instanceof AiProviderError && error.details.aborted === true) ||
@@ -194,6 +291,77 @@ export class ConversationSession {
     this.emit = deps.emit ?? (() => {});
     this.traceFn = deps.trace ?? (() => {});
     this.passive = deps.passive ?? false;
+    this.fixedAudio = deps.fixedAudioCache ?? null;
+    this.knowledge = deps.knowledge ?? null;
+    this.notes = new CallNotes({ enabled: deps.config.memory.callNotes });
+  }
+
+  private readonly knowledge: KnowledgeProvider | null;
+  private readonly notes: CallNotes;
+  /** A transcript requested during the caller's pause, before the turn was certain to be over. */
+  private spec: { id: number; controller: AbortController; promise: Promise<{ text: string; ms: number; doneAt: number } | null> } | null = null;
+  /** How fast the agent speaks, in characters per second of audio, learned from sentences played to the end. */
+  private charsPerSecond = 14;
+  /** The last things the agent said, to recognise its own voice coming back as an "interruption". */
+  private recentAgentText = '';
+
+  private readonly fixedAudio: Map<string, Buffer> | null;
+
+  /** Streaming needs both ends: a provider that can stream and a sink that can play a stream. */
+  private canStream(): boolean {
+    return typeof this.providers.tts.synthesizeStream === 'function' && typeof this.sink.playStream === 'function';
+  }
+
+  private fixedKey(text: string): string {
+    return [this.providers.tts.name, this.config.tts.voice, this.format.sampleRate, text].join('|');
+  }
+
+  /**
+   * Starts downloading one sentence now and returns immediately; the audio is buffered as it arrives so the player
+   * can begin on the first bytes, and the next sentence can be requested while this one plays.
+   */
+  private startTtsStream(turnId: number, text: string, metrics: TurnMetrics, signal: AbortSignal, collect = false): TtsStreamHandle {
+    const queue = new ChunkQueue();
+    const parts: Buffer[] = [];
+    let error: unknown = null;
+    let complete = false;
+    let received = 0;
+    const startedAt = performance.now();
+    void (async () => {
+      let first = true;
+      try {
+        for await (const chunk of this.providers.tts.synthesizeStream!(text, this.format, signal)) {
+          if (first) {
+            first = false;
+            const took = performance.now() - startedAt;
+            metrics.ttsFirstMs ??= took;
+            metrics.marks.ttsFirst ??= performance.now();
+            this.trace(turnId, 'tts-generated', 'ok', { latencyMs: took, text, role: 'agent', data: { chars: text.length, streamed: true } });
+          }
+          received += chunk.length;
+          if (collect) parts.push(chunk);
+          queue.push(chunk);
+        }
+        if (first) throw new AiProviderError(this.providers.tts.name, 'tts', 'returned no audio');
+        metrics.ttsTotalMs += performance.now() - startedAt;
+        complete = true;
+        queue.close();
+      } catch (e) {
+        error = e;
+        queue.fail(e);
+      }
+    })();
+    return { chunks: queue, error: () => error, audio: () => (collect && complete ? Buffer.concat(parts) : null), received: () => received, completed: () => complete };
+  }
+
+  private rememberFixed(key: string, pcm: Buffer): void {
+    if (!this.fixedAudio) return;
+    this.fixedAudio.set(key, pcm);
+    while (this.fixedAudio.size > MAX_FIXED_LINES) {
+      const oldest = this.fixedAudio.keys().next().value;
+      if (oldest === undefined) break;
+      this.fixedAudio.delete(oldest);
+    }
   }
 
   /** Most recent voiced transcript of this call, for the operator-triggered test response. Not exposed by any API. */
@@ -226,6 +394,16 @@ export class ConversationSession {
       this.currentPhase = phase;
       this.phaseStartedAt = Date.now();
     }
+  }
+
+  /**
+   * The caller interrupted: stop being deaf now instead of after the guard, so what they are saying is heard.
+   * Call interrupt() first; this only clears the half-duplex state.
+   */
+  resumeListening(): void {
+    this.speaking = false;
+    this.guardUntil = 0;
+    if (this.current === null) this.setPhase('listening');
   }
 
   private beginSpeaking(): void {
@@ -301,6 +479,9 @@ export class ConversationSession {
     const running = this.current;
     if (running) await running.done.catch(() => {});
     this.history.length = 0;
+    this.spec?.controller.abort();
+    this.spec = null;
+    this.notes.clear();
     this.latestTranscript = null;
     this.seen.clear();
   }
@@ -322,7 +503,7 @@ export class ConversationSession {
   /**
    * Process one caller utterance. `utteranceId` makes redelivery harmless: the same id is processed once.
    */
-  async handleUtterance(pcm: Buffer, utteranceId?: string): Promise<TurnResult> {
+  async handleUtterance(pcm: Buffer, utteranceId?: string, timing?: UtteranceTiming): Promise<TurnResult> {
     const skipped = (reason: string): TurnResult => this.finish(
       { turnId: 0, status: 'skipped', reason, endRequested: false, metrics: emptyMetrics(0) },
       false
@@ -366,10 +547,141 @@ export class ConversationSession {
     const captures = this.pendingCaptures;
     this.pendingPcm = [];
     this.pendingCaptures = 0;
-    return this.runExclusive((turnId, signal) => this.runTurn(turnId, audio, signal, captures));
+    return this.runExclusive((turnId, signal) => this.runTurn(turnId, audio, signal, captures, timing));
   }
 
   // ---------------------------------------------------------------------------
+
+  // ---- speculative transcription -----------------------------------------------------------------------------
+
+  /**
+   * The caller paused long enough that they may be done. Start transcribing what they have said so far; if they are in
+   * fact finished, the turn reuses the result and the transcription time overlaps the rest of the silence wait. It can
+   * never start a turn: only handleUtterance does, once per utterance id.
+   */
+  beginSpeculative(pcm: Buffer, id: number): void {
+    if (this.closedReason !== null || this.degraded) return;
+    const assessment = assessUtterance(pcm, this.format, { minDurationMs: this.config.utterance.minDurationMs });
+    if (assessment.decision === 'too-short' || assessment.decision === 'silent') return;
+    if (assessment.decision === 'unlikely-speech' && this.config.utterance.skipUnlikelySpeech) return;
+    this.spec?.controller.abort(); // one at a time: a newer pause replaces an older one
+    const controller = new AbortController();
+    const signal = AbortSignal.any([this.lifetime.signal, controller.signal]);
+    const startedAt = performance.now();
+    this.totals.sttAudioSeconds += assessment.durationMs / 1000;
+    const promise = this.providers.stt.transcribe(pcm, this.format, signal).then(
+      (r) => ({ text: r.text.trim(), ms: performance.now() - startedAt, doneAt: performance.now() }),
+      () => null
+    );
+    this.spec = { id, controller, promise };
+  }
+
+  /** The caller carried on: that transcript describes a sentence that was not the end of the turn. */
+  cancelSpeculative(id: number): void {
+    if (this.spec?.id !== id) return;
+    this.spec.controller.abort();
+    this.spec = null;
+  }
+
+  /** The words of a speculative request, once they arrive; null if there is none or it failed. */
+  async speculativeText(id: number): Promise<string | null> {
+    const spec = this.spec;
+    if (!spec || spec.id !== id) return null;
+    const result = await spec.promise;
+    return result && result.text ? result.text : null;
+  }
+
+  private takeSpeculative(id: number | undefined): NonNullable<ConversationSession['spec']> | null {
+    const spec = this.spec;
+    if (id === undefined || !spec || spec.id !== id) return null;
+    this.spec = null;
+    return spec;
+  }
+
+  // ---- what the model is given -------------------------------------------------------------------------------
+
+  /** The system prompt for this turn: the standing instructions, the verified passages that bear on it, the call notes. */
+  private async buildSystem(transcript: string): Promise<{ system: string; hits: KnowledgeHit[]; notes: boolean }> {
+    let system = this.config.systemPrompt;
+    let hits: KnowledgeHit[] = [];
+    if (this.knowledge) {
+      system += `\n\n${KNOWLEDGE_RULES}`;
+      const lastAgent = [...this.history].reverse().find((m) => m.role === 'assistant')?.content ?? '';
+      // A short reply ("yes, the second one") only means something next to the question it answers.
+      const query = transcript.split(/\s+/).length < 5 ? `${lastAgent.slice(-160)} ${transcript}` : transcript;
+      try {
+        const lookup = this.knowledge.retrieve(query, { topK: this.config.knowledge.topK, maxChars: this.config.knowledge.maxChars });
+        hits = await Promise.race([lookup, new Promise<KnowledgeHit[]>((resolve) => setTimeout(() => resolve([]), 150).unref?.())]);
+      } catch {
+        hits = [];
+      }
+      const block = formatKnowledge(hits);
+      if (block) system += `\n\n${block}`;
+    }
+    const withNotes = this.notes.withNotes(system);
+    return { system: withNotes, hits, notes: withNotes !== system };
+  }
+
+  /** The words of a sentence that went out before it was cut off, at a word boundary; empty when too little was said to matter. */
+  private spokenPrefix(text: string, bytesWritten: number, totalBytes: number | null): string {
+    if (bytesWritten <= 0) return '';
+    const seconds = bytesWritten / (2 * this.format.sampleRate);
+    const chars = totalBytes && totalBytes > 0 ? Math.floor(text.length * Math.min(1, bytesWritten / totalBytes)) : Math.floor(seconds * this.charsPerSecond);
+    if (chars >= text.length) return '';
+    const cut = text.slice(0, chars);
+    const space = cut.lastIndexOf(' ');
+    const prefix = (space > 8 ? cut.slice(0, space) : cut).trim();
+    return prefix.length >= 6 ? prefix : '';
+  }
+
+  /** Nearly every word of the transcript is a word the agent has just said (and there are enough to be sure). */
+  private soundsLikeAgent(transcript: string): boolean {
+    const words = (s: string) => s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 1);
+    const heard = words(transcript);
+    if (heard.length < 4) return false;
+    const said = new Set(words(this.recentAgentText));
+    return heard.filter((w) => said.has(w)).length / heard.length >= 0.85;
+  }
+
+  private learnSpeechRate(text: string, audioBytes: number): void {
+    const seconds = audioBytes / (2 * this.format.sampleRate);
+    if (seconds < 0.5 || text.length < 10) return;
+    this.charsPerSecond = Math.min(30, Math.max(6, this.charsPerSecond * 0.7 + (text.length / seconds) * 0.3));
+  }
+
+  // ---- timeline ------------------------------------------------------------------------------------------------
+
+  private finalizeTimeline(result: TurnResult): void {
+    const m = result.metrics;
+    m.marks.end ??= performance.now();
+    const origin = m.marks.speechEnd ?? m.marks.turnStart;
+    if (origin === undefined) return;
+    const off = (t: number | undefined): number | null => (t === undefined ? null : Math.round(t - origin));
+    m.timeline = {
+      endpointMs: m.marks.speechEnd !== undefined && m.marks.endpointed !== undefined ? Math.round(m.marks.endpointed - m.marks.speechEnd) : null,
+      turnStartMs: off(m.marks.turnStart),
+      sttDoneMs: off(m.marks.sttDone),
+      llmFirstTokenMs: off(m.marks.llmFirst),
+      ttsFirstAudioMs: off(m.marks.ttsFirst),
+      firstWriteMs: off(m.marks.firstWrite),
+      turnEndMs: off(m.marks.end),
+    };
+    // Only meaningful when the clock started at the end of the caller's speech.
+    m.perceivedFirstAudioMs = m.marks.speechEnd !== undefined ? m.timeline.firstWriteMs : null;
+    if (m.timeline.firstWriteMs !== null) {
+      const t = m.timeline;
+      const part = (label: string, v: number | null) => (v === null ? '' : ` ${label} ${v} ms`);
+      this.trace(result.turnId, 'call', 'ok', {
+        latencyMs: t.firstWriteMs,
+        detail:
+          `First audio written ${t.firstWriteMs} ms after ${m.marks.speechEnd !== undefined ? 'the caller stopped talking' : 'the turn began'}` +
+          ` (silence wait${part('', t.endpointMs).trimEnd()}, transcript ready at ${t.sttDoneMs ?? '?'} ms${m.speculativeStt ? ' (speculative)' : ''},` +
+          ` first words from the model at ${t.llmFirstTokenMs ?? '?'} ms, first synthesized audio at ${t.ttsFirstAudioMs ?? '?'} ms).` +
+          ' Written to the audio port, not proven heard.',
+        data: { ...t, perceivedFirstAudioMs: m.perceivedFirstAudioMs, speculativeStt: m.speculativeStt },
+      });
+    }
+  }
 
   private async runExclusive(work: (turnId: number, signal: AbortSignal) => Promise<TurnResult>): Promise<TurnResult> {
     const turnId = ++this.seq;
@@ -398,6 +710,7 @@ export class ConversationSession {
   }
 
   private finish(result: TurnResult, countFailure: boolean): TurnResult {
+    this.finalizeTimeline(result);
     this.totals.turns++;
     this.totals[result.status]++;
     if (result.status === 'completed') this.consecutiveFailures = 0;
@@ -428,8 +741,13 @@ export class ConversationSession {
       this.history.push({ ...message });
     }
     const max = this.config.limits.maxHistoryMessages;
-    while (this.history.length > max) this.history.shift();
-    while (this.history.length > 0 && this.history[0].role !== 'user') this.history.shift();
+    const dropped: ChatMessage[] = [];
+    while (this.history.length > max) dropped.push(this.history.shift()!);
+    const scrolledOut = dropped.length > 0;
+    while (this.history.length > 0 && this.history[0].role !== 'user') dropped.push(this.history.shift()!);
+    // Turns that scroll out of the size window are folded into the call notes instead of being forgotten. A lone
+    // assistant message at the front (such as the greeting) is just tidied away and is not worth a summary.
+    if (scrolledOut) this.notes.fold(dropped, this.providers.llm);
   }
 
   private async speakFixed(
@@ -440,9 +758,13 @@ export class ConversationSession {
     started: number
   ): Promise<TurnResult> {
     const t = performance.now();
+    this.recentAgentText = `${this.recentAgentText} ${text}`.slice(-800);
+    const key = this.fixedKey(text);
+    const cached = this.fixedAudio?.get(key);
+    if (!cached && this.canStream()) return this.speakFixedStreamed(turnId, text, signal, metrics, started, key);
     let pcm: Buffer;
     try {
-      pcm = await this.providers.tts.synthesize(text, this.format, signal);
+      pcm = cached ?? (await this.providers.tts.synthesize(text, this.format, signal));
     } catch (error) {
       metrics.totalMs = performance.now() - started;
       if (isAbort(error) || signal.aborted) return this.finish({ turnId, status: 'cancelled', reason: 'aborted', endRequested: false, metrics }, false);
@@ -457,9 +779,10 @@ export class ConversationSession {
       latencyMs: metrics.ttsTotalMs,
       text,
       role: 'agent',
-      data: { chars: text.length, bytes: pcm.length, greeting: true },
+      data: { chars: text.length, bytes: pcm.length, greeting: true, cached: cached !== undefined },
     });
     metrics.firstAudioMs ??= performance.now() - started;
+          metrics.marks.firstWrite ??= performance.now();
     this.beginSpeaking();
     // Playback problems are reported as playback problems, never as a text-to-speech failure.
     let played: PlayResult;
@@ -482,7 +805,10 @@ export class ConversationSession {
       data: { bytesWritten: played.bytesWritten, bytes: pcm.length, lateFrames: played.lateFrames ?? 0, maxLateMs: played.maxLateMs ?? 0 },
     });
     metrics.totalMs = performance.now() - started;
-    if (played.completed) this.pushHistory({ role: 'assistant', content: text });
+    if (played.completed) {
+      this.pushHistory({ role: 'assistant', content: text });
+      if (!cached) this.rememberFixed(key, pcm);
+    }
     return this.finish(
       {
         turnId,
@@ -496,11 +822,78 @@ export class ConversationSession {
     );
   }
 
-  private async runTurn(turnId: number, pcm: Buffer, signal: AbortSignal, captures = 1): Promise<TurnResult> {
+  /** A fixed line that is not cached yet: play it while it downloads, and keep it for the next call. */
+  private async speakFixedStreamed(
+    turnId: number,
+    text: string,
+    signal: AbortSignal,
+    metrics: TurnMetrics,
+    started: number,
+    key: string
+  ): Promise<TurnResult> {
+    const t = performance.now();
+    metrics.ttsChars = text.length;
+    this.totals.ttsChars += text.length;
+    const handle = this.startTtsStream(turnId, text, metrics, signal, true);
+    let played: PlayResult;
+    try {
+      played = await this.sink.playStream!(handle.chunks, signal, {
+        onFirstWrite: () => {
+          metrics.firstAudioMs ??= performance.now() - started;
+          metrics.marks.firstWrite ??= performance.now();
+          this.beginSpeaking();
+        },
+      });
+    } catch (error) {
+      metrics.totalMs = performance.now() - started;
+      if (isAbort(error) || signal.aborted) return this.finish({ turnId, status: 'cancelled', reason: 'aborted', endRequested: false, metrics }, false);
+      if (error === handle.error()) {
+        this.reportError('tts', error);
+        this.trace(turnId, 'tts-generated', 'failed', { detail: error instanceof Error ? error.message : 'text-to-speech failed' });
+        return this.finish({ turnId, status: 'failed', reason: 'tts-failed', endRequested: false, metrics }, true);
+      }
+      this.reportError('sink', error);
+      this.trace(turnId, 'playback', 'failed', { detail: error instanceof Error ? error.message : 'playback failed' });
+      return this.finish({ turnId, status: 'failed', reason: 'sink-error', endRequested: false, metrics }, true);
+    }
+    metrics.playMs = performance.now() - t;
+    metrics.lateFrames += played.lateFrames ?? 0;
+    const lost = played.stoppedBy === 'not-written';
+    if (lost) this.reportError('sink', new Error(NOT_WRITTEN_MESSAGE));
+    this.trace(turnId, 'playback', played.completed ? 'ok' : lost ? 'failed' : 'cancelled', {
+      latencyMs: metrics.playMs,
+      detail: playbackDetail(played),
+      data: { bytesWritten: played.bytesWritten, bytes: played.bytesWritten, lateFrames: played.lateFrames ?? 0, maxLateMs: played.maxLateMs ?? 0, streamed: true },
+    });
+    metrics.totalMs = performance.now() - started;
+    if (played.completed) {
+      this.pushHistory({ role: 'assistant', content: text });
+      const audio = handle.audio();
+      if (audio) this.rememberFixed(key, audio);
+    }
+    return this.finish(
+      {
+        turnId,
+        status: played.completed ? 'completed' : lost ? 'failed' : 'cancelled',
+        reason: lost ? 'sink-error' : (played.stoppedBy ?? undefined),
+        replyChars: text.length,
+        endRequested: false,
+        metrics,
+      },
+      lost
+    );
+  }
+
+  private async runTurn(turnId: number, pcm: Buffer, signal: AbortSignal, captures = 1, timing?: UtteranceTiming): Promise<TurnResult> {
     const started = performance.now();
     const format = this.format;
     const utteranceMs = (pcm.length / 2 / format.sampleRate) * 1000;
     const metrics = emptyMetrics(utteranceMs);
+    metrics.marks.turnStart = started;
+    if (timing?.speechEndedAt !== undefined) {
+      metrics.marks.speechEnd = timing.speechEndedAt;
+      metrics.marks.endpointed = timing.endpointedAt;
+    }
     const cfg = this.config;
     const outcome = (partial: Partial<TurnResult> & { status: TurnStatus }, countFailure = false): TurnResult => {
       metrics.totalMs = performance.now() - started;
@@ -548,15 +941,32 @@ export class ConversationSession {
 
     // 2. Speech to text.
     let transcript: string;
+    const speculative = this.takeSpeculative(timing?.speculativeId);
     this.trace(turnId, 'stt-submit', 'ok', {
-      data: { seconds: Math.round(utteranceMs) / 1000, bytes: pcm.length, provider: this.providers.stt.name },
+      data: { seconds: Math.round(utteranceMs) / 1000, bytes: pcm.length, provider: this.providers.stt.name, speculative: speculative !== null },
     });
     this.setPhase('transcribing');
     const sttStarted = performance.now();
     try {
-      this.totals.sttAudioSeconds += utteranceMs / 1000;
-      transcript = (await this.providers.stt.transcribe(pcm, format, signal)).text.trim();
-      metrics.sttMs = performance.now() - sttStarted;
+      let reused: { text: string; ms: number; doneAt: number } | null = null;
+      if (speculative) {
+        // The request was started during the caller's pause. It either already has the words or is nearly there.
+        reused = await abortable(speculative.promise, signal);
+        if (reused && !reused.text) reused = null;
+      }
+      if (reused) {
+        transcript = reused.text;
+        metrics.sttMs = reused.ms;
+        metrics.speculativeStt = true;
+        metrics.marks.sttDone = reused.doneAt;
+        metrics.sttWaitedMs = Math.max(0, performance.now() - sttStarted);
+      } else {
+        this.totals.sttAudioSeconds += utteranceMs / 1000;
+        transcript = (await this.providers.stt.transcribe(pcm, format, signal)).text.trim();
+        metrics.sttMs = performance.now() - sttStarted;
+        metrics.sttWaitedMs = metrics.sttMs;
+        metrics.marks.sttDone = performance.now();
+      }
     } catch (error) {
       if (isAbort(error) || signal.aborted) {
         this.trace(turnId, 'stt-result', 'cancelled', { latencyMs: performance.now() - sttStarted, detail: 'cancelled before the transcript arrived' });
@@ -576,13 +986,19 @@ export class ConversationSession {
       notRun(['llm-request', 'llm-response', 'tts-generated', 'playback'], 'empty transcript');
       return outcome({ status: 'skipped', reason: 'empty-transcript', assessment });
     }
+    if (timing?.afterBargeIn && this.soundsLikeAgent(transcript)) {
+      // The agent's own voice came back through the line and was taken for the caller: drop it, never answer it.
+      this.trace(turnId, 'stt-result', 'skipped', { latencyMs: metrics.sttMs, detail: 'the words match what the agent had just said: its own voice, not the caller' });
+      notRun(['llm-request', 'llm-response', 'tts-generated', 'playback'], 'echo of the agent');
+      return outcome({ status: 'skipped', reason: 'echo', assessment });
+    }
     // Kept in memory only, and only when the audio passed the voiced-content check; the operator-triggered test response answers it.
     if (assessment.decision === 'ok') this.latestTranscript = { text: transcript, at: Date.now(), turnId };
     this.trace(turnId, 'stt-result', 'ok', {
       latencyMs: metrics.sttMs,
       text: transcript,
       role: 'caller',
-      data: { chars: transcript.length },
+      data: { chars: transcript.length, speculative: metrics.speculativeStt, waitedMs: Math.round(metrics.sttWaitedMs ?? 0) },
     });
     if (passive) {
       notRun(['llm-request', 'llm-response', 'tts-generated', 'playback'], 'passive mode: nothing is generated or sent to the caller');
@@ -599,14 +1015,19 @@ export class ConversationSession {
 
     // 3. LLM -> sentences -> TTS (in parallel with playback) -> sink.
     const filter = new ProtocolTextFilter();
-    const splitter = new SentenceSplitter();
-    const queue = new AsyncQueue<{ text: string; audio: Promise<Buffer> }>();
+    const splitter = new SentenceSplitter(24, cfg.limits.firstSentenceMinChars);
+    const queue = new AsyncQueue<{ text: string; audio?: Promise<Buffer>; stream?: TtsStreamHandle }>();
     const llmController = new AbortController();
     const llmSignal = AbortSignal.any([signal, llmController.signal]);
+    // Synthesis requests stop with the turn: once nothing more will be played, no sentence keeps downloading.
+    const ttsController = new AbortController();
+    const ttsSignal = AbortSignal.any([signal, ttsController.signal]);
+    const streaming = this.canStream();
     let endRequested = false;
     let replyChars = 0;
     let llmError: unknown = null;
     let spokenText = '';
+    let partialSpoken = '';
     let playbackStopped: string | null = null;
     let ttsFailed = false;
 
@@ -620,8 +1041,15 @@ export class ConversationSession {
         return;
       }
       replyChars += cleaned.text.length;
+      this.recentAgentText = `${this.recentAgentText} ${cleaned.text}`.slice(-800);
+      if (streaming) {
+        metrics.ttsChars += cleaned.text.length;
+        this.totals.ttsChars += cleaned.text.length;
+        queue.push({ text: cleaned.text, stream: this.startTtsStream(turnId, cleaned.text, metrics, ttsSignal) });
+        return;
+      }
       const ttsStart = performance.now();
-      const audio = this.providers.tts.synthesize(cleaned.text, format, signal).then((data) => {
+      const audio = this.providers.tts.synthesize(cleaned.text, format, ttsSignal).then((data) => {
         const took = performance.now() - ttsStart;
         metrics.ttsFirstMs ??= took;
         metrics.ttsTotalMs += took;
@@ -639,14 +1067,16 @@ export class ConversationSession {
       queue.push({ text: cleaned.text, audio });
     };
 
+    const built = await this.buildSystem(transcript);
+    if (signal.aborted) return outcome({ status: 'cancelled', reason: 'aborted', assessment });
     const producer = (async () => {
       this.trace(turnId, 'llm-request', 'ok', {
-        data: { historyMessages: this.history.length, provider: this.providers.llm.name },
+        data: { historyMessages: this.history.length, provider: this.providers.llm.name, knowledgeHits: built.hits.length, knowledgeSources: built.hits.map((h) => h.source).join(', '), callNotes: built.notes },
       });
       try {
         const llmStart = performance.now();
         for await (const chunk of this.providers.llm.stream(
-          { system: cfg.systemPrompt, messages: this.history.map((m) => ({ ...m })) },
+          { system: built.system, messages: this.history.map((m) => ({ ...m })) },
           llmSignal
         )) {
           if (chunk.usage) {
@@ -654,6 +1084,7 @@ export class ConversationSession {
           }
           if (!chunk.delta) continue;
           metrics.llmFirstTokenMs ??= performance.now() - llmStart;
+          metrics.marks.llmFirst ??= performance.now();
           const safe = filter.feed(chunk.delta);
           if (safe) for (const sentence of splitter.push(safe)) enqueue(sentence);
           if (endRequested) break;
@@ -690,9 +1121,54 @@ export class ConversationSession {
           playbackStopped = 'aborted';
           return;
         }
+        if (item.stream) {
+          const handle = item.stream;
+          const t0 = performance.now();
+          let played: PlayResult;
+          try {
+            played = await this.sink.playStream!(handle.chunks, signal, {
+              onFirstWrite: () => {
+                metrics.firstAudioMs ??= performance.now() - started;
+          metrics.marks.firstWrite ??= performance.now();
+                this.beginSpeaking();
+              },
+            });
+          } catch (error) {
+            if (isAbort(error) || signal.aborted) {
+              playbackStopped = 'aborted';
+            } else if (error === handle.error()) {
+              ttsFailed = true;
+              this.reportError('tts', error);
+              this.trace(turnId, 'tts-generated', 'failed', { detail: error instanceof Error ? error.message : 'text-to-speech failed' });
+            } else {
+              this.reportError('sink', error);
+              this.trace(turnId, 'playback', 'failed', { detail: error instanceof Error ? error.message : 'playback failed' });
+              playbackStopped = 'sink-error';
+            }
+            return;
+          }
+          metrics.playMs += performance.now() - t0;
+          metrics.lateFrames += played.lateFrames ?? 0;
+          const lost = played.stoppedBy === 'not-written';
+          if (lost) this.reportError('sink', new Error(NOT_WRITTEN_MESSAGE));
+          this.trace(turnId, 'playback', played.completed ? 'ok' : lost ? 'failed' : 'cancelled', {
+            latencyMs: performance.now() - t0,
+            detail: playbackDetail(played),
+            data: { bytesWritten: played.bytesWritten, bytes: played.bytesWritten, lateFrames: played.lateFrames ?? 0, maxLateMs: played.maxLateMs ?? 0, streamed: true },
+          });
+          if (!played.completed) {
+            // The caller cut this sentence off: history keeps the words that were actually spoken, marked as unfinished.
+            if (played.stoppedBy === 'aborted') partialSpoken = this.spokenPrefix(item.text, played.bytesWritten, handle.completed() ? handle.received() : null);
+            playbackStopped = lost ? 'sink-error' : (played.stoppedBy ?? 'stopped');
+            return;
+          }
+          this.learnSpeechRate(item.text, handle.received());
+          spokenText += (spokenText ? ' ' : '') + item.text;
+          continue;
+        }
         let audio: Buffer;
         try {
-          audio = await item.audio;
+          audio = await item.audio!;
         } catch (error) {
           if (isAbort(error) || signal.aborted) {
             playbackStopped = 'aborted';
@@ -709,6 +1185,7 @@ export class ConversationSession {
         const t = performance.now();
         try {
           metrics.firstAudioMs ??= performance.now() - started;
+          metrics.marks.firstWrite ??= performance.now();
           this.beginSpeaking();
           const played = await this.sink.play(audio, signal);
           metrics.playMs += performance.now() - t;
@@ -721,10 +1198,12 @@ export class ConversationSession {
             data: { bytesWritten: played.bytesWritten, bytes: audio.length, lateFrames: played.lateFrames ?? 0, maxLateMs: played.maxLateMs ?? 0 },
           });
           if (!played.completed) {
+            if (played.stoppedBy === 'aborted') partialSpoken = this.spokenPrefix(item.text, played.bytesWritten, audio.length);
             // A port that stopped accepting bytes mid-reply is a failure of the line, not a caller interruption.
             playbackStopped = lost ? 'sink-error' : (played.stoppedBy ?? 'stopped');
             return;
           }
+          this.learnSpeechRate(item.text, audio.length);
           spokenText += (spokenText ? ' ' : '') + item.text;
         } catch (error) {
           this.reportError('sink', error);
@@ -736,6 +1215,7 @@ export class ConversationSession {
     })();
 
     await consumer;
+    ttsController.abort(); // nothing more will be played: stop any sentence still being downloaded
     if (playbackStopped !== null || ttsFailed) llmController.abort(); // stop generating text nobody will hear
     await producer;
 
@@ -743,7 +1223,11 @@ export class ConversationSession {
       this.totals.llmPromptTokens += metrics.usage.promptTokens;
       this.totals.llmCompletionTokens += metrics.usage.completionTokens;
     }
-    if (spokenText) this.pushHistory({ role: 'assistant', content: spokenText });
+    // What goes into history is what was actually spoken: whole sentences played to the end, plus the words of an
+    // interrupted sentence that went out before the interruption, marked with an ellipsis. Sentences that were never
+    // played are not there, and the reply is ONE assistant message, never one per sentence.
+    const said = [spokenText, partialSpoken ? `${partialSpoken}…` : ''].filter(Boolean).join(' ');
+    if (said) this.pushHistory({ role: 'assistant', content: said });
 
     const common = {
       assessment,

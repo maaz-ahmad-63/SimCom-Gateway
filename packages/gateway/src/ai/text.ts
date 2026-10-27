@@ -71,8 +71,16 @@ export function extractEndCall(text: string): { text: string; endRequested: bool
  */
 export class SentenceSplitter {
   private buffer = '';
+  private emitted = 0;
 
-  constructor(private readonly minChars = 24) {}
+  /**
+   * `firstMinChars` applies to the first sentence of a reply only: a short opener such as "Sure." can start playing
+   * while the rest is still being written. Later sentences keep the longer minimum so TTS is not called for fragments.
+   */
+  constructor(
+    private readonly minChars = 24,
+    private readonly firstMinChars = minChars
+  ) {}
 
   push(chunk: string): string[] {
     this.buffer += chunk;
@@ -84,8 +92,9 @@ export class SentenceSplitter {
     while ((match = boundary.exec(this.buffer)) !== null) {
       const end = match.index + match[0].length;
       const candidate = this.buffer.slice(start, end).trim();
-      if (candidate.length >= this.minChars) {
+      if (candidate.length >= (this.emitted === 0 ? this.firstMinChars : this.minChars)) {
         out.push(candidate);
+        this.emitted++;
         start = end;
       }
     }
@@ -96,6 +105,7 @@ export class SentenceSplitter {
   flush(): string[] {
     const rest = this.buffer.trim();
     this.buffer = '';
+    if (rest) this.emitted++;
     return rest ? [rest] : [];
   }
 }

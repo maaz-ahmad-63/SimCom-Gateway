@@ -51,6 +51,7 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
   private dialTimeoutTimer: NodeJS.Timeout | null = null;
   private pendingTerminationReason: string | undefined;
   private lastInboundRingAt = 0;
+  private inboundRingTimer: NodeJS.Timeout | null = null;
   private readonly logger = createLogger('CallSessionManager');
   private readonly enableUsbAudioDiagnostic: boolean;
   private usbAudioDiagnosticActive = false;
@@ -757,6 +758,7 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
     // keep it ringing; a +CLIP only fills in the caller ID if it was not known yet.
     if (current && current.getState() === 'INBOUND_RINGING') {
       this.lastInboundRingAt = now;
+      this.armInboundRingExpiry();
       if (hasCallerId) {
         const session = current.getSession();
         if (session.remoteNumber !== phoneNumber) {
@@ -823,6 +825,7 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
     this.activeStateMachine = sm;
 
     this.lastInboundRingAt = now;
+    this.armInboundRingExpiry();
     this.applyTransition(sm, 'INBOUND_RINGING', { trigger: 'urc:RING' });
     this.emit('call:started', sm.getSession());
     this.eventBus?.emit('call:started', sm.getSession());
@@ -864,6 +867,7 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
     this.activeStateMachine = null;
     this.pendingTerminationReason = undefined;
     this.modemLostDuringCall = false;
+    this.clearInboundRingTimer();
     // A call must not hand its USB audio flag to the next one. If no accepted stop settled it (and none is still in
     // flight, which settles it itself), the registration is of unknown state, not active.
     if (this.usbAudioDiagnosticActive && !this.usbAudioDiagnosticDeactivation) {
@@ -876,6 +880,35 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
 
     this.emit('call:ended', endedSession);
     this.eventBus?.emit('call:ended', endedSession);
+  }
+
+  /**
+   * Every RING/+CLIP re-arms this. If the rings simply stop (the caller gave up and the modem never reported it, or
+   * the modem's USB connection dropped mid-ring), the call can no longer be answered, so it ends as missed here
+   * instead of staying "ringing" until some later call happens to replace it.
+   */
+  private armInboundRingExpiry(): void {
+    this.clearInboundRingTimer();
+    this.inboundRingTimer = setTimeout(() => {
+      this.inboundRingTimer = null;
+      const sm = this.activeStateMachine;
+      if (!sm || sm.getState() !== 'INBOUND_RINGING') return;
+      this.logger.warn(`Inbound call ${sm.getSession().id} stopped ringing (no ring URC for ${INBOUND_RING_STALE_MS}ms); recording it as missed`);
+      this.applyTransition(sm, 'TERMINATING', {
+        outcome: 'missed',
+        reason: 'Ringing stopped without an end report from the modem',
+        trigger: 'ring-expired',
+      });
+      this.finalizeCall(sm);
+    }, INBOUND_RING_STALE_MS);
+    this.inboundRingTimer.unref?.();
+  }
+
+  private clearInboundRingTimer(): void {
+    if (this.inboundRingTimer) {
+      clearTimeout(this.inboundRingTimer);
+      this.inboundRingTimer = null;
+    }
   }
 
   private clearDialTimer(): void {

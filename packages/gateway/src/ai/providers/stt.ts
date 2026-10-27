@@ -71,7 +71,7 @@ export class DeepgramStt implements SttProvider {
 export class GroqWhisperStt implements SttProvider {
   readonly name = 'groq';
 
-  constructor(private readonly options: CommonOptions & { model: string; url?: string }) {}
+  constructor(private readonly options: CommonOptions & { model: string; url?: string; prompt?: string }) {}
 
   async transcribe(pcm: Buffer, format: AudioFormat, signal: AbortSignal): Promise<SttResult> {
     guardInput(this.name, pcm, format);
@@ -81,7 +81,11 @@ export class GroqWhisperStt implements SttProvider {
     form.append('model', o.model);
     form.append('response_format', 'json');
     form.append('temperature', '0');
-    if (o.language && baseLanguage(o.language) !== 'en') form.append('language', baseLanguage(o.language));
+    // Optional vocabulary hint (names, product words): Whisper spells and recognizes them far more reliably.
+    if (o.prompt) form.append('prompt', o.prompt.slice(0, 400));
+    // Always state the language. Without it Whisper guesses from the audio, and on a one-second phone clip it
+    // guesses wildly: "Hello" came back as Russian, French, Spanish and Italian text, and the agent answered in them.
+    if (o.language) form.append('language', baseLanguage(o.language));
 
     const response = await requestWithRetry(
       o.url ?? GROQ_TRANSCRIPTIONS_URL,

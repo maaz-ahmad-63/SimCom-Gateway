@@ -25,12 +25,15 @@ import { createCallsRouter } from './api/routes/calls.js';
 import { createMockRouter } from './api/routes/mock.js';
 import { GatewaySocketServer } from './api/socket/socket-server.js';
 import { loadConfig } from './config/index.js';
-import { createLogger } from './core/logger.js';
+import { createLogger, redactDiagnosticText } from './core/logger.js';
 import { UsbPcmVerifier } from './diagnostics/usb-pcm-verification.js';
+import { InboundCaptureTap } from './diagnostics/inbound-capture.js';
 import { acquireInstanceLock, InstanceLock } from './core/instance-lock.js';
 import { createAiRouter } from './api/routes/ai.js';
 import { AiCallOrchestrator } from './ai/orchestrator.js';
 import { AiRuntime } from './ai/runtime.js';
+import { CallRecorder } from './recording/call-recorder.js';
+import { loadRecordingConfig, RecordingConfig } from './recording/config.js';
 import { AiSettingsService } from './ai/settings.js';
 import { AiUsageStore } from './ai/usage-store.js';
 import { FetchLike, ProviderSet } from './ai/providers/index.js';
@@ -46,6 +49,8 @@ export interface GatewayServerOptions {
   eventBus?: GatewayEventBus;
   /** Directory for serial-port ownership locks (hardware mode). Defaults to the OS temp dir. */
   instanceLockDir?: string;
+  /** Complete-call recording overrides (tests). Production reads CALL_RECORDING_* from the environment. */
+  recording?: Partial<RecordingConfig>;
   /** AI agent test seams. In production none of these is set: env + real providers + the SIM7600EI audio adapter. */
   ai?: {
     env?: Record<string, string | undefined>;
@@ -59,6 +64,7 @@ export interface GatewayServerOptions {
     callLimitMs?: number;
     automationAudioWaitMs?: number;
     automationPollMs?: number;
+    automationActivation?: { settleMs?: number; retryMs?: number; attempts?: number };
     /** Test seam: fixed AI runtime mode. Never set in production. */
     mode?: 'off' | 'passive' | 'active';
     transports?: (
@@ -79,6 +85,7 @@ export interface GatewayServerInstance {
   eventBus: GatewayEventBus;
   aiOrchestrator: AiCallOrchestrator;
   aiRuntime: AiRuntime;
+  callRecorder: CallRecorder;
   db: DatabaseType;
   config: GatewayConfigInput;
   start: () => Promise<void>;
@@ -167,6 +174,7 @@ export function createGatewayServer(
     callLimitMs: options.ai?.callLimitMs,
     automationAudioWaitMs: options.ai?.automationAudioWaitMs,
     automationPollMs: options.ai?.automationPollMs,
+    automationActivation: options.ai?.automationActivation,
     audioPortBusy: () => usbPcmVerifierRef.current?.isBusy === true,
   });
   const aiOrchestrator = aiRuntime.orchestrator;
@@ -174,6 +182,14 @@ export function createGatewayServer(
     for (const message of aiRuntime.config.errors) logger.error(`AI agent disabled by configuration: ${message}`);
     for (const message of aiRuntime.config.warnings) logger.warn(`AI agent: ${message}`);
   }
+
+  // Complete-call recording: off unless enabled AND consent is acknowledged. Not the diagnostic capture feature.
+  const callRecorder = new CallRecorder({
+    audio,
+    eventBus,
+    config: { ...loadRecordingConfig(options.ai?.env ?? process.env), ...options.recording },
+    sampleRate: () => aiRuntime.config.config.audio.format?.sampleRate ?? config.audioSampleRate,
+  });
 
   const usbPcmVerifier =
     config.enableUsbPcmCaptureTest || config.enableUsbPcmOutboundToneTest
@@ -188,6 +204,8 @@ export function createGatewayServer(
         })
       : undefined;
   usbPcmVerifierRef.current = usbPcmVerifier;
+  // Read-only listener on the existing audio stream; works beside the AI agent. Only exists when the capture test is enabled.
+  const inboundCaptureTap = config.enableUsbPcmCaptureTest ? new InboundCaptureTap({ audio, callManager }) : undefined;
 
   // 4. Persistence Event Hookup (Safely recording calls to SQLite)
   eventBus.on('call:started', (session) => {
@@ -263,11 +281,13 @@ export function createGatewayServer(
     '/api/gateway',
     createGatewayRouter({
       usbPcmVerifier,
+      inboundCaptureTap,
       modem,
       audio,
       callManager,
       config,
       listPorts: options.ai?.hardwarePortLister,
+      recorder: callRecorder,
     })
   );
 
@@ -328,17 +348,28 @@ export function createGatewayServer(
       logger.info(`Serial port ownership recorded for ${config.atPort} and ${config.audioPort} (pid ${process.pid})`);
     }
     if (modem.getConnectionState() === 'DISCONNECTED') {
-      try {
-        await modem.initialize({
-          atPort: config.atPort,
-          atBaudRate: config.atBaudRate,
-          audioPort: config.audioPort,
-          audioBaudRate: config.audioBaudRate,
+      const portConfig = {
+        atPort: config.atPort,
+        atBaudRate: config.atBaudRate,
+        audioPort: config.audioPort,
+        audioBaudRate: config.audioBaudRate,
+      };
+      if (config.modemDriver === 'hardware' && config.autoReconnect) {
+        // The modem can be missing, re-enumerating or slow at startup. The API and dashboard must still come up so
+        // the operator can see the state; the adapter keeps retrying on its own (it schedules a reconnect on failure).
+        modem.initialize(portConfig).catch((error: Error) => {
+          logger.error(
+            `Modem is not ready at startup: ${redactDiagnosticText(error.message)}. The gateway is serving and will keep retrying.`
+          );
         });
-      } catch (error) {
-        // A failed start must not keep claiming ports it never managed to open.
-        releaseInstanceLock();
-        throw error;
+      } else {
+        try {
+          await modem.initialize(portConfig);
+        } catch (error) {
+          // A failed start must not keep claiming ports it never managed to open.
+          releaseInstanceLock();
+          throw error;
+        }
       }
     }
 
@@ -346,6 +377,7 @@ export function createGatewayServer(
       httpServer.listen(config.port, config.host, () => {
         logger.info(`HTTP and Socket.IO server listening on http://${config.host}:${config.port}`);
         aiRuntime.start();
+        callRecorder.start();
         resolve();
       });
     });
@@ -354,6 +386,7 @@ export function createGatewayServer(
   const close = async (): Promise<void> => {
     logger.info('Closing gateway server connections...');
     await aiRuntime.stop();
+    callRecorder.stop(); // finalizes any recording in progress
     await socketServer.close();
     await new Promise<void>((resolve) => {
       httpServer.close(() => resolve());
@@ -377,6 +410,7 @@ export function createGatewayServer(
     eventBus,
     aiOrchestrator,
     aiRuntime,
+    callRecorder,
     db,
     config,
     start,

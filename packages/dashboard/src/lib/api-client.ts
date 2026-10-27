@@ -21,6 +21,7 @@ import {
 } from '@sim-gateway/shared';
 import { getGatewayClientConfig } from './config';
 import type { HardwarePorts, HardwareStatus } from './hardware-ops';
+import type { RecordingsResponse } from './recordings';
 
 export interface CallEventRecord {
   id: number;
@@ -192,6 +193,26 @@ export class GatewayApiClient {
   /** GET /api/gateway/health */
   async getHealth(): Promise<GatewayHealthStatus> {
     return this.request<GatewayHealthStatus>('/api/gateway/health');
+  }
+
+  /** GET /api/gateway/recordings — complete-call recordings (not diagnostic captures). */
+  async getRecordings(): Promise<RecordingsResponse> {
+    return this.request<RecordingsResponse>('/api/gateway/recordings');
+  }
+
+  /** GET /api/gateway/recordings/:callId/:track.wav — authenticated download. */
+  async downloadRecording(callId: string, track: 'caller' | 'agent'): Promise<Blob> {
+    const { gatewayUrl, apiKey } = this.getConfig();
+    let response: Response;
+    try {
+      response = await fetch(`${gatewayUrl.replace(/\/+$/, '')}/api/gateway/recordings/${encodeURIComponent(callId)}/${track}.wav`, {
+        headers: { 'x-api-key': apiKey },
+      });
+    } catch {
+      throw new GatewayApiError(`Network error: Failed to connect to Gateway at ${gatewayUrl}.`, 0, 'NETWORK_ERROR');
+    }
+    if (!response.ok) throw new GatewayApiError(`Could not download the recording (HTTP ${response.status})`, response.status);
+    return response.blob();
   }
 
   /** GET /api/gateway/hardware/status — built from known state; sends no AT command. */

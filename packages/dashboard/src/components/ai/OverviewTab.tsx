@@ -7,6 +7,7 @@ import { apiClient } from '../../lib/api-client';
 import { attachControlState, checklist, CHECK_LABELS, describeAudioHealth, formatDb, summarizeReadiness } from '../../lib/ai-readiness';
 import { AttachControl } from './AttachControl';
 import { ConversationCard } from './ConversationCard';
+import { RecordingCard } from './RecordingCard';
 import { TestResponseCard } from './TestResponseCard';
 import { credentialBadges } from '../../lib/ai-secrets';
 import { useAi } from '../../lib/context/AiContext';
@@ -281,6 +282,7 @@ export function OverviewTab() {
       <SessionCard />
       <ConversationCard />
       <TestResponseCard />
+      <RecordingCard />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <AttestationCard kind="inbound" />
         <AttestationCard kind="outbound" />

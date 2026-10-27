@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import {
   CallSession,
   CallStateChangeEvent,
@@ -13,6 +13,7 @@ import {
 } from '@sim-gateway/shared';
 import { apiClient } from '../api-client';
 import { socketService, SocketConnectionState } from '../socket-service';
+import { reconcileCall } from '../call-sync';
 
 export interface AudioLevelData {
   inboundRms: number;
@@ -58,6 +59,8 @@ export function GatewayProvider({ children }: { children: React.ReactNode }) {
   const [connectionState, setConnectionState] = useState<SocketConnectionState>('disconnected');
   const [health, setHealth] = useState<GatewayHealthStatus | null>(null);
   const [activeCall, setActiveCall] = useState<CallSession | null>(null);
+  const activeCallRef = useRef<CallSession | null>(null);
+  activeCallRef.current = activeCall;
   const [audioLevel, setAudioLevel] = useState<AudioLevelData>({
     inboundRms: 0,
     outboundRms: 0,
@@ -160,6 +163,31 @@ export function GatewayProvider({ children }: { children: React.ReactNode }) {
       unsubscribeState();
       unsubs.forEach((unsub) => unsub());
       socketService.disconnect();
+    };
+  }, [refreshHealth]);
+
+  // A missed socket event (reconnect, sleeping tab, gateway reload) must not leave a finished call on screen.
+  // The gateway's AT-free status is the source of truth; the full health snapshot is read only on a mismatch.
+  useEffect(() => {
+    let misses = 0;
+    let stopped = false;
+    const sync = async () => {
+      try {
+        const status = await apiClient.getHardwareStatus();
+        if (stopped) return;
+        const shown = activeCallRef.current;
+        const decision = reconcileCall(shown ? { id: shown.id, state: shown.state } : null, status.call, misses);
+        misses = decision.misses;
+        if (decision.action === 'clear') setActiveCall(null);
+        else if (decision.action === 'refresh') await refreshHealth();
+      } catch {
+        // an unreachable gateway is already reported by the connection state; keep what is shown
+      }
+    };
+    const timer = setInterval(sync, 4000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
     };
   }, [refreshHealth]);
 

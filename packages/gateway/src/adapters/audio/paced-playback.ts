@@ -27,6 +27,12 @@ export interface PacedPlaybackResult {
   /** Frames dispatched more than one frame length after their deadline. */
   lateFrames: number;
   maxLateMs: number;
+  /**
+   * Frames dispatched later than the write-ahead could cover. The modem holds roughly `leadFrames` of audio, so a frame
+   * this late means that buffer may have run dry: an audible gap is possible. Plain late frames are timer jitter that
+   * the write-ahead absorbed.
+   */
+  riskFrames: number;
   stoppedBy: string | null;
 }
 
@@ -46,6 +52,7 @@ export async function playPcmPaced(
     bytesWritten: 0,
     lateFrames: 0,
     maxLateMs: 0,
+    riskFrames: 0,
     stoppedBy: null,
   };
 
@@ -63,6 +70,7 @@ export async function playPcmPaced(
 
     const lateMs = Math.max(0, performance.now() - due);
     if (lateMs > frameMs) result.lateFrames++;
+    if (lateMs > leadFrames * frameMs) result.riskFrames++;
     if (lateMs > result.maxLateMs) result.maxLateMs = lateMs;
 
     const chunk = pcm.subarray(offset, Math.min(offset + frameBytes, pcm.length));
@@ -71,4 +79,97 @@ export async function playPcmPaced(
     result.bytesWritten += chunk.length;
   }
   return result;
+}
+
+export interface PacedStreamOptions extends PacedPlaybackOptions {
+  /**
+   * Audio to hold back before the first write, so a network that delivers a little slower than real time right
+   * after the first bytes does not start the stream with an underrun. Default 150 ms.
+   */
+  prerollMs?: number;
+  /** Called once, just before the first frame is written (the moment audio really starts going out). */
+  onFirstWrite?: () => void;
+}
+
+export interface PacedStreamResult extends PacedPlaybackResult {
+  /** Times the stream had to wait for the network because the buffer ran dry after playback started. */
+  underruns: number;
+}
+
+/**
+ * The same real-time pacing as playPcmPaced, for PCM that is still arriving. Frames go out at the sample rate from a
+ * monotonic clock. If the source falls behind the clock the stream waits for it and then re-anchors the clock, so
+ * the late data is not "caught up" in a burst (which would play fast); each such wait is counted as an underrun.
+ */
+export async function playPcmStreamPaced(
+  write: (chunk: Buffer) => Promise<void>,
+  chunks: AsyncIterable<Buffer>,
+  options: PacedStreamOptions
+): Promise<PacedStreamResult> {
+  const frameMs = options.frameMs ?? 20;
+  const leadFrames = options.leadFrames ?? 2;
+  const frameBytes = Math.round((options.sampleRate * frameMs) / 1000) * 2;
+  const prerollBytes = Math.round((options.sampleRate * (options.prerollMs ?? 150)) / 1000) * 2;
+
+  const result: PacedStreamResult = { framesWritten: 0, bytesWritten: 0, lateFrames: 0, maxLateMs: 0, riskFrames: 0, stoppedBy: null, underruns: 0 };
+  const iterator = chunks[Symbol.asyncIterator]();
+  let buffer: Buffer = Buffer.alloc(0);
+  let ended = false;
+
+  /** Read until at least `bytes` are buffered or the source ends. Returns how long it had to wait. */
+  const fill = async (bytes: number): Promise<number> => {
+    const from = performance.now();
+    while (!ended && buffer.length < bytes) {
+      const next = await iterator.next();
+      if (next.done) ended = true;
+      else buffer = buffer.length === 0 ? next.value : Buffer.concat([buffer, next.value]);
+    }
+    return performance.now() - from;
+  };
+
+  try {
+    await fill(Math.max(prerollBytes, frameBytes));
+    let startedAt = performance.now();
+    let announced = false;
+    for (let index = 0; ; index++) {
+      if (buffer.length < frameBytes && !ended) {
+        const waited = await fill(frameBytes);
+        // Whatever the wait exceeded the write-ahead by was an audible gap: count it and restart the clock from now.
+        if (waited > frameMs * Math.max(1, leadFrames) && announced) {
+          result.underruns++;
+          startedAt = performance.now() - Math.max(0, index - leadFrames) * frameMs;
+        }
+      }
+      if (buffer.length === 0) break; // the source ended and everything was written
+      const due = startedAt + Math.max(0, index - leadFrames) * frameMs;
+      const wait = due - performance.now();
+      if (wait > 1) await sleep(wait);
+
+      const stop = options.shouldStop?.() ?? null;
+      if (stop) {
+        result.stoppedBy = stop;
+        break;
+      }
+      const lateMs = Math.max(0, performance.now() - due);
+      if (lateMs > frameMs) result.lateFrames++;
+      if (lateMs > leadFrames * frameMs) result.riskFrames++;
+      if (lateMs > result.maxLateMs) result.maxLateMs = lateMs;
+
+      const size = Math.min(frameBytes, buffer.length - (buffer.length % 2));
+      if (size === 0) break; // a stray odd byte at the very end is not a sample
+      const frame = buffer.subarray(0, size);
+      buffer = buffer.subarray(size);
+      if (!announced) {
+        announced = true;
+        options.onFirstWrite?.();
+      }
+      await write(frame);
+      result.framesWritten++;
+      result.bytesWritten += frame.length;
+    }
+    return result;
+  } finally {
+    // Release the provider's stream when playback stops early (caller interrupted, call ended).
+    await iterator.return?.().catch(() => {});
+  }
 }

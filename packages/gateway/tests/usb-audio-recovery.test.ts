@@ -166,6 +166,10 @@ describe('USB drop recovery', () => {
     const transport = new CountingTransport('COM-AUDIO-TEST', 115200);
     const audio = new Sim7600HardwareAudioAdapter({ audioPort: 'COM-AUDIO-TEST', transport });
     const eventBus = new GatewayEventBus();
+    // server.ts registers an 'error' listener on the bus. Without one, EventEmitter throws the error from inside the
+    // URC cleanup handler, which showed up as unhandled rejections. This is the same wiring, and it keeps what was reported.
+    const busErrors: Error[] = [];
+    eventBus.on('error', (error) => busErrors.push(error));
     const manager = new CallSessionManager({
       modem,
       audio,
@@ -246,7 +250,7 @@ describe('USB drop recovery', () => {
     };
     const modemBack = () => modem.emit('connection_state', 'READY');
 
-    return { modem, transport, audio, manager, verifier, commands, ended, activation, script, stream, waitForReport, usbDrop, modemBack };
+    return { modem, transport, audio, manager, verifier, commands, ended, activation, script, stream, waitForReport, usbDrop, modemBack, busErrors };
   };
 
   it('does not trust the registration after a drop, then reissues it, reopens COM26 and sees PCM bytes', async () => {
@@ -361,6 +365,8 @@ describe('USB drop recovery', () => {
 
   describe('stopping USB audio (AT+CPCMREG=0)', () => {
     const rejected = new AtCommandError('AT+CPCMREG=0', 'ERROR', 'AT ERROR');
+    /** What the gateway reported on its 'error' channel: the messages, in order. */
+    const reported = (h: { busErrors: Error[] }): string[] => h.busErrors.map((e) => e.message);
 
     it('an accepted stop ends the activation and leaves nothing uncertain', async () => {
       const h = await createHarness();
@@ -368,6 +374,7 @@ describe('USB drop recovery', () => {
       expect(h.manager.isUsbAudioDiagnosticActive()).toBe(false);
       expect(h.manager.getUsbAudioStatus()).toMatchObject({ registrationUncertain: false, lastDeactivation: { ok: true } });
       await h.manager.hangup();
+      expect(h.busErrors).toEqual([]); // an accepted stop reports nothing
     });
 
     it('a rejected stop during a call keeps the activation on record as unverified, never "not-expected"', async () => {
@@ -381,6 +388,8 @@ describe('USB drop recovery', () => {
       await expect(h.manager.activateUsbAudioDiagnostic()).resolves.toMatchObject({ command: 'AT+CPCMREG=1' });
       expect(h.manager.getUsbAudioStatus()).toMatchObject({ needsRecovery: false, registrationUncertain: false });
       await h.manager.hangup();
+      // Ending the call stops USB audio again, the module rejects that stop too, and the failure is reported.
+      await vi.waitFor(() => expect(reported(h)).toContain('AT ERROR'));
     });
 
     it('a rejected stop at hang-up is carried to the next call as doubt, not as an active or cleared registration', async () => {
@@ -402,6 +411,8 @@ describe('USB drop recovery', () => {
       expect(h.manager.getUsbAudioStatus()).toMatchObject({ registrationActive: true, registrationUncertain: false });
       await vi.waitFor(() => expect(h.manager.getUsbAudioStatus().audio.state).toBe('flowing'));
       await h.manager.hangup();
+      // Two hang-ups, each ending in a rejected stop, each reported.
+      await vi.waitFor(() => expect(reported(h)).toEqual(['AT ERROR', 'AT ERROR']));
     });
 
     it('a rejected stop after the remote hangs up (stop still in flight when the call ends) ends up the same way', async () => {
@@ -411,6 +422,7 @@ describe('USB drop recovery', () => {
       expect(h.manager.getCurrentCall()).toBeNull();
       expect(h.manager.isUsbAudioDiagnosticActive()).toBe(false);
       expect(h.manager.getUsbAudioStatus().lastDeactivation).toMatchObject({ ok: false });
+      await vi.waitFor(() => expect(reported(h)).toEqual(['AT ERROR'])); // the in-flight stop failed once, and was reported once
     });
 
     it('an AT port that drops during the stop is treated the same: unknown, not stopped', async () => {
@@ -419,6 +431,7 @@ describe('USB drop recovery', () => {
       expect(h.manager.getUsbAudioStatus().audio.state).toBe('unverified');
       await h.manager.hangup();
       expect(h.manager.getUsbAudioStatus().registrationUncertain).toBe(true);
+      await vi.waitFor(() => expect(reported(h)).toContain('port closed'));
     });
   });
 

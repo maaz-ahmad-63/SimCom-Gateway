@@ -58,14 +58,56 @@ export class ScriptedLlm implements LlmProvider {
   }
 }
 
+export interface ToneStreamOptions {
+  /** Audio per chunk. Default 100 ms. */
+  chunkMs?: number;
+  /** Pause after each chunk, to model a network that delivers the audio over time. */
+  gapMs?: number;
+  /** Throw after this many chunks, to model a stream that breaks mid-reply. */
+  failAfterChunks?: number;
+}
+
 /** Speaks nothing real: returns a quiet 440 Hz tone whose length follows the text length. */
 export class ToneTts implements TtsProvider {
   readonly name = 'mock-tts';
   readonly requests: string[] = [];
+  /** Present only when a stream was configured, because its mere presence switches the engine to streaming. */
+  synthesizeStream?: (text: string, format: AudioFormat, signal: AbortSignal) => AsyncIterable<Buffer>;
+  /** Set when a streamed request was cancelled by the caller. */
+  streamCancelled = 0;
   constructor(
     private readonly delayMs = 0,
-    private readonly failOn: (text: string, n: number) => boolean = () => false
-  ) {}
+    private readonly failOn: (text: string, n: number) => boolean = () => false,
+    stream?: ToneStreamOptions
+  ) {
+    if (stream) this.synthesizeStream = (text, format, signal) => this.streamTone(text, format, signal, stream);
+  }
+
+  private async *streamTone(text: string, format: AudioFormat, signal: AbortSignal, options: ToneStreamOptions): AsyncGenerator<Buffer> {
+    const n = this.requests.push(text) - 1;
+    await wait(this.delayMs, signal, 'tts');
+    if (this.failOn(text, n)) throw new AiProviderError(this.name, 'tts', 'scripted failure');
+    const whole = generateTone(format, 440, Math.min(2000, 200 + text.length * 20), 0.05);
+    const size = Math.round((format.sampleRate * (options.chunkMs ?? 100)) / 1000) * 2;
+    let sent = 0;
+    for (let offset = 0; offset < whole.length; offset += size) {
+      if (signal.aborted) {
+        this.streamCancelled++;
+        throw new AiProviderError(this.name, 'tts', 'cancelled', { aborted: true });
+      }
+      if (options.failAfterChunks !== undefined && sent >= options.failAfterChunks) {
+        throw new AiProviderError(this.name, 'tts', 'scripted stream failure');
+      }
+      yield whole.subarray(offset, Math.min(offset + size, whole.length));
+      sent++;
+      try {
+        await wait(options.gapMs ?? 0, signal, 'tts');
+      } catch (error) {
+        this.streamCancelled++;
+        throw error;
+      }
+    }
+  }
 
   async synthesize(text: string, format: AudioFormat, signal: AbortSignal): Promise<Buffer> {
     const n = this.requests.push(text) - 1;

@@ -15,13 +15,13 @@ A high-reliability, standalone cellular gateway for the **SIMCOM SIM7600EI** LTE
 npm install
 
 # Build shared package
-npm run --workspace=@sim-gateway/shared build
+npm.cmd run --workspace=@sim-gateway/shared build
 
 # Start Gateway backend with mock modem adapter
-npm run dev:gateway
+npm.cmd run dev:gateway
 
 # In a separate terminal, launch the dashboard
-npm run dev:dashboard
+npm.cmd run dev:dashboard
 ```
 
 ## Documentation

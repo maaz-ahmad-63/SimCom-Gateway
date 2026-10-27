@@ -240,6 +240,7 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
       // Counted only after the serial write succeeded, so failed writes never inflate the totals.
       this.stats.bytesSent += chunk.length;
       this.stats.framesSent++;
+      this.emit('audio_out', chunk);
     } catch (writeErr) {
       this.stats.droppedFrames++;
       if (this.listenerCount('error') > 0) {

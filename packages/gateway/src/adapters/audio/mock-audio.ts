@@ -117,6 +117,7 @@ export class MockAudioAdapter extends EventEmitter implements IAudioAdapter {
     this.stats.framesSent++;
     this.stats.currentRmsOutbound = this.calculateRms(chunk);
     this.outboundStream?.write(chunk);
+    this.emit('audio_out', chunk);
   }
 
   getStats(): AudioStreamStats {

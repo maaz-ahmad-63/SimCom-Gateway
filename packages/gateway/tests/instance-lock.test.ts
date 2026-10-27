@@ -84,7 +84,7 @@ describe('serial port instance lock', () => {
   });
 
   describe('gateway startup', () => {
-    const createServer = (port: number) => {
+    const createServer = (port: number, autoReconnect = true) => {
       const modem = new MockModemAdapter({ autoAnswerDelayMs: 0 });
       return {
         modem,
@@ -97,6 +97,7 @@ describe('serial port instance lock', () => {
             sqliteDbPath: path.join(dir, `gateway-${port}.sqlite`),
             port,
             host: '127.0.0.1',
+            autoReconnect,
           },
           modem,
           audio: new MockAudioAdapter(),
@@ -147,14 +148,24 @@ describe('serial port instance lock', () => {
       await next.server.close();
     });
 
-    it('releases the ports when the modem fails to initialize', async () => {
-      const failing = createServer(45875);
+    it('releases the ports when the modem fails to initialize and auto-reconnect is off (the start fails)', async () => {
+      const failing = createServer(45875, false);
       vi.spyOn(failing.modem, 'initialize').mockRejectedValue(new Error('Access denied'));
 
       await expect(failing.server.start()).rejects.toThrow('Access denied');
 
       expect(fs.readdirSync(dir).filter((name) => name.endsWith('.lock'))).toEqual([]);
       failing.server.db.close();
+    });
+
+    it('keeps owning the ports when the modem is not ready but auto-reconnect keeps retrying (the gateway serves)', async () => {
+      const retrying = createServer(45877, true);
+      vi.spyOn(retrying.modem, 'initialize').mockRejectedValue(new Error('Access denied'));
+
+      await expect(retrying.server.start()).resolves.toBeUndefined();
+
+      expect(fs.readdirSync(dir).filter((name) => name.endsWith('.lock')).length).toBeGreaterThan(0);
+      await retrying.server.close();
     });
 
     it('does not lock anything in mock mode', async () => {

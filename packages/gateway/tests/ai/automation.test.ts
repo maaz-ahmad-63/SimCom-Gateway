@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AtCommandError, AtCommandTimeoutError } from '@sim-gateway/shared';
 import type { AiInspectorEvent } from '@sim-gateway/shared';
 import { MockAudioAdapter } from '../../src/adapters/audio/mock-audio.js';
 import { MockModemAdapter } from '../../src/adapters/modem/mock-modem.js';
@@ -31,15 +32,27 @@ describe('hands-free calling workflow', () => {
       callLimitMs?: number;
       audioWaitMs?: number;
       failActivation?: boolean;
+      /** The module answers AT ERROR to this many AT+CPCMREG=1 commands, then accepts. */
+      rejectActivations?: number;
+      timeoutActivation?: boolean;
+      recordingDir?: string;
     } = {}
   ) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automation-'));
     const modem = new MockModemAdapter({ autoAnswerDelayMs: 0 });
     const commands: string[] = [];
+    let rejected = 0;
     const original = modem.executeCommand.bind(modem);
     modem.executeCommand = async (command, timeoutMs) => {
       commands.push(command);
       if (options.failActivation && command.startsWith('AT+CPCMREG=1')) throw new Error('AT ERROR');
+      if (command === 'AT+CPCMREG=1') {
+        if (options.timeoutActivation) throw new AtCommandTimeoutError(command, 5000);
+        if (rejected < (options.rejectActivations ?? 0)) {
+          rejected++;
+          throw new AtCommandError(command, 'ERROR', "AT command 'AT+CPCMREG=1' failed: AT ERROR");
+        }
+      }
       return original(command, timeoutMs);
     };
     const source = new ManualAudioSource(FORMAT_8K, true);
@@ -51,6 +64,9 @@ describe('hands-free calling workflow', () => {
       modem,
       audio: new MockAudioAdapter(),
       instanceLockDir: dir,
+      recording: options.recordingDir
+        ? { enabled: true, consentAcknowledged: true, dir: options.recordingDir, retentionDays: 0, maxSeconds: 600, errors: [] }
+        : undefined,
       ai: {
         env: aiEnv({ AI_SECRETS_MASTER_KEY: 'a-long-master-key-for-tests-only', AI_PLAYBACK_GUARD_MS: '0', ...options.env }),
         providers,
@@ -60,6 +76,7 @@ describe('hands-free calling workflow', () => {
         callLimitMs: options.callLimitMs,
         automationAudioWaitMs: options.audioWaitMs ?? 1500,
         automationPollMs: 20,
+        automationActivation: { settleMs: 0, retryMs: 20, attempts: 3 },
       },
     });
     await modem.initialize();
@@ -186,6 +203,54 @@ describe('hands-free calling workflow', () => {
       expect(h.sink.playCalls).toBe(0);
     });
 
+    describe('when the module rejects USB audio activation at the start of a call', () => {
+      it('retries after the rejection and attaches once the module accepts, never toggling the registration', async () => {
+        const h = await harness({ env: AUTO, rejectActivations: 2 });
+        h.ring();
+        h.ring();
+        await vi.waitFor(() => expect(h.server.aiOrchestrator.getSessions()).toHaveLength(1), { timeout: 4000 });
+        expect(h.count(/^AT\+CPCMREG=1$/)).toBe(3); // two rejections, one acceptance
+        expect(h.count(/^AT\+CPCMREG=0$/)).toBe(0);
+        const text = h.markers().join(' | ');
+        expect(text).toMatch(/rejected by the module.*retrying/);
+        expect(text).toMatch(/USB audio activated automatically \(AT\+CPCMREG=1 accepted, attempt 3\)/);
+        expect(h.alerts.join(' ')).not.toMatch(/activation failed/);
+      });
+
+      it('gives up after the attempt limit, says so once, and does not attach', async () => {
+        const h = await harness({ env: AUTO, rejectActivations: 99 });
+        h.ring();
+        h.ring();
+        await vi.waitFor(() => expect(h.markers().join(' ')).toMatch(/activation failed: .*\(after 3 attempts\)/));
+        await sleep(300);
+        expect(h.count(/^AT\+CPCMREG=1$/)).toBe(3);
+        expect(h.server.aiOrchestrator.getSessions()).toHaveLength(0);
+        expect(h.alerts.filter((a) => /activation failed/.test(a))).toHaveLength(1);
+      });
+
+      it('never retries a timeout, because the module may have registered the audio', async () => {
+        const h = await harness({ env: AUTO, timeoutActivation: true });
+        h.ring();
+        h.ring();
+        await vi.waitFor(() => expect(h.markers().join(' ')).toMatch(/activation failed: AT command 'AT\+CPCMREG=1' timed out/));
+        await sleep(300);
+        expect(h.count(/^AT\+CPCMREG=1$/)).toBe(1);
+      });
+
+      it('stops retrying the moment the call ends', async () => {
+        const h = await harness({ env: AUTO, rejectActivations: 99 });
+        h.ring();
+        h.ring();
+        await vi.waitFor(() => expect(h.count(/^AT\+CPCMREG=1$/)).toBeGreaterThanOrEqual(1));
+        h.endRemote();
+        await vi.waitFor(() => expect(h.server.callManager.getCurrentCall()).toBeNull());
+        const after = h.count(/^AT\+CPCMREG=1$/);
+        await sleep(300);
+        expect(h.count(/^AT\+CPCMREG=1$/)).toBe(after);
+        expect(h.count(/^AT\+CPCMREG=1$/)).toBeLessThan(3);
+      });
+    });
+
     it('does not touch the modem when automatic activation is off', async () => {
       const h = await harness({ env: { ...AUTO, AI_AUTO_ACTIVATE_USB_AUDIO: 'false' } });
       h.ring();
@@ -213,6 +278,8 @@ describe('hands-free calling workflow', () => {
       h.ring();
       h.ring();
       await vi.waitFor(() => expect(h.markers().join(' ')).toMatch(/no audio bytes arrived within 0 s|no audio bytes arrived/));
+      // The report includes what the module said about its own audio format (the mock module answers with real values).
+      expect(h.markers().join(' ')).toMatch(/the module (reports audio format CPCMFRM=\d|did not report an audio format)/);
       expect(h.server.aiOrchestrator.getSessions()).toHaveLength(0);
       expect(h.alerts.join(' ')).toMatch(/will not attach until they do/);
     });
@@ -299,6 +366,37 @@ describe('hands-free calling workflow', () => {
       expect(session.busy).toBe(false);
     });
 
+    it('hands-free end to end: answer, USB audio once, attach, reply, and a playable recording saved against the call', async () => {
+      const recDir = fs.mkdtempSync(path.join(os.tmpdir(), 'handsfree-rec-'));
+      cleanup.push(() => fs.rmSync(recDir, { recursive: true, force: true }));
+      const h = await harness({ env: { ...AUTO, ...VERIFIED, AI_AUTO_REPLIES: 'true' }, playbackMs: 20, recordingDir: recDir });
+      h.server.callRecorder.start();
+      h.ring();
+      h.ring();
+      await vi.waitFor(() => expect(h.server.aiOrchestrator.getSessions()).toHaveLength(1), { timeout: 4000 });
+      const callId = h.server.callManager.getCurrentCall()!.id;
+      expect(h.count(/^AT\+CPCMREG=1$/)).toBe(1); // activated once, with no manual command
+      expect(h.server.aiOrchestrator.getSessions()[0].mode).toBe('active'); // replies with no dashboard click
+
+      await h.callerSays();
+      await vi.waitFor(() => expect(h.sink.played.length).toBe(1), { timeout: 4000 });
+      expect(h.count(/^AT\+CPCMREG=1$/)).toBe(1); // still once
+      h.endRemote();
+      await vi.waitFor(() => expect(h.server.callManager.getCurrentCall()).toBeNull());
+      expect(h.count(/^AT\+CPCMREG=1$/)).toBe(1); // never re-activated during or after the call
+      expect(h.count(/^AT\+CPCMREG=0$/)).toBeLessThanOrEqual(1); // only the single stop after the call ended
+
+      const meta = h.server.callRecorder.list()[0];
+      expect(meta).toMatchObject({ callId, complete: true, direction: 'inbound' });
+      expect(meta.tracks.caller.hasAudio).toBe(true);
+      const wav = fs.readFileSync(h.server.callRecorder.trackFile(callId, 'caller')!);
+      expect(wav.toString('ascii', 0, 4)).toBe('RIFF');
+      expect(wav.readUInt32LE(40)).toBe(wav.length - 44); // header matches the samples, so it plays
+      let energy = 0;
+      for (let i = 44; i + 1 < wav.length; i += 2) energy += Math.abs(wav.readInt16LE(i));
+      expect(energy).toBeGreaterThan(0); // real samples, not silence
+    });
+
     it('lets the caller interrupt: the reply in progress is cancelled and only the newest question is answered', async () => {
       const providers = createMockProviders({ stt: ['first question', 'second question'], llm: ['A long first answer that is being spoken now.', 'The answer to the second.'] });
       // Full duplex is an explicit opt-in (unverified on this hardware): only then can the caller talk over the agent.
@@ -362,9 +460,12 @@ describe('hands-free calling workflow', () => {
       await vi.waitFor(() => expect(h.sink.played.length).toBe(1), { timeout: 4000 });
       // Silence from here: follow-up, follow-up, goodbye.
       await vi.waitFor(() => expect(h.sink.played.length).toBe(4), { timeout: 4000 });
+      // The two follow-ups are picked at random, and a sentence picked twice is replayed from the fixed-line cache
+      // without a new request, so what was played (4 in all) is counted above and the requests are only bounded here.
       const spoken = h.providers.tts.requests.slice(1);
-      expect(spoken).toHaveLength(3);
-      expect(spoken[2]).toBe("I didn't get a response, so I'm disconnecting now. Goodbye.");
+      expect(spoken.length).toBeGreaterThanOrEqual(2);
+      expect(spoken.length).toBeLessThanOrEqual(3);
+      expect(spoken.at(-1)).toBe("I didn't get a response, so I'm disconnecting now. Goodbye.");
       await vi.waitFor(() => expect(h.count(/^AT\+CHUP$|^ATH$/)).toBe(1));
       await sleep(300);
       expect(h.count(/^AT\+CHUP$|^ATH$/)).toBe(1);
@@ -375,7 +476,7 @@ describe('hands-free calling workflow', () => {
       h.ring();
       h.ring();
       await vi.waitFor(() => expect(h.server.aiOrchestrator.getSessions()).toHaveLength(1), { timeout: 4000 });
-      await vi.waitFor(() => expect(h.providers.tts.requests.length).toBe(3), { timeout: 4000 });
+      await vi.waitFor(() => expect(h.sink.played.length).toBe(3), { timeout: 4000 }); // two follow-ups and the goodbye
       await sleep(250);
       expect(h.count(/^AT\+CHUP$|^ATH$/)).toBe(0);
       expect(h.alerts.join(' ')).toMatch(/not hanging up because AI_ALLOW_AGENT_HANGUP is false/);

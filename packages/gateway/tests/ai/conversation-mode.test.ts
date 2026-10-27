@@ -283,7 +283,8 @@ describe('operator-enabled conversation mode (per call, no per-turn clicks)', ()
     it('reports each stage failure, stays alive, and answers the next turn', async () => {
       const boom = (stage: 'llm' | 'stt') => new AiProviderError('groq', stage, 'HTTP 503: provider server error', { status: 503 });
       const providers = createMockProviders({ stt: [boom('stt'), '   ', 'hello again', 'one more'], llm: [boom('llm'), 'Recovered and answering.'] });
-      const h = await harness({ providers, env: { AI_MAX_RETRIES: '0' } });
+      // This test scripts one STT outcome per request, so it runs without the speculative request made during the pause.
+      const h = await harness({ providers, env: { AI_MAX_RETRIES: '0', AI_SPECULATIVE_STT: 'false' } });
       const call = await h.startCall();
       await h.enable(call.id);
 

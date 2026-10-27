@@ -361,7 +361,8 @@ describe('gateway audio adapters', () => {
     const result = await sink.play(pcm, new AbortController().signal);
 
     expect(result).toMatchObject({ bytesWritten: pcm.length, completed: true, stoppedBy: null });
-    expect(audio.getStats().bytesSent).toBe(pcm.length);
+    // The port saw the reply plus the one 20 ms warm-up frame; the sink's own count is only the reply.
+    expect(audio.getStats().bytesSent).toBe(pcm.length + 320);
     await audio.stopSession();
   });
 

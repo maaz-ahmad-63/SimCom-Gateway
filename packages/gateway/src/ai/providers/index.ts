@@ -52,6 +52,29 @@ function stub(stage: AiStage): ProviderSet[AiStage] {
 }
 
 /**
+ * Optional override of the Deepgram text-to-speech endpoint (the default is the AU region, as in the source project),
+ * for comparing regions. The API key is sent to this URL, so it must be an https deepgram.com host.
+ */
+export function deepgramUrl(name: string, value: string | undefined): string | undefined {
+  const raw = value?.trim();
+  if (!raw) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`${name} is not a valid URL`);
+  }
+  if (url.protocol !== 'https:' || !(url.hostname === 'deepgram.com' || url.hostname.endsWith('.deepgram.com'))) {
+    throw new Error(`${name} must be an https URL on deepgram.com (the API key is sent there)`);
+  }
+  return url.toString();
+}
+
+export function deepgramSpeakUrl(value: string | undefined): string | undefined {
+  return deepgramUrl('AI_DEEPGRAM_SPEAK_URL', value);
+}
+
+/**
  * Build the configured STT, LLM and TTS providers. Keys are read from the environment here, at
  * construction time, and live only inside the provider objects (never in config, status or logs).
  * Throws a plain Error naming the missing variable (never its value) if a key is absent.
@@ -83,13 +106,16 @@ export function createProviders(config: AiConfig, options: ProviderFactoryOption
             // The multilingual model is selected by language=multi; without it nova-3-multi would behave like nova-3.
             language: config.stt.key === 'nova-3-multi' ? 'multi' : config.language,
             keyterms: config.stt.keyterms,
+            baseUrl: deepgramUrl('AI_DEEPGRAM_LISTEN_URL', env.AI_DEEPGRAM_LISTEN_URL ?? process.env.AI_DEEPGRAM_LISTEN_URL),
             timeoutMs: config.timeoutsMs.stt,
           })
         : new GroqWhisperStt({
             ...common,
             apiKey: key('GROQ_API_KEY'),
             model: sttEntry.model,
-            language: config.language,
+            // AI_STT_LANGUAGE can pin what the caller speaks without changing the language the agent writes in.
+            language: (env.AI_STT_LANGUAGE ?? process.env.AI_STT_LANGUAGE)?.trim() || config.language,
+            prompt: (env.AI_STT_PROMPT ?? process.env.AI_STT_PROMPT)?.trim() || undefined,
             timeoutMs: config.timeoutsMs.stt,
           });
   }
@@ -126,6 +152,7 @@ export function createProviders(config: AiConfig, options: ProviderFactoryOption
             ...common,
             apiKey: key('DEEPGRAM_API_KEY'),
             voice: config.tts.voice,
+            baseUrl: deepgramSpeakUrl(env.AI_DEEPGRAM_SPEAK_URL ?? process.env.AI_DEEPGRAM_SPEAK_URL),
             timeoutMs: config.timeoutsMs.tts,
           });
     // Never more than the configured number of simultaneous requests to this provider, process-wide.

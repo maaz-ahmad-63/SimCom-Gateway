@@ -86,6 +86,8 @@ export interface IAudioAdapter {
 
   /** Event listeners */
   on(event: 'audio_frame', listener: (frame: AudioFrame) => void): this;
+  /** A chunk that was written to the modem playback line (after the write succeeded). Not proof the caller heard it. */
+  on(event: 'audio_out', listener: (chunk: Buffer) => void): this;
   on(event: 'stats', listener: (stats: AudioStreamStats) => void): this;
   on(event: 'error', listener: (error: Error) => void): this;
   off(event: string, listener: (...args: any[]) => void): this;

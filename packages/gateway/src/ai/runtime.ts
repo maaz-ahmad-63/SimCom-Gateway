@@ -65,6 +65,8 @@ export interface AiRuntimeOptions {
   /** Test seam: how long automation waits for audio bytes, and how often it looks. */
   automationAudioWaitMs?: number;
   automationPollMs?: number;
+  /** Test seam: USB audio activation settle delay, retry spacing and attempts. */
+  automationActivation?: { settleMs?: number; retryMs?: number; attempts?: number };
   /** Test seam: fixed runtime mode, as if the operator had chosen it. Never set in production wiring. */
   forceMode?: AiMode;
   /** Days to keep the per-turn log (default 30). */
@@ -157,6 +159,9 @@ export class AiRuntime {
       alert: (level, message) => options.eventBus.emit('gateway:alert', { level, message, timestamp: new Date().toISOString() }),
       audioWaitMs: options.automationAudioWaitMs,
       pollMs: options.automationPollMs,
+      activationSettleMs: options.automationActivation?.settleMs,
+      activationRetryMs: options.automationActivation?.retryMs,
+      activationAttempts: options.automationActivation?.attempts,
     });
     options.eventBus.on('call:ended', this.onCallEnded);
     try {

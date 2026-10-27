@@ -17,7 +17,9 @@ import { IdleManager, idleMessages } from './idle.js';
 import { AudioMeter } from './meter.js';
 import { TraceHub } from './trace.js';
 import { AiUsageStore } from './usage-store.js';
+import { BargeInDetector } from './barge-in.js';
 import { assessUtterance, EnergyEndpointer } from './endpointer.js';
+import { KnowledgeProvider, LocalKnowledgeBase } from './knowledge.js';
 import { GatewayAudioSink, GatewayAudioSource } from './gateway-adapters.js';
 import { ProviderSet } from './providers/types.js';
 import { AiReadiness } from './readiness.js';
@@ -64,6 +66,8 @@ export interface OrchestratorDeps {
   idleWaitsMs?: readonly [number, number, number];
   /** Test seam: the per-call AI time limit in ms (production uses AI_MAX_CALL_SECONDS). */
   callLimitMs?: number;
+  /** Replace the folder-based company knowledge with another KnowledgeProvider (a vector store, a service). */
+  knowledge?: KnowledgeProvider | null;
 }
 
 interface Attached {
@@ -85,6 +89,16 @@ interface Attached {
   lastTurn: TurnResult | null;
   hangupRequested: boolean;
   attachedAt: string;
+  /** Listens for the caller talking over the agent while half-duplex discards that audio (null when not applicable). */
+  barge: BargeInDetector | null;
+  /** The most recent audio heard while deaf, so the first words of an interruption are not lost. */
+  bargeRing: Buffer[];
+  bargeRingBytes: number;
+  /** An interruption was acted on and it is not yet known whether it was real speech. */
+  bargeAwaitingVerdict: boolean;
+  bargeFalse: number;
+  bargeDisabled: boolean;
+  bargeTimer: NodeJS.Timeout | null;
 }
 
 export interface AiSessionStatus {
@@ -115,6 +129,8 @@ export interface AiSessionStatus {
 export class AiCallOrchestrator extends EventEmitter {
   private readonly logger = createLogger('AiOrchestrator');
   private readonly attached = new Map<string, Attached>();
+  /** Fixed spoken lines (greeting, follow-ups), kept in memory across calls so they start instantly after the first time. */
+  private readonly fixedAudioCache = new Map<string, Buffer>();
   private readonly armed = new Set<string>();
   private readonly waiting = new Map<string, { timer: NodeJS.Timeout; since: number; blockers: string }>();
   private started = false;
@@ -292,7 +308,8 @@ export class AiCallOrchestrator extends EventEmitter {
       phaseSince: new Date(a.session.phaseSince).toISOString(),
       halfDuplex: this.config.halfDuplex,
       ignoredWhileSpeakingSeconds: Math.round((a.ignoredBytes / 2 / (this.config.audio.format?.sampleRate ?? 8000)) * 10) / 10,
-      endpointSilenceMs: this.config.vad.minSilenceMs,
+      // The silence actually waited before the last turn (adaptive endpointing shortens it), else the configured ceiling.
+      endpointSilenceMs: m?.timeline?.endpointMs ?? this.config.vad.minSilenceMs,
       lastTurn: a.lastTurn && m
         ? {
             status: a.lastTurn.status,
@@ -490,7 +507,10 @@ export class AiCallOrchestrator extends EventEmitter {
       ? this.deps.transports(call, format)
       : {
           source: new GatewayAudioSource(this.deps.audio, format, this.config.audio.inboundVerified, isLive),
-          sink: new GatewayAudioSink(this.deps.audio, format, this.config.audio.outboundVerified, isLive),
+          sink: new GatewayAudioSink(this.deps.audio, format, this.config.audio.outboundVerified, isLive, {
+            leadFrames: this.config.playback.leadFrames,
+            prerollMs: this.config.playback.prerollMs,
+          }),
         };
 
     const session = new ConversationSession({
@@ -499,6 +519,8 @@ export class AiCallOrchestrator extends EventEmitter {
       providers,
       sink,
       passive: this.mode !== 'active',
+      fixedAudioCache: this.fixedAudioCache,
+      knowledge: this.knowledgeProvider(),
       emit: (event) => this.handleConversationEvent(call.id, event),
       trace: (event) => this.publish(call.id, event),
     });
@@ -521,24 +543,61 @@ export class AiCallOrchestrator extends EventEmitter {
       lastTurn: null,
       hangupRequested: false,
       attachedAt: new Date().toISOString(),
+      barge:
+        this.config.halfDuplex && this.config.bargeIn.enabled && this.config.bargeIn.whileSpeaking
+          ? new BargeInDetector(format, {
+              minMs: this.config.bargeIn.minMs,
+              echoMultiplier: this.config.bargeIn.echoMultiplier,
+              floor: Math.max(this.config.vad.rmsThreshold * 2, 0.006),
+            })
+          : null,
+      bargeRing: [],
+      bargeRingBytes: 0,
+      bargeAwaitingVerdict: false,
+      bargeFalse: 0,
+      bargeDisabled: false,
+      bargeTimer: null,
     };
 
-    entry.endpointer = new EnergyEndpointer(format, this.config.vad, {
-      onSpeechStart: () => {
-        entry.idle?.pause(); // someone is talking: the silence clock stops
-        if (this.config.bargeIn.enabled && session.isBusy) session.interrupt();
+    const vad = this.config.vad;
+    entry.endpointer = new EnergyEndpointer(
+      format,
+      {
+        ...vad,
+        // Transcribing during the pause only pays off (and only makes sense) when something will be said in reply.
+        softSilenceMs: vad.speculativeStt || vad.earlyCommit ? vad.softSilenceMs : 0,
       },
-      onUtterance: (pcm, info) => {
-        const id = `${call.id}:${++entry.utterances}`;
-        this.logger.debug(`utterance ${id} ready (${Math.round(info.durationMs)} ms, ${info.reason})`);
-        try {
-          this.deps.onUtteranceAudio?.(call.id, entry.utterances, pcm, format);
-        } catch (error) {
-          this.logger.warn(`Diagnostic recording failed: ${(error as Error).message}`);
-        }
-        void session.handleUtterance(pcm, id);
-      },
-    });
+      {
+        onSpeechStart: () => {
+          entry.idle?.pause(); // someone is talking: the silence clock stops
+          if (this.config.bargeIn.enabled && session.isBusy) session.interrupt();
+        },
+        onSoftEnd: (pcm, info) => {
+          if (session.isPassive) return;
+          session.beginSpeculative(pcm, info.id);
+          if (vad.earlyCommit) void this.tryEarlyCommit(entry, session, info.id, info.durationMs);
+        },
+        onSoftCancel: (id) => session.cancelSpeculative(id),
+        onUtterance: (pcm, info) => {
+          const id = `${call.id}:${++entry.utterances}`;
+          this.logger.debug(
+            `utterance ${id} ready (${Math.round(info.durationMs)} ms, ${info.reason}, silence wait ${Math.round(info.silenceTargetMs)} ms${info.softId !== undefined ? ', speculative transcript available' : ''})`
+          );
+          try {
+            this.deps.onUtteranceAudio?.(call.id, entry.utterances, pcm, format);
+          } catch (error) {
+            this.logger.warn(`Diagnostic recording failed: ${(error as Error).message}`);
+          }
+          const verdict = entry.bargeAwaitingVerdict;
+          void session
+            .handleUtterance(pcm, id, { speechEndedAt: info.speechEndedAt, endpointedAt: info.endpointedAt, speculativeId: info.softId, afterBargeIn: verdict })
+            .then((result) => {
+              // After an interruption, an utterance with no speech in it means the interruption was echo or noise.
+              if (verdict) this.settleBarge(entry, !['silent', 'too-short', 'unlikely-speech', 'empty-transcript', 'echo'].includes(result.reason ?? ''));
+            });
+        },
+      }
+    );
     entry.unsubscribe = source.onAudio((pcm) => {
       entry.meter.feed(pcm);
       // Half-duplex: while the agent speaks (and just after) what arrives may be the agent's own voice coming
@@ -547,8 +606,19 @@ export class AiCallOrchestrator extends EventEmitter {
         if (!entry.deaf) {
           entry.deaf = true;
           entry.endpointer.reset();
+          entry.barge?.reset();
+          entry.bargeRing = [];
+          entry.bargeRingBytes = 0;
         }
         entry.ignoredBytes += pcm.length;
+        // Not transcribed, but not ignored either: sustained speech well above the line's echo is the caller interrupting.
+        if (entry.barge && !entry.bargeDisabled) {
+          entry.bargeRing.push(pcm);
+          entry.bargeRingBytes += pcm.length;
+          const keep = Math.round(format.sampleRate * 2 * 0.8);
+          while (entry.bargeRingBytes > keep && entry.bargeRing.length > 1) entry.bargeRingBytes -= entry.bargeRing.shift()!.length;
+          if (entry.barge.feed(pcm)) this.handleBargeIn(entry, session);
+        }
         return;
       }
       entry.deaf = false;
@@ -580,6 +650,74 @@ export class AiCallOrchestrator extends EventEmitter {
     }
   }
 
+  // ---- turn-taking helpers ----------------------------------------------------------------------------------
+
+  private knowledgeCache: { dir: string; provider: KnowledgeProvider } | null = null;
+
+  /** The configured knowledge source: an injected one, else the folder named by AI_KNOWLEDGE_DIR (loaded once), else none. */
+  private knowledgeProvider(): KnowledgeProvider | null {
+    if (this.deps.knowledge !== undefined) return this.deps.knowledge;
+    const dir = this.config.knowledge.dir;
+    if (!dir) return null;
+    if (this.knowledgeCache?.dir !== dir) {
+      const base = LocalKnowledgeBase.fromDir(dir);
+      this.logger.info(`Company knowledge loaded from ${dir}: ${base.size} passage(s)`);
+      this.knowledgeCache = { dir, provider: base };
+    }
+    return this.knowledgeCache.provider;
+  }
+
+  /**
+   * Answer ahead of the silence wait when the speculative transcript already reads like a finished sentence. Safe to
+   * get wrong: a caller who carries on interrupts the reply like any other barge-in, and the two parts are merged.
+   */
+  private async tryEarlyCommit(entry: Attached, session: ConversationSession, id: number, durationMs: number): Promise<void> {
+    const text = await session.speculativeText(id);
+    if (!text || entry.endpointer.pendingSoftId !== id) return; // gone, or the caller carried on meanwhile
+    if (durationMs < 1000 || text.split(/\s+/).length < 3 || !/[.?!]["')\]]*$/.test(text)) return;
+    entry.endpointer.commitEarly();
+  }
+
+  /** The caller talked over the agent: stop its speech, stop being deaf, and hand over what was just said. */
+  private handleBargeIn(entry: Attached, session: ConversationSession): void {
+    this.logger.info(`Barge-in on call ${entry.callId}: the caller talked over the agent`);
+    this.publish(entry.callId, {
+      turnId: null,
+      stage: 'call',
+      status: 'ok',
+      detail: 'Caller interrupted the agent (barge-in): the reply was stopped and the caller is being listened to',
+    });
+    session.interrupt();
+    session.resumeListening();
+    entry.deaf = false;
+    entry.endpointer.reset();
+    for (const chunk of entry.bargeRing) entry.endpointer.feed(chunk);
+    entry.bargeRing = [];
+    entry.bargeRingBytes = 0;
+    entry.bargeAwaitingVerdict = true;
+    if (entry.bargeTimer) clearTimeout(entry.bargeTimer);
+    // If no utterance forms within a few seconds the sound was not speech.
+    entry.bargeTimer = setTimeout(() => this.settleBarge(entry, false), 6000);
+    entry.bargeTimer.unref?.();
+  }
+
+  /** An interruption turned out to be speech (real) or not. A few in a row that were not switch the detector off for the call. */
+  private settleBarge(entry: Attached, real: boolean): void {
+    if (!entry.bargeAwaitingVerdict) return;
+    entry.bargeAwaitingVerdict = false;
+    if (entry.bargeTimer) clearTimeout(entry.bargeTimer);
+    entry.bargeTimer = null;
+    if (real) {
+      entry.bargeFalse = 0;
+      return;
+    }
+    entry.bargeFalse++;
+    if (entry.bargeFalse >= this.config.bargeIn.maxFalseTriggers && !entry.bargeDisabled) {
+      entry.bargeDisabled = true;
+      this.alert('warn', `Interruption detection switched off for this call: ${entry.bargeFalse} interruptions in a row contained no speech (echo or line noise)`);
+    }
+  }
+
   private async detach(callId: string, reason: string): Promise<void> {
     const entry = this.attached.get(callId);
     this.armed.delete(callId);
@@ -588,6 +726,7 @@ export class AiCallOrchestrator extends EventEmitter {
     this.attached.delete(callId);
     entry.idle?.stop();
     if (entry.limitTimer) clearTimeout(entry.limitTimer);
+    if (entry.bargeTimer) clearTimeout(entry.bargeTimer);
     entry.unsubscribe();
     // An utterance still being spoken when the call ends is dropped, not processed.
     entry.endpointer.reset();
@@ -610,7 +749,7 @@ export class AiCallOrchestrator extends EventEmitter {
           else entry.idle.start();
         }
         this.logger.info(
-          `AI turn ${event.result.turnId} ${event.result.status}${event.result.reason ? ` (${event.result.reason})` : ''}: stt=${fmt(event.result.metrics.sttMs)} llmFirst=${fmt(event.result.metrics.llmFirstTokenMs)} ttsFirst=${fmt(event.result.metrics.ttsFirstMs)} total=${fmt(event.result.metrics.totalMs)} ms`
+          `AI turn ${event.result.turnId} ${event.result.status}${event.result.reason ? ` (${event.result.reason})` : ''}: stt=${fmt(event.result.metrics.sttMs)} llmFirst=${fmt(event.result.metrics.llmFirstTokenMs)} ttsFirst=${fmt(event.result.metrics.ttsFirstMs)} total=${fmt(event.result.metrics.totalMs)} firstAudioAfterCallerStopped=${fmt(event.result.metrics.perceivedFirstAudioMs)}${event.result.metrics.speculativeStt ? ' (speculative STT)' : ''} gapRiskFrames=${event.result.metrics.riskFrames} ms`
         );
         break;
       case 'error':

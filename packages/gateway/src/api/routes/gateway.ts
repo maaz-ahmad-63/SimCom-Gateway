@@ -21,15 +21,20 @@ import { AtParser } from '../../adapters/modem/at-parser.js';
 import { redactDiagnosticText } from '../../core/logger.js';
 import type { UsbPcmTestError, UsbPcmVerifier } from '../../diagnostics/usb-pcm-verification.js';
 import { createHardwareRouter, RawPortInfo } from './hardware.js';
+import type { CallRecorder } from '../../recording/call-recorder.js';
+import type { InboundCaptureTap } from '../../diagnostics/inbound-capture.js';
 
 export interface GatewayRouteDependencies {
   usbPcmVerifier?: UsbPcmVerifier;
+  inboundCaptureTap?: InboundCaptureTap;
   modem: IModemAdapter;
   audio?: IAudioAdapter;
   callManager: ICallSessionManager;
   config: GatewayConfigInput;
   /** Test seam for the Hardware page's port listing. */
   listPorts?: () => Promise<RawPortInfo[]>;
+  /** Complete-call recorder (separate from the diagnostic captures). */
+  recorder?: CallRecorder;
 }
 
 export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
@@ -38,6 +43,24 @@ export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
   // Hardware Operations: status, port discovery, logs and the redacted report. Read-only and AT-free (except
   // /hardware/modem-info, which refuses while any call exists).
   router.use('/hardware', createHardwareRouter(deps));
+
+  // Complete-call recordings (not diagnostic captures): status, metadata, and the WAV tracks.
+  router.get('/recordings', (_req: Request, res: Response) => {
+    if (!deps.recorder) {
+      res.json({ status: null, recordings: [] });
+      return;
+    }
+    res.json({ status: deps.recorder.getStatus(), recordings: deps.recorder.list() });
+  });
+
+  router.get('/recordings/:callId/:track.wav', (req: Request, res: Response) => {
+    const file = deps.recorder?.trackFile(String(req.params.callId), String(req.params.track)) ?? null;
+    if (!file) {
+      res.status(404).json({ error: 'Recording not found', code: 'RECORDING_NOT_FOUND' });
+      return;
+    }
+    res.type('audio/wav').sendFile(file);
+  });
 
   router.get('/health', async (_req: Request, res: Response) => {
     let modemInfo: ModemDeviceInfo | null = null;
@@ -225,6 +248,36 @@ export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
     } catch (error) {
       res.status((error as UsbPcmTestError).status ?? 409).json({ error: (error as Error).message });
     }
+  });
+
+  // Arm a read-only capture of the next incoming call's audio (beside the AI agent), or read / cancel it.
+  router.post('/audio/inbound-capture/arm', (req: Request, res: Response) => {
+    if (!deps.inboundCaptureTap || deps.config.enableUsbPcmCaptureTest !== true) {
+      res.status(404).json({ error: 'USB PCM capture test is disabled' });
+      return;
+    }
+    try {
+      res.json(deps.inboundCaptureTap.arm({ startDelayMs: Number(req.body?.startDelayMs) }));
+    } catch (error) {
+      res.status(409).json({ error: (error as Error).message });
+    }
+  });
+
+  router.get('/audio/inbound-capture', (_req: Request, res: Response) => {
+    if (!deps.inboundCaptureTap || deps.config.enableUsbPcmCaptureTest !== true) {
+      res.status(404).json({ error: 'USB PCM capture test is disabled' });
+      return;
+    }
+    res.json(deps.inboundCaptureTap.status());
+  });
+
+  router.post('/audio/inbound-capture/disarm', (_req: Request, res: Response) => {
+    if (!deps.inboundCaptureTap || deps.config.enableUsbPcmCaptureTest !== true) {
+      res.status(404).json({ error: 'USB PCM capture test is disabled' });
+      return;
+    }
+    deps.inboundCaptureTap.disarm();
+    res.json(deps.inboundCaptureTap.status());
   });
 
   router.post('/audio/usb-pcm/abort', (_req: Request, res: Response) => {

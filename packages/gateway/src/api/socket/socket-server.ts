@@ -195,12 +195,13 @@ export class GatewaySocketServer {
     socket: Socket<ClientToServerEvents, ServerToClientEvents>
   ): Promise<void> {
     try {
-      const activeCall = this.options.callManager.getCurrentCall();
       let signal = null;
       let network = null;
       let info = null;
 
-      if (this.options.modem.getConnectionState() === 'READY') {
+      // No AT queries while a call exists, and the call is read AFTER any awaiting: a snapshot that waited on a
+      // flapping modem must not deliver a pre-call "no active call" that wipes a call that rang in the meantime.
+      if (!this.options.callManager.getCurrentCall() && this.options.modem.getConnectionState() === 'READY') {
         [signal, network, info] = await Promise.all([
           this.options.modem.getSignalQuality().catch(() => null),
           this.options.modem.getNetworkStatus().catch(() => null),
@@ -208,6 +209,7 @@ export class GatewaySocketServer {
         ]);
       }
 
+      const activeCall = this.options.callManager.getCurrentCall();
       const healthSnapshot: GatewayHealthStatus = {
         gatewayVersion: '0.1.0',
         uptimeSeconds: Math.round(process.uptime()),

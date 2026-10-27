@@ -60,6 +60,11 @@ export interface TtsProvider {
   readonly name: string;
   /** Returns raw PCM in exactly `format` (16-bit signed little-endian mono), never a container. */
   synthesize(text: string, format: AudioFormat, signal: AbortSignal): Promise<Buffer>;
+  /**
+   * Optional: the same audio as it is generated, as whole 16-bit samples in `format`. Lets playback start on the
+   * first bytes instead of after the full sentence. Must throw (not return) on failure, and stop when `signal` aborts.
+   */
+  synthesizeStream?(text: string, format: AudioFormat, signal: AbortSignal): AsyncIterable<Buffer>;
 }
 
 export interface ProviderSet {

@@ -182,7 +182,7 @@ export function createHardwareRouter(deps: HardwareRouteDependencies): Router {
         isSimulated: deps.modem.isSimulated,
         usbAudioDiagnosticEnabled: deps.config.enableUsbAudioDiagnostic === true,
       },
-      call: call ? { state: call.state, direction: call.direction } : null,
+      call: call ? { id: call.id, state: call.state, direction: call.direction } : null,
       modem: {
         connectionState,
         atStatus,

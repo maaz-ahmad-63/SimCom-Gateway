@@ -12,7 +12,7 @@ export interface HardwareLayer {
 export interface HardwareStatus {
   timestamp: string;
   gateway: { version: string; uptimeSeconds: number; platform: string; driverType: string; isSimulated: boolean; usbAudioDiagnosticEnabled: boolean };
-  call: { state: string; direction: string } | null;
+  call: { id?: string; state: string; direction: string } | null;
   modem: {
     connectionState: string;
     atStatus: string;

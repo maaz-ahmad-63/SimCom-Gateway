@@ -16,6 +16,8 @@ export interface CallerAudioSource {
 }
 
 export interface PlayResult {
+  /** Frames written later than the write-ahead could cover (an audible gap is possible). */
+  riskFrames?: number;
   bytesWritten: number;
   /** False when playback was cut short (abort, call ended, transport failure). */
   completed: boolean;
@@ -30,6 +32,11 @@ export interface AgentAudioSink {
   /** True only when someone has shown that audio written to this transport is audible on the call. */
   readonly verified: boolean;
   play(pcm: Buffer, signal: AbortSignal): Promise<PlayResult>;
+  /**
+   * Optional: play PCM that is still arriving, starting on the first bytes. `onFirstWrite` fires just before audio
+   * first goes out. If the source throws, so does this (the caller tells a text-to-speech failure from a port fault).
+   */
+  playStream?(chunks: AsyncIterable<Buffer>, signal: AbortSignal, hooks?: { onFirstWrite?: () => void }): Promise<PlayResult>;
 }
 
 export function formatsEqual(a: AudioFormat, b: AudioFormat): boolean {
@@ -165,6 +172,17 @@ export class CollectingAudioSink implements AgentAudioSink {
     }
     this.played.push(Buffer.from(pcm));
     return { bytesWritten: pcm.length, completed: true, stoppedBy: null };
+  }
+
+  /** Streaming playback in tests: the chunks are collected and recorded as one played buffer. */
+  async playStream(chunks: AsyncIterable<Buffer>, signal: AbortSignal, hooks?: { onFirstWrite?: () => void }): Promise<PlayResult> {
+    const parts: Buffer[] = [];
+    for await (const chunk of chunks) {
+      if (signal.aborted) return { bytesWritten: 0, completed: false, stoppedBy: 'aborted' };
+      if (parts.length === 0) hooks?.onFirstWrite?.();
+      parts.push(chunk);
+    }
+    return this.play(Buffer.concat(parts), signal);
   }
 
   get totalBytes(): number {

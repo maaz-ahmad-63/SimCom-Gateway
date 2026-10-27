@@ -21,7 +21,28 @@ describe('first-session audit: provider request details', () => {
     const request = await sttRequest({ AI_STT: 'groq_whisper', AI_LANGUAGE: 'hi-IN' });
     expect((request.body as FormData).get('language')).toBe('hi');
     const english = await sttRequest({ AI_STT: 'groq_whisper', AI_LANGUAGE: 'en-US' });
-    expect((english.body as FormData).has('language')).toBe(false);
+    // English is stated too: without it Whisper guesses the language of a one-second phone clip.
+    expect((english.body as FormData).get('language')).toBe('en');
+  });
+
+  it('passes an optional vocabulary hint to Whisper, trimmed to a sensible length, and nothing when unset', async () => {
+    const hinted = await sttRequest({ AI_STT: 'groq_whisper', AI_LANGUAGE: 'en', AI_STT_PROMPT: '  SIZH IT Solutions, chatbot, voice agent  ' });
+    expect((hinted.body as FormData).get('prompt')).toBe('SIZH IT Solutions, chatbot, voice agent');
+    const none = await sttRequest({ AI_STT: 'groq_whisper', AI_LANGUAGE: 'en' });
+    expect((none.body as FormData).has('prompt')).toBe(false);
+    const long = await sttRequest({ AI_STT: 'groq_whisper', AI_LANGUAGE: 'en', AI_STT_PROMPT: 'x'.repeat(900) });
+    expect(String((long.body as FormData).get('prompt')).length).toBe(400);
+  });
+
+  it('lets AI_DEEPGRAM_LISTEN_URL pick the Deepgram transcription region, only on deepgram.com', async () => {
+    const eu = await sttRequest({ AI_STT: 'nova-3', AI_LANGUAGE: 'en', AI_DEEPGRAM_LISTEN_URL: 'https://api.eu.deepgram.com/v1/listen' });
+    expect(new URL(eu.url).hostname).toBe('api.eu.deepgram.com');
+    await expect(sttRequest({ AI_STT: 'nova-3', AI_LANGUAGE: 'en', AI_DEEPGRAM_LISTEN_URL: 'https://evil.example.com/v1/listen' })).rejects.toThrow(/AI_DEEPGRAM_LISTEN_URL/);
+  });
+
+  it('lets AI_STT_LANGUAGE pin the spoken language independently of the agent language', async () => {
+    const pinned = await sttRequest({ AI_STT: 'groq_whisper', AI_LANGUAGE: 'en', AI_STT_LANGUAGE: 'hi' });
+    expect((pinned.body as FormData).get('language')).toBe('hi');
   });
 
   it('selects the multilingual Deepgram model with language=multi on the global endpoint', async () => {

@@ -1,4 +1,5 @@
 import { AudioFormat } from './audio.js';
+import { ChunkQueue } from './chunk-queue.js';
 import { AiProviderError, TtsProvider } from './providers/types.js';
 
 /**
@@ -98,5 +99,31 @@ export class LimitedTts implements TtsProvider {
       signal,
       () => new AiProviderError(this.name, 'tts', 'cancelled', { aborted: true })
     );
+  }
+
+  /**
+   * Streaming keeps the same rule: the slot is taken before the request starts and is held until the whole reply
+   * has been downloaded (or failed or been cancelled), never longer. The audio is buffered as it arrives, so the
+   * next request may start as soon as the download finishes, while this sentence is still playing.
+   */
+  get synthesizeStream(): TtsProvider['synthesizeStream'] {
+    if (!this.inner.synthesizeStream) return undefined;
+    const inner = this.inner.synthesizeStream.bind(this.inner);
+    return (text, format, signal) => {
+      const queue = new ChunkQueue();
+      void this.limiter
+        .run(
+          async () => {
+            for await (const chunk of inner(text, format, signal)) queue.push(chunk);
+          },
+          signal,
+          () => new AiProviderError(this.name, 'tts', 'cancelled', { aborted: true })
+        )
+        .then(
+          () => queue.close(),
+          (error) => queue.fail(error)
+        );
+      return queue;
+    };
   }
 }

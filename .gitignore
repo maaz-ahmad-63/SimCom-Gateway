@@ -42,3 +42,9 @@ Thumbs.db
 # Environment backups (may contain secrets)
 .env.backup*
 .env.*.bak
+
+# Complete-call recordings (personal data)
+call-recordings/
+
+# Incoming-call audio captures (real voices)
+packages/gateway/diagnostics/captures/

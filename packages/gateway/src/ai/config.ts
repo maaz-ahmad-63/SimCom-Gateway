@@ -35,6 +35,8 @@ export interface AiConfig {
     maxResponseChars: number;
     maxConsecutiveFailures: number;
     maxLlmTokens: number | null;
+    /** The first sentence of a reply is released for speech at this length (AI_FIRST_SENTENCE_MIN_CHARS, default 24 like later sentences). */
+    firstSentenceMinChars: number;
     /** Simultaneous text-to-speech requests to one provider (AI_TTS_CONCURRENCY). 1 never trips a provider's limit. */
     ttsConcurrency: number;
   };
@@ -50,12 +52,46 @@ export interface AiConfig {
   vad: {
     rmsThreshold: number;
     minSpeechMs: number;
+    /** The silence that ends a caller turn; with `adaptive` this is the ceiling. */
     minSilenceMs: number;
     maxUtteranceMs: number;
     preRollMs: number;
+    /** Adapt the silence wait and loudness threshold to this call (AI_VAD_ADAPTIVE). */
+    adaptive: boolean;
+    /** Lowest wait adaptation may reach (AI_VAD_MIN_SILENCE_FLOOR_MS). */
+    minSilenceFloorMs: number;
+    /** Silence after which the audio so far is transcribed speculatively; 0 disables (AI_VAD_SOFT_SILENCE_MS). */
+    softSilenceMs: number;
+    /** Reuse a speculative transcript at the real end of the turn instead of transcribing again (AI_SPECULATIVE_STT). */
+    speculativeStt: boolean;
+    /**
+     * Answer as soon as a speculative transcript reads like a finished sentence, without waiting out the rest of the
+     * silence (AI_EARLY_COMMIT). Off by default: a caller who pauses after a full sentence is then answered early.
+     */
+    earlyCommit: boolean;
   };
   utterance: { minDurationMs: number; skipUnlikelySpeech: boolean };
-  bargeIn: { enabled: boolean };
+  bargeIn: {
+    /** AI_BARGE_IN. Cancel the agent's reply when the caller starts talking. */
+    enabled: boolean;
+    /**
+     * AI_BARGE_IN_WHILE_SPEAKING. Listen for the caller while the agent is talking (half-duplex otherwise discards that
+     * audio unheard). Sustained speech well above the line's own echo level interrupts the agent.
+     */
+    whileSpeaking: boolean;
+    /** Speech that must be sustained before it counts as an interruption (AI_BARGE_IN_MS). */
+    minMs: number;
+    /** How far above the echo level the caller must be (AI_BARGE_IN_ECHO_MULT). */
+    echoMultiplier: number;
+    /** Interruptions that produced no real speech before the detector switches itself off for the call. */
+    maxFalseTriggers: number;
+  };
+  /** Playback scheduling (AI_PLAYBACK_LEAD_FRAMES, AI_PLAYBACK_PREROLL_MS). */
+  playback: { leadFrames: number; prerollMs: number };
+  /** Verified company knowledge (AI_KNOWLEDGE_DIR): retrieved per question, never pasted whole into the prompt. */
+  knowledge: { dir: string | null; topK: number; maxChars: number };
+  /** Rolling call notes (AI_CALL_NOTES): facts from turns that have scrolled out of the recent history. */
+  memory: { callNotes: boolean };
   /**
    * Half-duplex turn-taking: while the agent is speaking (plus a short guard afterwards) caller audio is
    * discarded instead of transcribed, so the agent never answers its own voice coming back through the
@@ -262,8 +298,10 @@ export function loadAiConfig(env: Env = process.env): AiConfigResult {
       maxHistoryMessages: num(env, 'AI_MAX_HISTORY_MESSAGES', 20, 2, 200, errors),
       maxResponseChars: num(env, 'AI_MAX_RESPONSE_CHARS', 600, 50, 5000, errors),
       maxConsecutiveFailures: num(env, 'AI_MAX_CONSECUTIVE_FAILURES', 3, 1, 20, errors),
-      maxLlmTokens: text(env, 'AI_LLM_MAX_TOKENS') ? num(env, 'AI_LLM_MAX_TOKENS', 300, 16, 4096, errors) : null,
+      // A spoken reply is a sentence or two; an uncapped model can run to a minute of speech.
+      maxLlmTokens: text(env, 'AI_LLM_MAX_TOKENS') ? num(env, 'AI_LLM_MAX_TOKENS', 300, 16, 4096, errors) : 220,
       ttsConcurrency: Math.floor(num(env, 'AI_TTS_CONCURRENCY', 1, 1, 4, errors)),
+      firstSentenceMinChars: Math.floor(num(env, 'AI_FIRST_SENTENCE_MIN_CHARS', 24, 4, 200, errors)),
     },
     audio: {
       format,
@@ -277,12 +315,33 @@ export function loadAiConfig(env: Env = process.env): AiConfigResult {
       minSilenceMs: num(env, 'AI_VAD_MIN_SILENCE_MS', 1000, 100, 5000, errors),
       maxUtteranceMs: num(env, 'AI_VAD_MAX_UTTERANCE_MS', 15000, 1000, 60000, errors),
       preRollMs: num(env, 'AI_VAD_PREROLL_MS', 200, 0, 1000, errors),
+      adaptive: bool(env, 'AI_VAD_ADAPTIVE', true, errors),
+      minSilenceFloorMs: num(env, 'AI_VAD_MIN_SILENCE_FLOOR_MS', 450, 100, 3000, errors),
+      softSilenceMs: num(env, 'AI_VAD_SOFT_SILENCE_MS', 350, 0, 3000, errors),
+      speculativeStt: bool(env, 'AI_SPECULATIVE_STT', true, errors),
+      earlyCommit: bool(env, 'AI_EARLY_COMMIT', false, errors),
     },
     utterance: {
       minDurationMs: num(env, 'AI_MIN_UTTERANCE_MS', 300, 50, 5000, errors),
       skipUnlikelySpeech: bool(env, 'AI_SKIP_UNLIKELY_SPEECH', false, errors),
     },
-    bargeIn: { enabled: bool(env, 'AI_BARGE_IN', true, errors) },
+    bargeIn: {
+      enabled: bool(env, 'AI_BARGE_IN', true, errors),
+      whileSpeaking: bool(env, 'AI_BARGE_IN_WHILE_SPEAKING', true, errors),
+      minMs: num(env, 'AI_BARGE_IN_MS', 300, 100, 2000, errors),
+      echoMultiplier: num(env, 'AI_BARGE_IN_ECHO_MULT', 2.5, 1, 20, errors),
+      maxFalseTriggers: Math.floor(num(env, 'AI_BARGE_IN_MAX_FALSE', 2, 1, 20, errors)),
+    },
+    playback: {
+      leadFrames: Math.floor(num(env, 'AI_PLAYBACK_LEAD_FRAMES', 2, 1, 8, errors)),
+      prerollMs: num(env, 'AI_PLAYBACK_PREROLL_MS', 150, 0, 1000, errors),
+    },
+    knowledge: {
+      dir: text(env, 'AI_KNOWLEDGE_DIR') ?? null,
+      topK: Math.floor(num(env, 'AI_KNOWLEDGE_TOP_K', 3, 1, 10, errors)),
+      maxChars: Math.floor(num(env, 'AI_KNOWLEDGE_MAX_CHARS', 1200, 200, 6000, errors)),
+    },
+    memory: { callNotes: bool(env, 'AI_CALL_NOTES', true, errors) },
     halfDuplex: bool(env, 'AI_HALF_DUPLEX', true, errors),
     playbackGuardMs: num(env, 'AI_PLAYBACK_GUARD_MS', 500, 0, 3000, errors),
     allowAgentHangup: bool(env, 'AI_ALLOW_AGENT_HANGUP', false, errors),

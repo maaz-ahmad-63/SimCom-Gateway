@@ -298,3 +298,94 @@ provider latency on a phone line.
   Deepgram's TTS reference does not list the `linear16`/8 kHz values, so its reply is validated, not trusted.
   Groq's page does not state the auth header; `Authorization: Bearer` is the OpenAI-compatible convention.
   None of this has been exercised against a live account.
+
+
+## Hands-free inbound calls and call recording
+
+### Why three manual steps were needed
+Everything below already exists and is opt-in, each step at most once per call:
+
+| Manual step | Automatic equivalent | Gate that kept it manual |
+|---|---|---|
+| `POST /api/gateway/audio/usb-diagnostic {"action":"activate"}` | `AI_AUTO_ACTIVATE_USB_AUDIO=true` | Only runs on an ACTIVE call that the AI is allowed to handle (`AI_ENABLED`, `AI_AUTO_HANDLE` covering the direction, provider keys). With auto-answer off, someone must answer first. |
+| Connect the AI to the call | `AI_AUTO_HANDLE=inbound` (or `all`) | Default `off`. Attaches only after real audio bytes are flowing. |
+| Dashboard "Start AI replies" | `AI_AUTO_REPLIES=true` | Refused until BOTH audio paths are confirmed (`AI_AUDIO_INBOUND_VERIFIED` / `AI_AUDIO_OUTBOUND_VERIFIED` or the dashboard attestations). Until then the agent stays passive. This is deliberate: a successful write is not proof the caller heard anything. |
+| Answer the call | `AI_AUTO_ANSWER=true`, `AI_AUTO_ANSWER_RINGS=2` | Default off. Never answers when off. |
+
+### Recording
+Set `CALL_RECORDING_ENABLED=true` and `CALL_RECORDING_CONSENT_ACKNOWLEDGED=true` (see `.env.example`). Each call that
+becomes ACTIVE is saved as two mono 16-bit PCM WAV files plus `recording.json`; the headers are refreshed every
+5 s and finalized when the call ends or the gateway shuts down, so a crash leaves playable files. The sample rate is
+the configured gateway rate, not something the module reported. "agent" is what was written to the audio port:
+a successful write is not proof the caller heard it. Gaps are filled with silence so both tracks share the call's
+timeline. API: `GET /api/gateway/recordings` and `GET /api/gateway/recordings/<callId>/<caller|agent>.wav` (API key
+required). The dashboard shows them on AI Agent > Overview. Retention only ever deletes finished recordings that
+this feature made, and only when `CALL_RECORDING_RETENTION_DAYS` is above 0.
+
+## Turn-taking, latency and memory
+
+Everything here is on the existing pipeline (audio port, energy endpointer, Groq Whisper, Groq Qwen, Cartesia). No
+provider was replaced. Defaults are listed so you can see what changes on the next restart.
+
+### Where the time goes, and how it is measured
+Each spoken reply writes one line to the Call events, for example
+`First audio written 1180 ms after the caller stopped talking (silence wait 800, transcript ready at 905 ms (speculative), first words from the model at 1075 ms, first synthesized audio at 1160 ms)`.
+The clock starts when the caller's speech ended (the last loud 20 ms window), not when the turn began, so the
+silence wait is counted. "Written" means handed to the audio port: it is not proof the caller heard it, and the
+line, network and handset add delay that cannot be measured from here. The gateway log has the same figure as
+`firstAudioAfterCallerStopped`, and `gapRiskFrames` counts frames that went out later than the write-ahead covers
+(an audible gap is possible), separately from ordinary timer jitter (`lateFrames`).
+
+### What each setting does
+| Setting | Default | Meaning |
+|---|---|---|
+| `AI_VAD_MIN_SILENCE_MS` | 1000 | Silence that ends a caller turn. With adaptive on this is the ceiling. |
+| `AI_VAD_ADAPTIVE` | true | Learns this caller's mid-sentence pause length (never below `AI_VAD_MIN_SILENCE_FLOOR_MS`, default 450) and raises the loudness threshold on a hissy line. |
+| `AI_SPECULATIVE_STT` | true | After `AI_VAD_SOFT_SILENCE_MS` (350) of silence, transcribe what was said so far. If the caller was finished the turn reuses it (one request); if they carry on it is withdrawn. A request is never a turn: only the real end of the utterance starts one. |
+| `AI_EARLY_COMMIT` | false | Answer as soon as the speculative transcript is a finished sentence (ends in . ? !, 3+ words, 1+ s of speech), without waiting out the rest of the silence. If the caller was not done, they interrupt like any barge-in and the two parts are merged. Try it on a supervised call first. |
+| `AI_BARGE_IN_WHILE_SPEAKING` | true | Half-duplex used to discard caller audio while the agent spoke, so an interruption could never be heard. Now that audio is watched for sustained speech (`AI_BARGE_IN_MS`, 300) well above the line's own level (`AI_BARGE_IN_ECHO_MULT`, 2.5x). Set false for strict half-duplex. |
+| `AI_BARGE_IN_MAX_FALSE` | 2 | Interruptions in a row that contained no speech before detection switches itself off for the call (with an alert). |
+| `AI_PLAYBACK_LEAD_FRAMES` | 2 | 20 ms frames written ahead of real time. More absorbs timer jitter but cannot be taken back when the caller interrupts. |
+| `AI_PLAYBACK_PREROLL_MS` | 150 | Audio buffered before a streamed reply starts. |
+| `AI_FIRST_SENTENCE_MIN_CHARS` | 24 | Lower it (e.g. 6) to let a short opener such as "Sure." play on its own. |
+| `AI_LLM_MAX_TOKENS` | 220 | Cap on a reply (a spoken answer is a sentence or two). |
+| `AI_CALL_NOTES` | true | See "Memory". |
+| `AI_KNOWLEDGE_DIR` | unset | See "Company knowledge". |
+
+### Interruptions
+When the caller talks over the agent: speech is stopped (queued sentences are dropped, the language-model and
+text-to-speech requests for the rest are cancelled), the gateway stops being deaf at once, and the last 800 ms of
+audio (including the first words) is handed to the endpointer. Detection calibrates on the first 600 ms of each
+stretch of agent speech, so steady echo that is already present does not trigger it. Echo that arrives later is
+caught by a second check: an utterance that began as an interruption and whose words are almost all words the agent
+had just said is dropped as the agent's own voice and never answered. This cannot be proven without the real line:
+see the validation steps below.
+
+### History, memory and what was actually said
+* One assistant message per reply (never one per sentence).
+* Only what was spoken is recorded. Whole sentences played to the end, plus the words of an interrupted sentence that
+  went out before the interruption, followed by an ellipsis. The prompt tells the model an ellipsis means the caller
+  cut it off. Sentences that were never played are not in the history.
+* Two caller messages in a row (the first got no reply) are merged into one.
+* **Memory.** The history is a window (`AI_MAX_HISTORY_MESSAGES`, 20). Turns that scroll out of it are folded, in the
+  background and never blocking a reply, into short call notes (name, what they want, numbers, decisions, promises)
+  that ride in the system prompt. If the model cannot summarise, a shortened form of the dropped lines is kept. Notes
+  live only for the call.
+
+### Company knowledge (retrieval)
+Put the facts you have verified (services, pricing, hours, policies, contact details) in `.md` or `.txt` files in a
+folder and set `AI_KNOWLEDGE_DIR`. Each caller question retrieves the one to three best passages (BM25, a few
+milliseconds, abandoned after 150 ms) and only those go into that turn's prompt, labelled as the only source for
+company facts. Whenever a folder is configured the prompt also says: if the passages do not cover it, say you do not
+have that detail and offer a follow-up; never invent a service, price or promise. Nothing is sent anywhere new: the
+passages go to the same language model. To use a vector store or a service instead, implement `KnowledgeProvider`
+(`retrieve(query, {topK, maxChars})`) in `src/ai/knowledge.ts` and pass it as the orchestrator's `knowledge`
+dependency; nothing else changes. Write short, factual, self-contained passages; keep one fact per paragraph.
+
+### Hardware validation (not possible from code)
+1. Restart the gateway with no call active. Make one supervised call and read the "First audio written" lines.
+2. Barge-in: let the agent start a long answer and talk over it. It should stop within about 0.4 s and answer you.
+   Then stay silent while it talks: it must not interrupt itself. If it ever answers its own words, set
+   `AI_BARGE_IN_WHILE_SPEAKING=false` and tell us what the log said.
+3. Compare `gapRiskFrames` over several replies. If it is regularly above 0, try `AI_PLAYBACK_LEAD_FRAMES=3`.
+4. Try `AI_EARLY_COMMIT=true` on a test call before relying on it.
