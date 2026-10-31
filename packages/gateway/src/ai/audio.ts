@@ -25,6 +25,9 @@ export interface PlayResult {
   /** Frames written more than one frame length behind real time: the modem was fed too late (an underrun risk). */
   lateFrames?: number;
   maxLateMs?: number;
+  /** Longest single write to the port, and writes slower than one frame (the port pushing back, not the loop stalling). */
+  maxWriteMs?: number;
+  slowWrites?: number;
 }
 
 export interface AgentAudioSink {

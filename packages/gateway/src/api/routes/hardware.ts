@@ -3,6 +3,8 @@ import os from 'node:os';
 import { SerialPort } from 'serialport';
 import { IAudioAdapter, ICallSessionManager, IModemAdapter } from '@sim-gateway/shared';
 import { getRecentLogs, redactDiagnosticText } from '../../core/logger.js';
+import { isAutoPort } from '../../config/index.js';
+import { INTERFACE_ROLE as DISCOVERY_ROLES, PortDiscovery, PortRole as DiscoveryRole, resolveModemPorts, SIMCOM_VID as DISCOVERY_VID } from '../../hardware/port-discovery.js';
 
 export interface HardwareRouteDependencies {
   modem: IModemAdapter;
@@ -11,6 +13,9 @@ export interface HardwareRouteDependencies {
   config: { atPort?: string; audioPort?: string; enableUsbAudioDiagnostic?: boolean; modemDriver?: string; audioBaudRate?: number; atBaudRate?: number };
   /** Test seam; production lists the Windows serial ports without opening any of them. */
   listPorts?: () => Promise<RawPortInfo[]>;
+  /** Automatic port discovery (hardware mode): its state is part of the status, and its result names the ports in use. */
+  portDiscovery?: PortDiscovery | null;
+  currentPorts?: () => { at: string; audio: string };
 }
 
 export interface RawPortInfo {
@@ -19,6 +24,9 @@ export interface RawPortInfo {
   pnpId?: string;
   vendorId?: string;
   productId?: string;
+  serialNumber?: string;
+  locationId?: string;
+  friendlyName?: string;
 }
 
 export type PortRole = 'at' | 'audio' | 'diagnostics' | 'nmea' | 'modem' | 'unknown';
@@ -42,17 +50,10 @@ export interface HardwareLayer {
   detail: string;
 }
 
-const SIMCOM_VID = '1E0E';
+const SIMCOM_VID = DISCOVERY_VID;
 
-// The USB interface order of this SIM7600EI (VID_1E0E&PID_9001), observed on this PC and recorded in
-// docs/WINDOWS_HARDWARE_INTEGRATION.md. It is a guide: confirm against the Device Manager names.
-const INTERFACE_ROLE: Record<string, { role: PortRole; basis: string }> = {
-  MI_00: { role: 'diagnostics', basis: 'USB interface 00 (diagnostics on this module)' },
-  MI_01: { role: 'nmea', basis: 'USB interface 01 (NMEA on this module)' },
-  MI_02: { role: 'at', basis: 'USB interface 02 (AT port on this module, observed 2026-10-16)' },
-  MI_03: { role: 'modem', basis: 'USB interface 03 (modem port on this module)' },
-  MI_04: { role: 'audio', basis: 'USB interface 04 (USB audio, documented in docs/WINDOWS_HARDWARE_INTEGRATION.md)' },
-};
+// One table for the whole gateway: the interface roles live with the discovery logic.
+const INTERFACE_ROLE: Record<string, { role: PortRole; basis: string }> = DISCOVERY_ROLES as Record<string, { role: DiscoveryRole; basis: string }>;
 
 export function classifyPort(raw: RawPortInfo): DiscoveredPort {
   const pnp = raw.pnpId ?? '';
@@ -187,10 +188,12 @@ export function createHardwareRouter(deps: HardwareRouteDependencies): Router {
         connectionState,
         atStatus,
         lastCommunicationTime: deps.modem.getLastCommunicationTime?.() ?? null,
-        configuredAtPort: deps.config.atPort ?? null,
-        configuredAudioPort: deps.config.audioPort ?? null,
+        // The ports in use: discovered, or as configured. 'auto' means discovery has not found the modem yet.
+        configuredAtPort: deps.currentPorts?.().at ?? deps.config.atPort ?? null,
+        configuredAudioPort: deps.currentPorts?.().audio ?? deps.config.audioPort ?? null,
         reconnect: diagnostics(),
       },
+      discovery: deps.portDiscovery?.status() ?? null,
       usbAudio: usb,
       audio: stats
         ? {
@@ -229,14 +232,32 @@ export function createHardwareRouter(deps: HardwareRouteDependencies): Router {
       const raw = await (deps.listPorts ? deps.listPorts() : (SerialPort.list() as Promise<RawPortInfo[]>));
       const discovered = raw.map(classifyPort).sort((a, b) => a.path.localeCompare(b.path, undefined, { numeric: true }));
       const simcom = discovered.filter((p) => p.vendorId === SIMCOM_VID);
-      const compared = comparePorts({ at: deps.config.atPort, audio: deps.config.audioPort }, simcom);
+      const explicitAt = isAutoPort(deps.config.atPort) ? null : deps.config.atPort ?? null;
+      const explicitAudio = isAutoPort(deps.config.audioPort) ? null : deps.config.audioPort ?? null;
+      // What automatic discovery would choose from this same listing (nothing is opened, nothing is changed).
+      const resolution = resolveModemPorts({ explicitAt, explicitAudio, selector: deps.portDiscovery?.status().selector ?? null }, raw);
+      const discovering = !explicitAt || !explicitAudio;
+      const compared = discovering
+        ? {
+            findings: [
+              resolution.ok
+                ? { level: 'info' as const, message: `Discovered automatically: AT port ${resolution.at}, USB audio ${resolution.audio}${resolution.device ? ` (modem ${resolution.device.id})` : ''}.` }
+                : { level: 'error' as const, message: resolution.message },
+              ...resolution.warnings.map((message) => ({ level: 'warn' as const, message })),
+            ],
+            suggested: {},
+          }
+        : comparePorts({ at: explicitAt ?? undefined, audio: explicitAudio ?? undefined }, simcom);
       res.json({
         timestamp: new Date().toISOString(),
         note: 'Listing the ports opens none of them. Roles come from USB interface numbers and should be confirmed in Device Manager.',
-        configured: { at: deps.config.atPort ?? null, audio: deps.config.audioPort ?? null },
+        configured: { at: explicitAt, audio: explicitAudio },
+        mode: discovering ? 'discovery' : 'explicit',
         ports: discovered,
+        modems: resolution.modems.map((m) => ({ id: m.id, at: m.at, audio: m.audio, problems: m.problems })),
         findings: compared.findings,
-        suggestedEnv: Object.keys(compared.suggested).length > 0 ? compared.suggested : null,
+        // Discovered ports are never written to .env; a suggestion is only made when ports are set explicitly and wrong.
+        suggestedEnv: !discovering && Object.keys(compared.suggested).length > 0 ? compared.suggested : null,
       });
     } catch (error) {
       res.status(500).json({ error: `Could not list serial ports: ${redactDiagnosticText((error as Error).message)}`, code: 'PORT_LIST_FAILED' });

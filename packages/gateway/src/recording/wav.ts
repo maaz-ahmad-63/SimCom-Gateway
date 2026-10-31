@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { timeSyncIo } from '../core/sync-io-watch.js';
 
 export const WAV_HEADER_BYTES = 44;
 
@@ -86,7 +87,8 @@ export class WavFileWriter {
   flush(): void {
     if (this.fd === null || this.pendingBytes === 0) return;
     const block = Buffer.concat(this.pending, this.pendingBytes);
-    fs.writeSync(this.fd, block, 0, block.length, WAV_HEADER_BYTES + this.written);
+    const fd = this.fd;
+    timeSyncIo('call recording write', () => fs.writeSync(fd, block, 0, block.length, WAV_HEADER_BYTES + this.written));
     this.written += block.length;
     this.pending = [];
     this.pendingBytes = 0;
@@ -96,7 +98,9 @@ export class WavFileWriter {
   refreshHeader(): void {
     if (this.fd === null) return;
     this.flush();
-    fs.writeSync(this.fd, wavHeader(this.sampleRate, this.channels, this.bitsPerSample, this.written), 0, WAV_HEADER_BYTES, 0);
+    const fd = this.fd;
+    const header = wavHeader(this.sampleRate, this.channels, this.bitsPerSample, this.written);
+    timeSyncIo('call recording header', () => fs.writeSync(fd, header, 0, WAV_HEADER_BYTES, 0));
   }
 
   close(): void {

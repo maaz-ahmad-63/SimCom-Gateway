@@ -22,6 +22,11 @@ import {
 import { getGatewayClientConfig } from './config';
 import type { HardwarePorts, HardwareStatus } from './hardware-ops';
 import type { RecordingsResponse } from './recordings';
+import type { Attempt, Campaign, ColumnMapping, Contact, ContactStatus, Counts, CsvPreview, ImportResult, Review, RunnerStatus } from './campaigns';
+import type { SheetsConfig, SheetsStatus, SheetsTestResult } from './integrations';
+import type { EntryKind, HubView, ProposalDetail, SourceCheck, Stage, TestResult, ValidationIssue } from './model-hub';
+import { buildQuery } from './observability';
+import type { CallDetail, CallFilters, CallRow, Overview, Paged, TraceEvent } from './observability';
 
 export interface CallEventRecord {
   id: number;
@@ -373,6 +378,168 @@ export class GatewayApiClient {
   }
   clearAiTurns(): Promise<{ removed: number }> {
     return this.aiJson('/turns', 'DELETE');
+  }
+
+  // ---- AI Model Hub (the provider and model registry, with prices kept apart) ----
+  /** Every list the hub shows comes from here; the dashboard keeps no model list of its own. */
+  getModelHub(): Promise<HubView> {
+    return this.request('/api/ai/registry');
+  }
+  validateRegistryEntry(kind: EntryKind, entry: unknown): Promise<{ ok: boolean; issues: ValidationIssue[] }> {
+    return this.request('/api/ai/registry/validate', { method: 'POST', body: JSON.stringify({ kind, entry }) });
+  }
+  validateRegistryDocument(document: unknown): Promise<{ ok: boolean; issues: ValidationIssue[] }> {
+    return this.request('/api/ai/registry/validate', { method: 'POST', body: JSON.stringify({ document }) });
+  }
+  createProvider(entry: unknown): Promise<{ success: true; registry: HubView }> {
+    return this.request('/api/ai/registry/providers', { method: 'POST', body: JSON.stringify(entry) });
+  }
+  updateProvider(id: string, patch: Record<string, unknown>): Promise<{ success: true; registry: HubView }> {
+    return this.request(`/api/ai/registry/providers/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  }
+  deleteProvider(id: string): Promise<{ success: true; registry: HubView }> {
+    return this.request(`/api/ai/registry/providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+  createModel(entry: unknown): Promise<{ success: true; registry: HubView }> {
+    return this.request('/api/ai/registry/models', { method: 'POST', body: JSON.stringify(entry) });
+  }
+  updateModel(stage: Stage, id: string, patch: Record<string, unknown>): Promise<{ success: true; registry: HubView }> {
+    return this.request(`/api/ai/registry/models/${stage}/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  }
+  deleteModel(stage: Stage, id: string): Promise<{ success: true; registry: HubView }> {
+    return this.request(`/api/ai/registry/models/${stage}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+  /** With no ids: add the default entries missing from the registry. With ids: reset those entries to their defaults. */
+  restoreRegistryDefaults(ids?: Array<{ kind: 'provider'; id: string } | { kind: 'model'; stage: Stage; id: string }>): Promise<{ success: true; registry: HubView }> {
+    return this.request('/api/ai/registry/restore-defaults', { method: 'POST', body: JSON.stringify({ ids }) });
+  }
+  exportRegistry(): Promise<Record<string, unknown>> {
+    return this.request('/api/ai/registry/export');
+  }
+  importRegistry(document: unknown): Promise<{ success: true; registry: HubView }> {
+    return this.request('/api/ai/registry/import', { method: 'POST', body: JSON.stringify({ document }) });
+  }
+  /** Read-only: lists the provider's models or voices with its key; nothing is generated or billed. */
+  testRegistryProvider(id: string): Promise<TestResult> {
+    return this.request(`/api/ai/registry/test/provider/${encodeURIComponent(id)}`, { method: 'POST' });
+  }
+  /**
+   * A language model is tested with one very short REAL request (billed): pass confirmBilling once the operator has agreed. Speech models
+   * get a read-only check of the key and the provider's model list.
+   */
+  testRegistryModel(stage: Stage, id: string, options: { confirmBilling?: boolean } = {}): Promise<TestResult> {
+    return this.request(`/api/ai/registry/test/model/${stage}/${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify(options) });
+  }
+  /** Fetches the official pricing sources, only when asked. It changes no price. */
+  checkPricingSources(providerIds?: string[]): Promise<{ checks: SourceCheck[]; registry: HubView }> {
+    return this.request('/api/ai/registry/pricing/check', { method: 'POST', body: JSON.stringify({ providerIds, force: true }) });
+  }
+  proposePrices(entries: unknown[], note?: string): Promise<{ success: true; proposal: ProposalDetail; registry: HubView }> {
+    return this.request('/api/ai/registry/pricing/proposals', { method: 'POST', body: JSON.stringify({ entries, note }) });
+  }
+  getPriceProposal(id: string): Promise<ProposalDetail> {
+    return this.request(`/api/ai/registry/pricing/proposals/${encodeURIComponent(id)}`);
+  }
+  approvePriceProposal(id: string, options: { onlyIds?: string[]; overrideIds?: string[] } = {}): Promise<{ success: true; applied: string[]; skipped: Array<{ id: string; reason: string }>; registry: HubView }> {
+    return this.request(`/api/ai/registry/pricing/proposals/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify(options) });
+  }
+  rejectPriceProposal(id: string, note?: string): Promise<{ success: true; registry: HubView }> {
+    return this.request(`/api/ai/registry/pricing/proposals/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({ note }) });
+  }
+
+  // ---- integrations (Google Sheets) ----
+  getGoogleSheets(): Promise<SheetsStatus> {
+    return this.request('/api/integrations/google-sheets');
+  }
+  saveGoogleSheets(patch: Partial<SheetsConfig>): Promise<SheetsStatus> {
+    return this.request('/api/integrations/google-sheets', { method: 'PUT', body: JSON.stringify(patch) });
+  }
+  /** The key file travels to the gateway once and is never returned. */
+  saveGoogleSheetsCredential(serviceAccountJson: string): Promise<SheetsStatus> {
+    return this.request('/api/integrations/google-sheets/credential', { method: 'PUT', body: JSON.stringify({ serviceAccountJson }) });
+  }
+  deleteGoogleSheetsCredential(): Promise<SheetsStatus> {
+    return this.request('/api/integrations/google-sheets/credential', { method: 'DELETE' });
+  }
+  /** Read-only: signs in and opens the sheet, never writes to it. */
+  testGoogleSheets(): Promise<{ result: SheetsTestResult; status: SheetsStatus }> {
+    return this.request('/api/integrations/google-sheets/test', { method: 'POST' });
+  }
+
+  // ---- campaigns ----
+  listCampaigns(): Promise<{ campaigns: Array<Campaign & { counts: Counts }> }> {
+    return this.request('/api/campaigns');
+  }
+  createCampaign(name: string, settings?: Record<string, unknown>): Promise<{ campaign: Campaign; counts: Counts }> {
+    return this.request('/api/campaigns', { method: 'POST', body: JSON.stringify({ name, settings }) });
+  }
+  getCampaign(id: string): Promise<{ campaign: Campaign; counts: Counts; runner: RunnerStatus | null }> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}`);
+  }
+  updateCampaign(id: string, patch: { name?: string; settings?: Record<string, unknown> }): Promise<{ campaign: Campaign; counts: Counts; runner: RunnerStatus | null }> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  }
+  deleteCampaign(id: string): Promise<{ success: boolean }> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+  previewCampaignCsv(csv: string): Promise<CsvPreview> {
+    return this.request('/api/campaigns/preview-csv', { method: 'POST', body: JSON.stringify({ csv }) });
+  }
+  importCampaignContacts(id: string, csv: string, mapping: ColumnMapping): Promise<ImportResult> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/import`, { method: 'POST', body: JSON.stringify({ csv, mapping }) });
+  }
+  listCampaignContacts(id: string, query: { status?: ContactStatus; q?: string; page: number; pageSize: number }): Promise<{ page: number; pageSize: number; total: number; items: Contact[] }> {
+    const params = new URLSearchParams({ page: String(query.page), pageSize: String(query.pageSize) });
+    if (query.status) params.set('status', query.status);
+    if (query.q) params.set('q', query.q);
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/contacts?${params.toString()}`);
+  }
+  getCampaignContact(id: string, contactId: number): Promise<{ contact: Contact; attempts: Attempt[] }> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/contacts/${contactId}`);
+  }
+  optOutCampaignContact(id: string, contactId: number): Promise<{ skippedContacts: number }> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/contacts/${contactId}/opt-out`, { method: 'POST' });
+  }
+  getCampaignReview(id: string): Promise<Review> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/review`);
+  }
+  startCampaign(id: string, confirmName: string): Promise<{ skippedAtStart: number; campaign: Campaign; counts: Counts }> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/start`, {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true, confirmName, acknowledgements: { realCalls: true, regulations: true, consent: true } }),
+    });
+  }
+  controlCampaign(id: string, action: 'pause' | 'resume' | 'stop'): Promise<{ campaign: Campaign; counts: Counts }> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
+  }
+  getCampaignReadiness(): Promise<{ blockers: string[]; runner: RunnerStatus }> {
+    return this.request('/api/campaigns/readiness');
+  }
+  listDoNotCall(): Promise<{ total: number; items: Array<{ phone: string; reason: string | null; source: string; addedAt: string }> }> {
+    return this.request('/api/campaigns/do-not-call');
+  }
+  addDoNotCall(phone: string, reason?: string, defaultCountryCode?: string): Promise<{ phone: string; skippedContacts: number }> {
+    return this.request('/api/campaigns/do-not-call', { method: 'POST', body: JSON.stringify({ phone, reason: reason || undefined, defaultCountryCode: defaultCountryCode || undefined }) });
+  }
+  removeDoNotCall(phone: string): Promise<{ removed: boolean }> {
+    return this.request(`/api/campaigns/do-not-call/${encodeURIComponent(phone)}`, { method: 'DELETE' });
+  }
+
+  // ---- call observability (read-only, database-backed) ----
+  getObservabilityOverview(filters: CallFilters): Promise<Overview & { success: boolean }> {
+    return this.request(`/api/observability/overview${buildQuery(filters)}`);
+  }
+  listObservabilityCalls(filters: CallFilters, page: { page: number; pageSize: number }): Promise<Paged<CallRow> & { success: boolean }> {
+    return this.request(`/api/observability/calls${buildQuery(filters, page)}`);
+  }
+  getObservabilityStatus(): Promise<{ success: boolean; events: number; oldestAt: string | null; failedWrites: number; retention: { retentionDays: number; maxEvents: number } | null }> {
+    return this.request('/api/observability/status');
+  }
+  getObservabilityCall(id: string): Promise<CallDetail & { success: boolean }> {
+    return this.request(`/api/observability/calls/${encodeURIComponent(id)}`);
+  }
+  listObservabilityErrors(filters: CallFilters, page: { page: number; pageSize: number }): Promise<Paged<TraceEvent> & { success: boolean }> {
+    return this.request(`/api/observability/errors${buildQuery(filters, page)}`);
   }
 
   /** POST /api/mock/trigger-inbound */

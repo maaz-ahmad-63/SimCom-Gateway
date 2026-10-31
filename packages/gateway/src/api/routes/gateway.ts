@@ -23,8 +23,18 @@ import type { UsbPcmTestError, UsbPcmVerifier } from '../../diagnostics/usb-pcm-
 import { createHardwareRouter, RawPortInfo } from './hardware.js';
 import type { CallRecorder } from '../../recording/call-recorder.js';
 import type { InboundCaptureTap } from '../../diagnostics/inbound-capture.js';
+import { SmsService } from '../../sms/sms-service.js';
+import type { SmsInbox } from '../../sms/sms-inbox.js';
+import type { SmsStore } from '../../sms/sms-store.js';
+import { createSmsRouter } from './sms.js';
+import type { PortDiscovery } from '../../hardware/port-discovery.js';
 
 export interface GatewayRouteDependencies {
+  /** Test seam: the SMS service (by default one is built over `modem` and `callManager`). */
+  sms?: SmsService;
+  /** The persistent SMS inbox (notification-driven reads) and its message store. */
+  smsInbox?: SmsInbox;
+  smsStore?: SmsStore;
   usbPcmVerifier?: UsbPcmVerifier;
   inboundCaptureTap?: InboundCaptureTap;
   modem: IModemAdapter;
@@ -35,6 +45,9 @@ export interface GatewayRouteDependencies {
   listPorts?: () => Promise<RawPortInfo[]>;
   /** Complete-call recorder (separate from the diagnostic captures). */
   recorder?: CallRecorder;
+  /** Automatic port discovery (hardware mode) and the ports in use now. */
+  portDiscovery?: PortDiscovery | null;
+  currentPorts?: () => { at: string; audio: string };
 }
 
 export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
@@ -43,6 +56,10 @@ export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
   // Hardware Operations: status, port discovery, logs and the redacted report. Read-only and AT-free (except
   // /hardware/modem-info, which refuses while any call exists).
   router.use('/hardware', createHardwareRouter(deps));
+
+  // SMS (send, list, read, and a read-only configuration check) over the modem's own AT port. One service per server,
+  // so "one SMS operation at a time" holds across requests. Refused during any call.
+  router.use('/sms', createSmsRouter(deps.sms ?? new SmsService({ modem: deps.modem, callManager: deps.callManager }), { inbox: deps.smsInbox, store: deps.smsStore }));
 
   // Complete-call recordings (not diagnostic captures): status, metadata, and the WAV tracks.
   router.get('/recordings', (_req: Request, res: Response) => {
@@ -120,8 +137,8 @@ export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
         simStatus,
         atStatus,
         lastCommunicationTime,
-        atPort: deps.config.atPort,
-        audioPort: deps.config.audioPort,
+        atPort: deps.currentPorts?.().at ?? deps.config.atPort,
+        audioPort: deps.currentPorts?.().audio ?? deps.config.audioPort,
       },
       activeCall: deps.callManager.getCurrentCall(),
       audioStreaming: deps.audio ? deps.audio.getStats().isStreaming : false,

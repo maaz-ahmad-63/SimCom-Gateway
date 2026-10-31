@@ -79,7 +79,9 @@ export class SentenceSplitter {
    */
   constructor(
     private readonly minChars = 24,
-    private readonly firstMinChars = minChars
+    private readonly firstMinChars = minChars,
+    /** When > 0, the first chunk may also end at a clause boundary (comma, semicolon, colon, dash) once it is this long. */
+    private readonly firstClauseChars = 0
   ) {}
 
   push(chunk: string): string[] {
@@ -99,6 +101,22 @@ export class SentenceSplitter {
       }
     }
     this.buffer = this.buffer.slice(start);
+    // Phrase-level start: nothing has been emitted and no sentence has ended yet, but a clause is already long enough to
+    // speak. Only the first chunk of a reply is ever cut this way; every later chunk waits for a sentence end.
+    if (this.emitted === 0 && out.length === 0 && this.firstClauseChars > 0) {
+      const clause = /([,;:]|[—–])\s+/g;
+      let m: RegExpExecArray | null;
+      while ((m = clause.exec(this.buffer)) !== null) {
+        const end = m.index + m[0].length;
+        const candidate = this.buffer.slice(0, end).trim();
+        if (candidate.length >= this.firstClauseChars) {
+          out.push(candidate);
+          this.emitted++;
+          this.buffer = this.buffer.slice(end);
+          break;
+        }
+      }
+    }
     return out;
   }
 

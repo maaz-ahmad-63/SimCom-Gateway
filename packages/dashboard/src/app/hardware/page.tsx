@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../lib/api-client';
 import type { HardwarePorts, HardwareStatus } from '../../lib/hardware-ops';
-import { ConnectionPanel, LayerList, PortsPanel, QueryButton } from '../../components/hardware/HardwarePanels';
+import { ConnectionPanel, DiscoveryPanel, LayerList, PortsPanel, QueryButton } from '../../components/hardware/HardwarePanels';
 
 export default function HardwarePage() {
   const [status, setStatus] = useState<HardwareStatus | null>(null);
@@ -54,7 +54,10 @@ export default function HardwarePage() {
       {status && (
         <div className="grid gap-6 lg:grid-cols-2">
           <LayerList status={status} />
-          <ConnectionPanel status={status} />
+          <div className="space-y-4">
+            <ConnectionPanel status={status} />
+            <DiscoveryPanel status={status} />
+          </div>
         </div>
       )}
       <div className="flex flex-wrap items-start gap-3">

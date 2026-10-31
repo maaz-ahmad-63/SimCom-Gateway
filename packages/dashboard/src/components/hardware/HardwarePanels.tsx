@@ -1,5 +1,38 @@
 import React from 'react';
-import { canQueryModem, envLines, formatAge, HardwarePorts, HardwareStatus, LAYER_TONE } from '../../lib/hardware-ops';
+import { canQueryModem, discoverySummary, envLines, formatAge, HardwarePorts, HardwareStatus, LAYER_TONE } from '../../lib/hardware-ops';
+
+/** Which ports the gateway uses and how it found them. Read-only: the ports are configured on the gateway host. */
+export function DiscoveryPanel({ status }: { status: HardwareStatus }) {
+  const d = status.discovery;
+  const summary = discoverySummary(d);
+  const tone = LAYER_TONE[summary.state];
+  return (
+    <section aria-label="Modem port discovery" className="space-y-2 text-xs">
+      <div className={`rounded-lg border px-3 py-2 ${tone.className}`}>
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-semibold">Modem ports</span>
+          <span className="font-mono">{d?.mode === 'discovery' ? 'automatic' : d?.mode === 'explicit' ? 'explicit' : '-'}</span>
+        </div>
+        <p className="mt-1 opacity-90">{summary.text}</p>
+        {d?.lastScanAt && <p className="mt-1 opacity-60">Last looked {new Date(d.lastScanAt).toLocaleTimeString()}</p>}
+      </div>
+      {d && d.modems.length > 0 && (
+        <ul className="space-y-1" aria-label="Modems found">
+          {d.modems.map((m) => (
+            <li key={m.id} className="rounded border border-slate-800 bg-slate-950/60 px-3 py-2 font-mono text-slate-300">
+              <div>{m.id}{d.device?.id === m.id ? ' (in use)' : ''}</div>
+              <div className="text-slate-400">AT {m.at ?? 'not found'} / audio {m.audio ?? 'not found'}</div>
+              {m.problems.length > 0 && <div className="text-amber-300">{m.problems.join('; ')}</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-[11px] text-slate-500">
+        COM numbers change when Windows re-enumerates the modem; the gateway finds the ports from the modem&apos;s USB identity and never writes them to .env. MODEM_AT_PORT / MODEM_AUDIO_PORT on the gateway host override it.
+      </p>
+    </section>
+  );
+}
 
 export function LayerList({ status }: { status: HardwareStatus }) {
   return (

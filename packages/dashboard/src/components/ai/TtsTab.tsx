@@ -1,5 +1,6 @@
 'use client';
 
+import { keyEnvFor } from '../../lib/ai-keys';
 import React, { useEffect, useState } from 'react';
 import { AiTtsCompatibility, AiTtsPreviewResult, apiClient } from '../../lib/api-client';
 import { formatLatency } from '../../lib/ai-inspector';
@@ -106,7 +107,8 @@ export function TtsTab() {
   if (!draft || !catalog || !state) return <p className="text-xs text-slate-500">Loading…</p>;
   const option = catalog.tts.find((o) => o.key === draft.tts);
   const voices = voicesFor(catalog, draft.tts);
-  const key = state.credentials.find((c) => c.name === (draft.tts === 'deepgram' ? 'DEEPGRAM_API_KEY' : 'CARTESIA_API_KEY'));
+  const key = state.credentials.find((c) => c.name === keyEnvFor(option));
+  const models = ((option as { models?: Array<{ id: string; label: string }> } | undefined)?.models ?? []);
   const badges = key ? credentialBadges(key) : null;
   const rates = unique([...(draft.audioSampleRate ? [draft.audioSampleRate] : []), ...COMMON_RATES]);
 
@@ -124,7 +126,19 @@ export function TtsTab() {
               ))}
             </Select>
           </Field>
-          <Field label="Voice" hint={draft.tts === 'deepgram' ? 'Aura voice ids end in -en and start with aura-.' : undefined}>
+          {models.length > 0 && (
+            <Field label="Model" hint="The provider's own model id. Leave on the default unless you need another one; an unsupported model is refused when you save.">
+              <Select value={draft.ttsModel ?? ''} onChange={(e) => setDraft({ ...draft, ttsModel: e.target.value === '' ? null : e.target.value })}>
+                <option value="">Default ({models[0].id})</option>
+                {models.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+          <Field label="Voice" hint={draft.tts === 'deepgram' ? 'Aura voice ids end in -en and start with aura-.' : draft.tts === 'elevenlabs' ? 'Paste a voice ID from your ElevenLabs account (Voices > the voice > ID).' : draft.tts.startsWith('murf') ? 'Use a voice id from your Murf account voice list (for example en-US-natalie).' : draft.tts === 'inworld' ? 'Use a voice id from your Inworld voice list (for example Ashley).' : draft.tts === 'soniox' ? 'A Soniox TTS voice name (for example Adrian).' : undefined}>
             {voices.length > 0 ? (
               <Select value={draft.ttsVoice} onChange={(e) => setDraft({ ...draft, ttsVoice: e.target.value })}>
                 {!voices.some((v) => v.id === draft.ttsVoice) && draft.ttsVoice && <option value={draft.ttsVoice}>{draft.ttsVoice} (current)</option>}
@@ -149,7 +163,7 @@ export function TtsTab() {
           </Field>
           <Field
             label="Gateway audio sample rate"
-            hint="Raw 16-bit mono little-endian PCM. Changing it removes your audio confirmations, because they were made under the old format."
+            hint="Raw 16-bit mono little-endian PCM. The modem must use the same rate (AT+CPCMFRM: 0 = 8000 Hz, 1 = 16000 Hz); the gateway refuses to attach the AI to a call when they differ. Your audio confirmations are kept with the rate they were made at: after a change they do not count until you re-verify on a real call at the new rate (or switch back). Changing only the voice needs no re-verification."
           >
             <Select
               value={draft.audioSampleRate ?? ''}

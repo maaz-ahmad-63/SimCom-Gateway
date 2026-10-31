@@ -59,6 +59,19 @@ export function errorHandler(
     return;
   }
 
+  if (errorObj?.type === 'entity.too.large' || errorObj?.status === 413) {
+    res.status(413).json({
+      success: false,
+      error: 'The request body is larger than the 1 MB limit once encoded (text with many quotes or line breaks grows when it is encoded). Send a smaller file, or split it.',
+      code: 'PAYLOAD_TOO_LARGE',
+    });
+    return;
+  }
+  if (errorObj?.type === 'entity.parse.failed') {
+    res.status(400).json({ success: false, error: 'The request body is not valid JSON', code: 'INVALID_JSON' });
+    return;
+  }
+
   const message = err instanceof Error ? err.message : 'An unexpected error occurred';
   res.status(500).json({
     success: false,

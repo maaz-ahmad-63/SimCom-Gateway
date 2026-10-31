@@ -1,29 +1,50 @@
 import type { AiCatalogOption, AiCatalogResponse, AiSettingsView } from '@sim-gateway/shared';
 
+/** The per-direction agent fields the gateway returns next to the shared agent profile. Empty: that kind of call uses the shared value. */
+export interface DirectionAgentFields {
+  inboundInstructions?: string;
+  inboundGreeting?: string;
+  outboundInstructions?: string;
+  outboundGreeting?: string;
+}
+
 /** The fields the dashboard edits. A subset of what GET /api/ai/settings returns. */
 export interface SettingsDraft {
   stt: string;
   llm: string;
   tts: string;
   ttsVoice: string;
+  /** The provider's model, or null for its default. */
+  ttsModel: string | null;
   language: string;
   showTranscripts: boolean;
+  /** Stream caller audio to Deepgram while they speak. */
+  sttStreaming: boolean;
   diagnosticRecording: boolean;
   audioSampleRate: number | null;
   autoHandle: AiSettingsView['autoHandle'];
   automation: AiSettingsView['automation'];
-  agent: { name: string; instructions: string; greeting: string; enabled: boolean; allowHangup: boolean };
+  agent: {
+    name: string;
+    instructions: string;
+    greeting: string;
+    enabled: boolean;
+    allowHangup: boolean;
+  } & DirectionAgentFields;
   params: AiSettingsView['params'];
 }
 
 export function draftFromSettings(s: AiSettingsView): SettingsDraft {
+  const direction = s.agent as AiSettingsView['agent'] & DirectionAgentFields;
   return {
     stt: s.stt,
     llm: s.llm,
     tts: s.tts,
     ttsVoice: s.ttsVoice,
+    ttsModel: (s as { ttsModel?: string | null }).ttsModel ?? null,
     language: s.agent.language,
     showTranscripts: s.showTranscripts,
+    sttStreaming: (s as { sttStreaming?: boolean }).sttStreaming ?? false,
     diagnosticRecording: s.diagnosticRecording,
     audioSampleRate: s.audioSampleRate,
     autoHandle: s.autoHandle,
@@ -32,6 +53,10 @@ export function draftFromSettings(s: AiSettingsView): SettingsDraft {
       name: s.agent.name,
       instructions: s.agent.instructions,
       greeting: s.agent.greeting,
+      inboundInstructions: direction.inboundInstructions ?? '',
+      inboundGreeting: direction.inboundGreeting ?? '',
+      outboundInstructions: direction.outboundInstructions ?? '',
+      outboundGreeting: direction.outboundGreeting ?? '',
       enabled: s.agent.enabled,
       allowHangup: s.agent.allowHangup,
     },
@@ -44,7 +69,7 @@ type Patch = Record<string, unknown>;
 /** Only what changed, shaped for PUT /api/ai/settings. An empty object means there is nothing to save. */
 export function buildSettingsPatch(original: SettingsDraft, draft: SettingsDraft): Patch {
   const patch: Patch = {};
-  for (const key of ['stt', 'llm', 'tts', 'ttsVoice', 'language', 'showTranscripts', 'diagnosticRecording'] as const) {
+  for (const key of ['stt', 'llm', 'tts', 'ttsVoice', 'ttsModel', 'language', 'showTranscripts', 'sttStreaming', 'diagnosticRecording'] as const) {
     if (draft[key] !== original[key]) patch[key] = draft[key];
   }
   if (draft.audioSampleRate !== original.audioSampleRate) patch.audioSampleRate = draft.audioSampleRate;
@@ -55,7 +80,7 @@ export function buildSettingsPatch(original: SettingsDraft, draft: SettingsDraft
   }
   if (Object.keys(automation).length > 0) patch.automation = automation;
   const agent: Patch = {};
-  for (const key of ['name', 'instructions', 'greeting', 'enabled', 'allowHangup'] as const) {
+  for (const key of ['name', 'instructions', 'greeting', 'inboundInstructions', 'inboundGreeting', 'outboundInstructions', 'outboundGreeting', 'enabled', 'allowHangup'] as const) {
     if (draft.agent[key] !== original.agent[key]) agent[key] = draft.agent[key];
   }
   if (Object.keys(agent).length > 0) patch.agent = agent;
@@ -105,6 +130,12 @@ export function validateDraft(draft: SettingsDraft, catalog: AiCatalogResponse):
   if (!/^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(draft.language)) problems.push('Language must look like en or en-US');
   if (draft.agent.instructions.length > 8000) problems.push('Instructions are limited to 8000 characters');
   if (draft.agent.greeting.length > 500) problems.push('The greeting is limited to 500 characters');
+  for (const [label, value] of [['Inbound', draft.agent.inboundInstructions], ['Outbound', draft.agent.outboundInstructions]] as const) {
+    if ((value ?? '').length > 8000) problems.push(`${label} instructions are limited to 8000 characters`);
+  }
+  for (const [label, value] of [['inbound', draft.agent.inboundGreeting], ['outbound', draft.agent.outboundGreeting]] as const) {
+    if ((value ?? '').length > 500) problems.push(`The ${label} greeting is limited to 500 characters`);
+  }
   if (!draft.agent.name.trim()) problems.push('Give the agent a name');
   const p = draft.params;
   if (p.maxTokens !== null && (!Number.isInteger(p.maxTokens) || p.maxTokens < 16 || p.maxTokens > 4096)) {
@@ -131,7 +162,8 @@ export function voicesFor(catalog: AiCatalogResponse, tts: string): Array<{ id: 
  */
 export function selectTtsProvider(draft: SettingsDraft, catalog: AiCatalogResponse, tts: string): SettingsDraft {
   const voices = voicesFor(catalog, tts);
-  return { ...draft, tts, ttsVoice: voices[0]?.id ?? '' };
+  // A model id belongs to one provider: choosing another provider returns to that provider's default model.
+  return { ...draft, tts, ttsVoice: voices[0]?.id ?? '', ttsModel: null };
 }
 
 /** Order-preserving de-duplication (avoids spreading a Set, which this project's TS target does not allow). */

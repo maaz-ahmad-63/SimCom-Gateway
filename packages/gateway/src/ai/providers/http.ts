@@ -1,3 +1,5 @@
+import { performance } from 'node:perf_hooks';
+import { reportProviderAttempt } from '../obs-context.js';
 import { AiProviderError, AiStage } from './types.js';
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -32,6 +34,7 @@ export function redactSecrets(text: string): string {
 
 function statusAdvice(status: number): string {
   if (status === 401 || status === 403) return 'authentication failed: check the API key for this provider';
+  if (status === 402) return 'payment required: the account has no balance or quota left';
   if (status === 404) return 'endpoint or model not found: check the model/voice id';
   if (status === 408) return 'provider timed out';
   if (status === 413) return 'request body too large';
@@ -77,9 +80,22 @@ export async function requestWithRetry(url: string, init: RequestInit, options: 
     const signal = AbortSignal.any([options.signal, attemptController.signal]);
 
     let retryAfterMs = 0;
+    const attemptStart = performance.now();
+    const note = (httpStatus: number | null, outcome: 'ok' | 'http-error' | 'timeout' | 'network-error' | 'cancelled', detail?: string) =>
+      reportProviderAttempt({
+        provider: options.provider,
+        stage: options.stage,
+        attempt: attempt + 1,
+        httpStatus,
+        durationMs: performance.now() - attemptStart,
+        outcome,
+        willRetry: outcome !== 'ok' && outcome !== 'cancelled' && attempt < options.maxRetries && (outcome !== 'http-error' || (httpStatus === 408 || httpStatus === 429 || (httpStatus ?? 0) >= 500)),
+        detail,
+      });
     try {
       const response = await options.fetchImpl(url, { ...init, signal });
       if (response.ok) {
+        note(response.status, 'ok');
         arm(options.bodyTimeoutMs ?? options.timeoutMs);
         // Make sure a timeout (or a caller abort) really stops a body that is still streaming.
         signal.addEventListener('abort', () => void response.body?.cancel().catch(() => {}), { once: true });
@@ -97,6 +113,7 @@ export async function requestWithRetry(url: string, init: RequestInit, options: 
         `HTTP ${response.status}: ${statusAdvice(response.status)}${snippet ? ` (${snippet})` : ''}`,
         { status: response.status, retryable }
       );
+      note(response.status, 'http-error', lastError.message);
       if (!retryable) throw lastError;
     } catch (error) {
       if (timer) clearTimeout(timer);
@@ -104,13 +121,16 @@ export async function requestWithRetry(url: string, init: RequestInit, options: 
         if (!error.retryable) throw error;
         lastError = error;
       } else if (options.signal.aborted) {
+        note(null, 'cancelled');
         throw new AiProviderError(options.provider, options.stage, 'cancelled', { aborted: true });
       } else if (timedOut) {
+        note(null, 'timeout', `timed out after ${options.timeoutMs} ms`);
         lastError = new AiProviderError(options.provider, options.stage, `timed out after ${options.timeoutMs} ms`, {
           retryable: true,
           timedOut: true,
         });
       } else {
+        note(null, 'network-error', `network error: ${redactSecrets((error as Error).message ?? 'unknown')}`);
         lastError = new AiProviderError(
           options.provider,
           options.stage,

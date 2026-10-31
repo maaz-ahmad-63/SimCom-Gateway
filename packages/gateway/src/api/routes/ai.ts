@@ -2,6 +2,7 @@ import { NextFunction, Request, RequestHandler, Response, Router } from 'express
 import { AiNotReadyError } from '../../ai/orchestrator.js';
 import { AiBlockedError, AiRuntime } from '../../ai/runtime.js';
 import { AiSettingsService, SettingsError } from '../../ai/settings.js';
+import { activeRegistryRevision } from '../../ai/registry/active.js';
 import { AiUsageStore } from '../../ai/usage-store.js';
 import { AiProviderError } from '../../ai/providers/types.js';
 
@@ -60,6 +61,8 @@ export function createAiRouter(deps: AiRouteDependencies): Router {
         usageToday: usage.totals(sinceIso('today')),
         testResponse: runtime.testResponseReadiness(),
         conversation: runtime.conversationReadiness(),
+        // Changes whenever the model registry does: a page that holds an older model catalog fetches it again.
+        catalogRevision: activeRegistryRevision(),
       });
     })
   );
@@ -111,8 +114,10 @@ export function createAiRouter(deps: AiRouteDependencies): Router {
   router.put(
     '/settings',
     wrap((req, res) => {
+      const before = settings.getStored();
       settings.update(req.body);
       runtime.reload();
+      runtime.announceSettingsEffects(before, settings.getStored());
       res.json(settingsView());
     })
   );

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   CallSession,
   CallStateChangeEvent,
@@ -11,7 +11,9 @@ import {
   DtmfRequestInput,
   TriggerMockInboundInput,
 } from '@sim-gateway/shared';
-import { apiClient } from '../api-client';
+import { apiClient, GatewayApiError } from '../api-client';
+import { HardwareView, HealthError, hardwareView, LinkIssue, linkIssue, RelayStatusResponse } from '../hardware-mode';
+import { fetchRelayStatus } from '../gateway-status';
 import { socketService, SocketConnectionState } from '../socket-service';
 import { reconcileCall } from '../call-sync';
 
@@ -37,8 +39,13 @@ export interface GatewayContextValue {
     network: ModemNetworkStatus | null;
   };
   recentAlerts: GatewayAlert[];
+  /** True only when the gateway itself said it is simulated. Unknown is not simulated. */
   isSimulated: boolean;
-  driverType: 'hardware' | 'mock';
+  /** 'unknown' until the gateway has answered, directly or through the dashboard server. */
+  driverType: 'hardware' | 'mock' | 'unknown';
+  hardware: HardwareView;
+  /** Why this browser has no live connection, or null. */
+  linkIssue: LinkIssue | null;
   lastCallEnded: CallSession | null;
   isLoading: boolean;
   error: string | null;
@@ -74,12 +81,22 @@ export function GatewayProvider({ children }: { children: React.ReactNode }) {
   const [lastCallEnded, setLastCallEnded] = useState<CallSession | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [healthError, setHealthError] = useState<HealthError | null>(null);
+  const [relay, setRelay] = useState<RelayStatusResponse | null>(null);
+  const lastRelayAt = useRef(0);
+
+  /** What the dashboard server can see of the gateway (its AT-free status). Asked only while this browser has no health. */
+  const refreshRelay = useCallback(async () => {
+    lastRelayAt.current = Date.now();
+    setRelay(await fetchRelayStatus());
+  }, []);
 
   const refreshHealth = useCallback(async () => {
     try {
       setError(null);
       const data = await apiClient.getHealth();
       setHealth(data);
+      setHealthError(null);
       if (data.activeCall) {
         setActiveCall(data.activeCall);
       } else {
@@ -91,10 +108,13 @@ export function GatewayProvider({ children }: { children: React.ReactNode }) {
       });
     } catch (err) {
       setError((err as Error).message);
+      const api = err instanceof GatewayApiError ? err : null;
+      setHealthError({ status: api?.statusCode, code: api?.code, message: (err as Error).message });
+      void refreshRelay();
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [refreshRelay]);
 
   useEffect(() => {
     // 1. Initial snapshot fetch
@@ -181,7 +201,9 @@ export function GatewayProvider({ children }: { children: React.ReactNode }) {
         if (decision.action === 'clear') setActiveCall(null);
         else if (decision.action === 'refresh') await refreshHealth();
       } catch {
-        // an unreachable gateway is already reported by the connection state; keep what is shown
+        // an unreachable gateway is already reported by the connection state; keep what is shown. The dashboard server's own
+        // view of the gateway is refreshed now and then so the hardware mode and ports stay right while this browser has none.
+        if (!stopped && Date.now() - lastRelayAt.current > 15_000) void refreshRelay();
       }
     };
     const timer = setInterval(sync, 4000);
@@ -189,7 +211,7 @@ export function GatewayProvider({ children }: { children: React.ReactNode }) {
       stopped = true;
       clearInterval(timer);
     };
-  }, [refreshHealth]);
+  }, [refreshHealth, refreshRelay]);
 
   // Actions
   const dial = async (request: DialRequestInput): Promise<CallSession> => {
@@ -220,8 +242,12 @@ export function GatewayProvider({ children }: { children: React.ReactNode }) {
 
   const clearAlerts = () => setRecentAlerts([]);
 
-  const isSimulated = health?.isSimulated ?? true;
-  const driverType = health?.driverType ?? 'mock';
+  // The gateway is the authority on its hardware. Without an answer from it (directly or through the dashboard server) the
+  // mode is unknown: it is never assumed to be a simulation, and never shown as one.
+  const hardware = useMemo(() => hardwareView(health, relay), [health, relay]);
+  const issue = useMemo(() => (health ? null : linkIssue(healthError, relay)), [health, healthError, relay]);
+  const isSimulated = hardware.mode === 'mock';
+  const driverType = hardware.mode;
 
   return (
     <GatewayContext.Provider
@@ -234,6 +260,8 @@ export function GatewayProvider({ children }: { children: React.ReactNode }) {
         recentAlerts,
         isSimulated,
         driverType,
+        hardware,
+        linkIssue: issue,
         lastCallEnded,
         isLoading,
         error,

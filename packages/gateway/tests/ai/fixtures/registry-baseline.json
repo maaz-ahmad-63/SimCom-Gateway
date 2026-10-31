@@ -1,0 +1,3175 @@
+{
+ "catalog": {
+  "none": {
+   "stt": [
+    {
+     "key": "assemblyai",
+     "label": "AssemblyAI",
+     "provider": "assemblyai",
+     "model": null,
+     "keyEnv": null,
+     "implemented": false,
+     "unavailableReason": "Not ported to the gateway yet",
+     "streaming": false,
+     "priceNote": null
+    },
+    {
+     "key": "nova-3",
+     "label": "Deepgram Nova-3",
+     "provider": "deepgram",
+     "model": "nova-3",
+     "keyEnv": "DEEPGRAM_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "nova-3-multi",
+     "label": "Deepgram Nova-3 (multilingual)",
+     "provider": "deepgram",
+     "model": "nova-3",
+     "keyEnv": "DEEPGRAM_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "$0.0058/min (plan-specific)"
+    },
+    {
+     "key": "flux",
+     "label": "Deepgram Flux",
+     "provider": "deepgram-flux",
+     "model": "flux-general-en",
+     "keyEnv": "DEEPGRAM_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "groq_whisper",
+     "label": "Groq Whisper large-v3-turbo",
+     "provider": "groq",
+     "model": "whisper-large-v3-turbo",
+     "keyEnv": "GROQ_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "$0.00185/min"
+    },
+    {
+     "key": "soniox",
+     "label": "Soniox",
+     "provider": "soniox",
+     "model": "stt-rt-v5",
+     "keyEnv": "SONIOX_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "stt-rt-v5",
+     "label": "Soniox stt-rt-v5",
+     "provider": "soniox",
+     "model": "stt-rt-v5",
+     "keyEnv": "SONIOX_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "ink-whisper",
+     "label": "Cartesia Ink-Whisper",
+     "provider": "cartesia",
+     "model": "ink-whisper",
+     "keyEnv": "CARTESIA_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    }
+   ],
+   "llm": [
+    {
+     "key": "groq_llama_3_3",
+     "label": "groq llama 3 3",
+     "provider": "groq",
+     "model": "qwen/qwen3.8-27b",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.4,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.8/1M input, $4/1M output tokens"
+    },
+    {
+     "key": "groq_gpt_oss_120b",
+     "label": "groq gpt oss 120b",
+     "provider": "groq",
+     "model": "openai/gpt-oss-120b",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.15,
+      "reasoning_effort": "low"
+     },
+     "priceNote": "$0.15/1M input, $0.6/1M output tokens"
+    },
+    {
+     "key": "groq_gpt_oss_20b",
+     "label": "groq gpt oss 20b",
+     "provider": "groq",
+     "model": "openai/gpt-oss-20b",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.15,
+      "reasoning_effort": "low"
+     },
+     "priceNote": "$0.075/1M input, $0.3/1M output tokens"
+    },
+    {
+     "key": "groq_qwen_3_6_27b",
+     "label": "groq qwen 3 6 27b",
+     "provider": "groq",
+     "model": "qwen/qwen3.8-27b",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.4,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.8/1M input, $4/1M output tokens"
+    },
+    {
+     "key": "groq_qwen_3_8_27b",
+     "label": "groq qwen 3 8 27b",
+     "provider": "groq",
+     "model": "qwen/qwen3.8-27b",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.4,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.8/1M input, $4/1M output tokens"
+    },
+    {
+     "key": "gemini_3_flash",
+     "label": "gemini 3 flash",
+     "provider": "gemini",
+     "model": "gemini-3.8-flash",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "openai_gpt_4_1_mini",
+     "label": "openai gpt 4 1 mini",
+     "provider": "openai",
+     "model": "gpt-4.1-mini",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "$0.4/1M input, $1.6/1M output tokens"
+    },
+    {
+     "key": "openai_gpt_5_2",
+     "label": "openai gpt 5 2",
+     "provider": "openai",
+     "model": "gpt-5.2",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "$1.75/1M input, $14/1M output tokens"
+    },
+    {
+     "key": "openai_gpt_5_4",
+     "label": "openai gpt 5 4",
+     "provider": "openai",
+     "model": "gpt-5.4",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "$2.5/1M input, $15/1M output tokens"
+    },
+    {
+     "key": "openai_gpt_5_4_mini",
+     "label": "openai gpt 5 4 mini",
+     "provider": "openai",
+     "model": "gpt-5.4-mini",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "$0.75/1M input, $4.5/1M output tokens"
+    },
+    {
+     "key": "telnyx_kimi_k2_6",
+     "label": "telnyx kimi k2 6",
+     "provider": "telnyx",
+     "model": "moonshotai/Kimi-K2.6",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.3,
+      "region": "AUS",
+      "mode": "preferred",
+      "enable_thinking": false,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.665/1M input, $4/1M output tokens"
+    },
+    {
+     "key": "telnyx_deepseek_v4_flash_0731",
+     "label": "telnyx deepseek v4 flash 0731",
+     "provider": "telnyx",
+     "model": "deepseek-ai/DeepSeek-V4-Flash-0731",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.3,
+      "region": "AUS",
+      "mode": "preferred",
+      "enable_thinking": false,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.13/1M input, $0.26/1M output tokens"
+    },
+    {
+     "key": "telnyx_llama_3_3_70b_instruct",
+     "label": "telnyx llama 3 3 70b instruct",
+     "provider": "telnyx",
+     "model": "meta-llama/Llama-3.3-70B-Instruct",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.3,
+      "region": "AUS",
+      "mode": "preferred"
+     },
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "telnyx_kimi_k3",
+     "label": "telnyx kimi k3",
+     "provider": "telnyx",
+     "model": "moonshotai/Kimi-K3",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.3,
+      "region": "AUS",
+      "mode": "preferred",
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$2.7/1M input, $13.5/1M output tokens"
+    }
+   ],
+   "tts": [
+    {
+     "key": "deepgram",
+     "label": "Deepgram Aura",
+     "provider": "deepgram",
+     "model": null,
+     "models": [],
+     "keyEnv": "DEEPGRAM_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [
+      {
+       "id": "aura-asteria-en",
+       "label": "aura-asteria-en"
+      },
+      {
+       "id": "aura-luna-en",
+       "label": "aura-luna-en"
+      },
+      {
+       "id": "aura-stella-en",
+       "label": "aura-stella-en"
+      },
+      {
+       "id": "aura-athena-en",
+       "label": "aura-athena-en"
+      },
+      {
+       "id": "aura-hera-en",
+       "label": "aura-hera-en"
+      },
+      {
+       "id": "aura-orion-en",
+       "label": "aura-orion-en"
+      },
+      {
+       "id": "aura-arcas-en",
+       "label": "aura-arcas-en"
+      },
+      {
+       "id": "aura-perseus-en",
+       "label": "aura-perseus-en"
+      },
+      {
+       "id": "aura-angus-en",
+       "label": "aura-angus-en"
+      },
+      {
+       "id": "aura-orpheus-en",
+       "label": "aura-orpheus-en"
+      },
+      {
+       "id": "aura-helios-en",
+       "label": "aura-helios-en"
+      },
+      {
+       "id": "aura-zeus-en",
+       "label": "aura-zeus-en"
+      }
+     ],
+     "sampleRates": [
+      8000,
+      16000,
+      24000,
+      32000,
+      48000
+     ],
+     "priceNote": "$30/1M characters"
+    },
+    {
+     "key": "inworld",
+     "label": "Inworld TTS",
+     "provider": "inworld",
+     "model": "inworld-tts-2",
+     "models": [
+      {
+       "id": "inworld-tts-2",
+       "label": "inworld-tts-2"
+      }
+     ],
+     "keyEnv": "INWORLD_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      22050,
+      24000,
+      32000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "soniox",
+     "label": "Soniox TTS",
+     "provider": "soniox",
+     "model": "tts-rt-v2",
+     "models": [
+      {
+       "id": "tts-rt-v2",
+       "label": "tts-rt-v2"
+      }
+     ],
+     "keyEnv": "SONIOX_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "murf_falcon_2",
+     "label": "Murf Falcon 2.1",
+     "provider": "murf_falcon_2",
+     "model": "falcon-2.1",
+     "models": [
+      {
+       "id": "falcon-2.1",
+       "label": "falcon-2.1"
+      }
+     ],
+     "keyEnv": "MURF_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "murf",
+     "label": "murf",
+     "provider": "murf",
+     "model": null,
+     "models": [],
+     "keyEnv": "MURF_API_KEY",
+     "implemented": false,
+     "unavailableReason": "Murf's older Gen 2 synthesis has no documented endpoint here; use the Murf Falcon entries",
+     "voices": [],
+     "sampleRates": [],
+     "priceNote": null
+    },
+    {
+     "key": "murf_falcon_2_hi",
+     "label": "Murf Falcon 2.1 (Hindi voices)",
+     "provider": "murf_falcon_2_hi",
+     "model": "falcon-2.1",
+     "models": [
+      {
+       "id": "falcon-2.1",
+       "label": "falcon-2.1"
+      }
+     ],
+     "keyEnv": "MURF_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "cartesia",
+     "label": "Cartesia Sonic-3",
+     "provider": "cartesia",
+     "model": "sonic-3",
+     "models": [
+      {
+       "id": "sonic-3",
+       "label": "sonic-3"
+      }
+     ],
+     "keyEnv": "CARTESIA_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [
+      {
+       "id": "katie",
+       "label": "katie"
+      },
+      {
+       "id": "brooke",
+       "label": "brooke"
+      },
+      {
+       "id": "kiefer",
+       "label": "kiefer"
+      },
+      {
+       "id": "riya",
+       "label": "riya"
+      },
+      {
+       "id": "cathy",
+       "label": "cathy"
+      },
+      {
+       "id": "tessa",
+       "label": "tessa"
+      },
+      {
+       "id": "cindy",
+       "label": "cindy"
+      },
+      {
+       "id": "kyle",
+       "label": "kyle"
+      },
+      {
+       "id": "carolina",
+       "label": "carolina"
+      },
+      {
+       "id": "southern_belle",
+       "label": "southern belle"
+      },
+      {
+       "id": "british_lady",
+       "label": "british lady"
+      },
+      {
+       "id": "arushi",
+       "label": "arushi"
+      },
+      {
+       "id": "celine",
+       "label": "celine"
+      }
+     ],
+     "sampleRates": [
+      8000,
+      16000,
+      22050,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "$37.38/1M characters (plan-specific)"
+    },
+    {
+     "key": "sarvam",
+     "label": "sarvam",
+     "provider": "sarvam",
+     "model": null,
+     "models": [],
+     "keyEnv": null,
+     "implemented": false,
+     "unavailableReason": "Not ported to the gateway yet",
+     "voices": [],
+     "sampleRates": [],
+     "priceNote": null
+    },
+    {
+     "key": "elevenlabs",
+     "label": "ElevenLabs",
+     "provider": "elevenlabs",
+     "model": "eleven_flash_v2_5",
+     "models": [
+      {
+       "id": "eleven_flash_v2_5",
+       "label": "eleven_flash_v2_5"
+      },
+      {
+       "id": "eleven_multilingual_v2",
+       "label": "eleven_multilingual_v2"
+      },
+      {
+       "id": "eleven_turbo_v2_5",
+       "label": "eleven_turbo_v2_5"
+      }
+     ],
+     "keyEnv": "ELEVENLABS_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      22050,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    }
+   ],
+   "languages": [
+    "en",
+    "en-US",
+    "en-AU",
+    "en-IN",
+    "hi",
+    "es",
+    "fr",
+    "de",
+    "pt",
+    "it",
+    "nl",
+    "ja",
+    "ko",
+    "ru",
+    "ta",
+    "te",
+    "bn",
+    "mr"
+   ]
+  },
+  "reasoning": {
+   "stt": [
+    {
+     "key": "assemblyai",
+     "label": "AssemblyAI",
+     "provider": "assemblyai",
+     "model": null,
+     "keyEnv": null,
+     "implemented": false,
+     "unavailableReason": "Not ported to the gateway yet",
+     "streaming": false,
+     "priceNote": null
+    },
+    {
+     "key": "nova-3",
+     "label": "Deepgram Nova-3",
+     "provider": "deepgram",
+     "model": "nova-3",
+     "keyEnv": "DEEPGRAM_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "nova-3-multi",
+     "label": "Deepgram Nova-3 (multilingual)",
+     "provider": "deepgram",
+     "model": "nova-3",
+     "keyEnv": "DEEPGRAM_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "$0.0058/min (plan-specific)"
+    },
+    {
+     "key": "flux",
+     "label": "Deepgram Flux",
+     "provider": "deepgram-flux",
+     "model": "flux-general-en",
+     "keyEnv": "DEEPGRAM_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "groq_whisper",
+     "label": "Groq Whisper large-v3-turbo",
+     "provider": "groq",
+     "model": "whisper-large-v3-turbo",
+     "keyEnv": "GROQ_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "$0.00185/min"
+    },
+    {
+     "key": "soniox",
+     "label": "Soniox",
+     "provider": "soniox",
+     "model": "stt-rt-v5",
+     "keyEnv": "SONIOX_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "stt-rt-v5",
+     "label": "Soniox stt-rt-v5",
+     "provider": "soniox",
+     "model": "stt-rt-v5",
+     "keyEnv": "SONIOX_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "ink-whisper",
+     "label": "Cartesia Ink-Whisper",
+     "provider": "cartesia",
+     "model": "ink-whisper",
+     "keyEnv": "CARTESIA_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    }
+   ],
+   "llm": [
+    {
+     "key": "groq_llama_3_3",
+     "label": "groq llama 3 3",
+     "provider": "groq",
+     "model": "qwen/qwen3.8-27b",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.4,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.8/1M input, $4/1M output tokens"
+    },
+    {
+     "key": "groq_gpt_oss_120b",
+     "label": "groq gpt oss 120b",
+     "provider": "groq",
+     "model": "openai/gpt-oss-120b",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.15,
+      "reasoning_effort": "high"
+     },
+     "priceNote": "$0.15/1M input, $0.6/1M output tokens"
+    },
+    {
+     "key": "groq_gpt_oss_20b",
+     "label": "groq gpt oss 20b",
+     "provider": "groq",
+     "model": "openai/gpt-oss-20b",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.15,
+      "reasoning_effort": "high"
+     },
+     "priceNote": "$0.075/1M input, $0.3/1M output tokens"
+    },
+    {
+     "key": "groq_qwen_3_6_27b",
+     "label": "groq qwen 3 6 27b",
+     "provider": "groq",
+     "model": "qwen/qwen3.8-27b",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.4,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.8/1M input, $4/1M output tokens"
+    },
+    {
+     "key": "groq_qwen_3_8_27b",
+     "label": "groq qwen 3 8 27b",
+     "provider": "groq",
+     "model": "qwen/qwen3.8-27b",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.4,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.8/1M input, $4/1M output tokens"
+    },
+    {
+     "key": "gemini_3_flash",
+     "label": "gemini 3 flash",
+     "provider": "gemini",
+     "model": "gemini-3.8-flash",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "openai_gpt_4_1_mini",
+     "label": "openai gpt 4 1 mini",
+     "provider": "openai",
+     "model": "gpt-4.1-mini",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "$0.4/1M input, $1.6/1M output tokens"
+    },
+    {
+     "key": "openai_gpt_5_2",
+     "label": "openai gpt 5 2",
+     "provider": "openai",
+     "model": "gpt-5.2",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "$1.75/1M input, $14/1M output tokens"
+    },
+    {
+     "key": "openai_gpt_5_4",
+     "label": "openai gpt 5 4",
+     "provider": "openai",
+     "model": "gpt-5.4",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "$2.5/1M input, $15/1M output tokens"
+    },
+    {
+     "key": "openai_gpt_5_4_mini",
+     "label": "openai gpt 5 4 mini",
+     "provider": "openai",
+     "model": "gpt-5.4-mini",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "$0.75/1M input, $4.5/1M output tokens"
+    },
+    {
+     "key": "telnyx_kimi_k2_6",
+     "label": "telnyx kimi k2 6",
+     "provider": "telnyx",
+     "model": "moonshotai/Kimi-K2.6",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.3,
+      "region": "AUS",
+      "mode": "preferred",
+      "enable_thinking": false,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.665/1M input, $4/1M output tokens"
+    },
+    {
+     "key": "telnyx_deepseek_v4_flash_0731",
+     "label": "telnyx deepseek v4 flash 0731",
+     "provider": "telnyx",
+     "model": "deepseek-ai/DeepSeek-V4-Flash-0731",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.3,
+      "region": "AUS",
+      "mode": "preferred",
+      "enable_thinking": false,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.13/1M input, $0.26/1M output tokens"
+    },
+    {
+     "key": "telnyx_llama_3_3_70b_instruct",
+     "label": "telnyx llama 3 3 70b instruct",
+     "provider": "telnyx",
+     "model": "meta-llama/Llama-3.3-70B-Instruct",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.3,
+      "region": "AUS",
+      "mode": "preferred"
+     },
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "telnyx_kimi_k3",
+     "label": "telnyx kimi k3",
+     "provider": "telnyx",
+     "model": "moonshotai/Kimi-K3",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.3,
+      "region": "AUS",
+      "mode": "preferred",
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$2.7/1M input, $13.5/1M output tokens"
+    }
+   ],
+   "tts": [
+    {
+     "key": "deepgram",
+     "label": "Deepgram Aura",
+     "provider": "deepgram",
+     "model": null,
+     "models": [],
+     "keyEnv": "DEEPGRAM_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [
+      {
+       "id": "aura-asteria-en",
+       "label": "aura-asteria-en"
+      },
+      {
+       "id": "aura-luna-en",
+       "label": "aura-luna-en"
+      },
+      {
+       "id": "aura-stella-en",
+       "label": "aura-stella-en"
+      },
+      {
+       "id": "aura-athena-en",
+       "label": "aura-athena-en"
+      },
+      {
+       "id": "aura-hera-en",
+       "label": "aura-hera-en"
+      },
+      {
+       "id": "aura-orion-en",
+       "label": "aura-orion-en"
+      },
+      {
+       "id": "aura-arcas-en",
+       "label": "aura-arcas-en"
+      },
+      {
+       "id": "aura-perseus-en",
+       "label": "aura-perseus-en"
+      },
+      {
+       "id": "aura-angus-en",
+       "label": "aura-angus-en"
+      },
+      {
+       "id": "aura-orpheus-en",
+       "label": "aura-orpheus-en"
+      },
+      {
+       "id": "aura-helios-en",
+       "label": "aura-helios-en"
+      },
+      {
+       "id": "aura-zeus-en",
+       "label": "aura-zeus-en"
+      }
+     ],
+     "sampleRates": [
+      8000,
+      16000,
+      24000,
+      32000,
+      48000
+     ],
+     "priceNote": "$30/1M characters"
+    },
+    {
+     "key": "inworld",
+     "label": "Inworld TTS",
+     "provider": "inworld",
+     "model": "inworld-tts-2",
+     "models": [
+      {
+       "id": "inworld-tts-2",
+       "label": "inworld-tts-2"
+      }
+     ],
+     "keyEnv": "INWORLD_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      22050,
+      24000,
+      32000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "soniox",
+     "label": "Soniox TTS",
+     "provider": "soniox",
+     "model": "tts-rt-v2",
+     "models": [
+      {
+       "id": "tts-rt-v2",
+       "label": "tts-rt-v2"
+      }
+     ],
+     "keyEnv": "SONIOX_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "murf_falcon_2",
+     "label": "Murf Falcon 2.1",
+     "provider": "murf_falcon_2",
+     "model": "falcon-2.1",
+     "models": [
+      {
+       "id": "falcon-2.1",
+       "label": "falcon-2.1"
+      }
+     ],
+     "keyEnv": "MURF_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "murf",
+     "label": "murf",
+     "provider": "murf",
+     "model": null,
+     "models": [],
+     "keyEnv": "MURF_API_KEY",
+     "implemented": false,
+     "unavailableReason": "Murf's older Gen 2 synthesis has no documented endpoint here; use the Murf Falcon entries",
+     "voices": [],
+     "sampleRates": [],
+     "priceNote": null
+    },
+    {
+     "key": "murf_falcon_2_hi",
+     "label": "Murf Falcon 2.1 (Hindi voices)",
+     "provider": "murf_falcon_2_hi",
+     "model": "falcon-2.1",
+     "models": [
+      {
+       "id": "falcon-2.1",
+       "label": "falcon-2.1"
+      }
+     ],
+     "keyEnv": "MURF_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "cartesia",
+     "label": "Cartesia Sonic-3",
+     "provider": "cartesia",
+     "model": "sonic-3",
+     "models": [
+      {
+       "id": "sonic-3",
+       "label": "sonic-3"
+      }
+     ],
+     "keyEnv": "CARTESIA_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [
+      {
+       "id": "katie",
+       "label": "katie"
+      },
+      {
+       "id": "brooke",
+       "label": "brooke"
+      },
+      {
+       "id": "kiefer",
+       "label": "kiefer"
+      },
+      {
+       "id": "riya",
+       "label": "riya"
+      },
+      {
+       "id": "cathy",
+       "label": "cathy"
+      },
+      {
+       "id": "tessa",
+       "label": "tessa"
+      },
+      {
+       "id": "cindy",
+       "label": "cindy"
+      },
+      {
+       "id": "kyle",
+       "label": "kyle"
+      },
+      {
+       "id": "carolina",
+       "label": "carolina"
+      },
+      {
+       "id": "southern_belle",
+       "label": "southern belle"
+      },
+      {
+       "id": "british_lady",
+       "label": "british lady"
+      },
+      {
+       "id": "arushi",
+       "label": "arushi"
+      },
+      {
+       "id": "celine",
+       "label": "celine"
+      }
+     ],
+     "sampleRates": [
+      8000,
+      16000,
+      22050,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "$37.38/1M characters (plan-specific)"
+    },
+    {
+     "key": "sarvam",
+     "label": "sarvam",
+     "provider": "sarvam",
+     "model": null,
+     "models": [],
+     "keyEnv": null,
+     "implemented": false,
+     "unavailableReason": "Not ported to the gateway yet",
+     "voices": [],
+     "sampleRates": [],
+     "priceNote": null
+    },
+    {
+     "key": "elevenlabs",
+     "label": "ElevenLabs",
+     "provider": "elevenlabs",
+     "model": "eleven_flash_v2_5",
+     "models": [
+      {
+       "id": "eleven_flash_v2_5",
+       "label": "eleven_flash_v2_5"
+      },
+      {
+       "id": "eleven_multilingual_v2",
+       "label": "eleven_multilingual_v2"
+      },
+      {
+       "id": "eleven_turbo_v2_5",
+       "label": "eleven_turbo_v2_5"
+      }
+     ],
+     "keyEnv": "ELEVENLABS_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      22050,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    }
+   ],
+   "languages": [
+    "en",
+    "en-US",
+    "en-AU",
+    "en-IN",
+    "hi",
+    "es",
+    "fr",
+    "de",
+    "pt",
+    "it",
+    "nl",
+    "ja",
+    "ko",
+    "ru",
+    "ta",
+    "te",
+    "bn",
+    "mr"
+   ]
+  },
+  "badEffort": {
+   "stt": [
+    {
+     "key": "assemblyai",
+     "label": "AssemblyAI",
+     "provider": "assemblyai",
+     "model": null,
+     "keyEnv": null,
+     "implemented": false,
+     "unavailableReason": "Not ported to the gateway yet",
+     "streaming": false,
+     "priceNote": null
+    },
+    {
+     "key": "nova-3",
+     "label": "Deepgram Nova-3",
+     "provider": "deepgram",
+     "model": "nova-3",
+     "keyEnv": "DEEPGRAM_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "nova-3-multi",
+     "label": "Deepgram Nova-3 (multilingual)",
+     "provider": "deepgram",
+     "model": "nova-3",
+     "keyEnv": "DEEPGRAM_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "$0.0058/min (plan-specific)"
+    },
+    {
+     "key": "flux",
+     "label": "Deepgram Flux",
+     "provider": "deepgram-flux",
+     "model": "flux-general-en",
+     "keyEnv": "DEEPGRAM_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "groq_whisper",
+     "label": "Groq Whisper large-v3-turbo",
+     "provider": "groq",
+     "model": "whisper-large-v3-turbo",
+     "keyEnv": "GROQ_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "$0.00185/min"
+    },
+    {
+     "key": "soniox",
+     "label": "Soniox",
+     "provider": "soniox",
+     "model": "stt-rt-v5",
+     "keyEnv": "SONIOX_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "stt-rt-v5",
+     "label": "Soniox stt-rt-v5",
+     "provider": "soniox",
+     "model": "stt-rt-v5",
+     "keyEnv": "SONIOX_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "ink-whisper",
+     "label": "Cartesia Ink-Whisper",
+     "provider": "cartesia",
+     "model": "ink-whisper",
+     "keyEnv": "CARTESIA_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "streaming": false,
+     "priceNote": "no price in the source catalog"
+    }
+   ],
+   "llm": [
+    {
+     "key": "groq_llama_3_3",
+     "label": "groq llama 3 3",
+     "provider": "groq",
+     "model": "qwen/qwen3.8-27b",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.4,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.8/1M input, $4/1M output tokens"
+    },
+    {
+     "key": "groq_gpt_oss_120b",
+     "label": "groq gpt oss 120b",
+     "provider": "groq",
+     "model": "openai/gpt-oss-120b",
+     "implemented": false,
+     "unavailableReason": "AI_LLM_REASONING_EFFORT must be 'low', 'medium' or 'high'",
+     "supportedParams": [],
+     "priceNote": null
+    },
+    {
+     "key": "groq_gpt_oss_20b",
+     "label": "groq gpt oss 20b",
+     "provider": "groq",
+     "model": "openai/gpt-oss-20b",
+     "implemented": false,
+     "unavailableReason": "AI_LLM_REASONING_EFFORT must be 'low', 'medium' or 'high'",
+     "supportedParams": [],
+     "priceNote": null
+    },
+    {
+     "key": "groq_qwen_3_6_27b",
+     "label": "groq qwen 3 6 27b",
+     "provider": "groq",
+     "model": "qwen/qwen3.8-27b",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.4,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.8/1M input, $4/1M output tokens"
+    },
+    {
+     "key": "groq_qwen_3_8_27b",
+     "label": "groq qwen 3 8 27b",
+     "provider": "groq",
+     "model": "qwen/qwen3.8-27b",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.4,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.8/1M input, $4/1M output tokens"
+    },
+    {
+     "key": "gemini_3_flash",
+     "label": "gemini 3 flash",
+     "provider": "gemini",
+     "model": "gemini-3.8-flash",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "openai_gpt_4_1_mini",
+     "label": "openai gpt 4 1 mini",
+     "provider": "openai",
+     "model": "gpt-4.1-mini",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "$0.4/1M input, $1.6/1M output tokens"
+    },
+    {
+     "key": "openai_gpt_5_2",
+     "label": "openai gpt 5 2",
+     "provider": "openai",
+     "model": "gpt-5.2",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "$1.75/1M input, $14/1M output tokens"
+    },
+    {
+     "key": "openai_gpt_5_4",
+     "label": "openai gpt 5 4",
+     "provider": "openai",
+     "model": "gpt-5.4",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "$2.5/1M input, $15/1M output tokens"
+    },
+    {
+     "key": "openai_gpt_5_4_mini",
+     "label": "openai gpt 5 4 mini",
+     "provider": "openai",
+     "model": "gpt-5.4-mini",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {},
+     "priceNote": "$0.75/1M input, $4.5/1M output tokens"
+    },
+    {
+     "key": "telnyx_kimi_k2_6",
+     "label": "telnyx kimi k2 6",
+     "provider": "telnyx",
+     "model": "moonshotai/Kimi-K2.6",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.3,
+      "region": "AUS",
+      "mode": "preferred",
+      "enable_thinking": false,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.665/1M input, $4/1M output tokens"
+    },
+    {
+     "key": "telnyx_deepseek_v4_flash_0731",
+     "label": "telnyx deepseek v4 flash 0731",
+     "provider": "telnyx",
+     "model": "deepseek-ai/DeepSeek-V4-Flash-0731",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.3,
+      "region": "AUS",
+      "mode": "preferred",
+      "enable_thinking": false,
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$0.13/1M input, $0.26/1M output tokens"
+    },
+    {
+     "key": "telnyx_llama_3_3_70b_instruct",
+     "label": "telnyx llama 3 3 70b instruct",
+     "provider": "telnyx",
+     "model": "meta-llama/Llama-3.3-70B-Instruct",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.3,
+      "region": "AUS",
+      "mode": "preferred"
+     },
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "telnyx_kimi_k3",
+     "label": "telnyx kimi k3",
+     "provider": "telnyx",
+     "model": "moonshotai/Kimi-K3",
+     "implemented": true,
+     "unavailableReason": null,
+     "supportedParams": [
+      "maxTokens"
+     ],
+     "fixedParams": {
+      "temperature": 0.3,
+      "region": "AUS",
+      "mode": "preferred",
+      "reasoning_effort": "none"
+     },
+     "priceNote": "$2.7/1M input, $13.5/1M output tokens"
+    }
+   ],
+   "tts": [
+    {
+     "key": "deepgram",
+     "label": "Deepgram Aura",
+     "provider": "deepgram",
+     "model": null,
+     "models": [],
+     "keyEnv": "DEEPGRAM_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [
+      {
+       "id": "aura-asteria-en",
+       "label": "aura-asteria-en"
+      },
+      {
+       "id": "aura-luna-en",
+       "label": "aura-luna-en"
+      },
+      {
+       "id": "aura-stella-en",
+       "label": "aura-stella-en"
+      },
+      {
+       "id": "aura-athena-en",
+       "label": "aura-athena-en"
+      },
+      {
+       "id": "aura-hera-en",
+       "label": "aura-hera-en"
+      },
+      {
+       "id": "aura-orion-en",
+       "label": "aura-orion-en"
+      },
+      {
+       "id": "aura-arcas-en",
+       "label": "aura-arcas-en"
+      },
+      {
+       "id": "aura-perseus-en",
+       "label": "aura-perseus-en"
+      },
+      {
+       "id": "aura-angus-en",
+       "label": "aura-angus-en"
+      },
+      {
+       "id": "aura-orpheus-en",
+       "label": "aura-orpheus-en"
+      },
+      {
+       "id": "aura-helios-en",
+       "label": "aura-helios-en"
+      },
+      {
+       "id": "aura-zeus-en",
+       "label": "aura-zeus-en"
+      }
+     ],
+     "sampleRates": [
+      8000,
+      16000,
+      24000,
+      32000,
+      48000
+     ],
+     "priceNote": "$30/1M characters"
+    },
+    {
+     "key": "inworld",
+     "label": "Inworld TTS",
+     "provider": "inworld",
+     "model": "inworld-tts-2",
+     "models": [
+      {
+       "id": "inworld-tts-2",
+       "label": "inworld-tts-2"
+      }
+     ],
+     "keyEnv": "INWORLD_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      22050,
+      24000,
+      32000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "soniox",
+     "label": "Soniox TTS",
+     "provider": "soniox",
+     "model": "tts-rt-v2",
+     "models": [
+      {
+       "id": "tts-rt-v2",
+       "label": "tts-rt-v2"
+      }
+     ],
+     "keyEnv": "SONIOX_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "murf_falcon_2",
+     "label": "Murf Falcon 2.1",
+     "provider": "murf_falcon_2",
+     "model": "falcon-2.1",
+     "models": [
+      {
+       "id": "falcon-2.1",
+       "label": "falcon-2.1"
+      }
+     ],
+     "keyEnv": "MURF_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "murf",
+     "label": "murf",
+     "provider": "murf",
+     "model": null,
+     "models": [],
+     "keyEnv": "MURF_API_KEY",
+     "implemented": false,
+     "unavailableReason": "Murf's older Gen 2 synthesis has no documented endpoint here; use the Murf Falcon entries",
+     "voices": [],
+     "sampleRates": [],
+     "priceNote": null
+    },
+    {
+     "key": "murf_falcon_2_hi",
+     "label": "Murf Falcon 2.1 (Hindi voices)",
+     "provider": "murf_falcon_2_hi",
+     "model": "falcon-2.1",
+     "models": [
+      {
+       "id": "falcon-2.1",
+       "label": "falcon-2.1"
+      }
+     ],
+     "keyEnv": "MURF_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    },
+    {
+     "key": "cartesia",
+     "label": "Cartesia Sonic-3",
+     "provider": "cartesia",
+     "model": "sonic-3",
+     "models": [
+      {
+       "id": "sonic-3",
+       "label": "sonic-3"
+      }
+     ],
+     "keyEnv": "CARTESIA_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [
+      {
+       "id": "katie",
+       "label": "katie"
+      },
+      {
+       "id": "brooke",
+       "label": "brooke"
+      },
+      {
+       "id": "kiefer",
+       "label": "kiefer"
+      },
+      {
+       "id": "riya",
+       "label": "riya"
+      },
+      {
+       "id": "cathy",
+       "label": "cathy"
+      },
+      {
+       "id": "tessa",
+       "label": "tessa"
+      },
+      {
+       "id": "cindy",
+       "label": "cindy"
+      },
+      {
+       "id": "kyle",
+       "label": "kyle"
+      },
+      {
+       "id": "carolina",
+       "label": "carolina"
+      },
+      {
+       "id": "southern_belle",
+       "label": "southern belle"
+      },
+      {
+       "id": "british_lady",
+       "label": "british lady"
+      },
+      {
+       "id": "arushi",
+       "label": "arushi"
+      },
+      {
+       "id": "celine",
+       "label": "celine"
+      }
+     ],
+     "sampleRates": [
+      8000,
+      16000,
+      22050,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "$37.38/1M characters (plan-specific)"
+    },
+    {
+     "key": "sarvam",
+     "label": "sarvam",
+     "provider": "sarvam",
+     "model": null,
+     "models": [],
+     "keyEnv": null,
+     "implemented": false,
+     "unavailableReason": "Not ported to the gateway yet",
+     "voices": [],
+     "sampleRates": [],
+     "priceNote": null
+    },
+    {
+     "key": "elevenlabs",
+     "label": "ElevenLabs",
+     "provider": "elevenlabs",
+     "model": "eleven_flash_v2_5",
+     "models": [
+      {
+       "id": "eleven_flash_v2_5",
+       "label": "eleven_flash_v2_5"
+      },
+      {
+       "id": "eleven_multilingual_v2",
+       "label": "eleven_multilingual_v2"
+      },
+      {
+       "id": "eleven_turbo_v2_5",
+       "label": "eleven_turbo_v2_5"
+      }
+     ],
+     "keyEnv": "ELEVENLABS_API_KEY",
+     "implemented": true,
+     "unavailableReason": null,
+     "voices": [],
+     "sampleRates": [
+      8000,
+      16000,
+      22050,
+      24000,
+      44100,
+      48000
+     ],
+     "priceNote": "no price in the source catalog"
+    }
+   ],
+   "languages": [
+    "en",
+    "en-US",
+    "en-AU",
+    "en-IN",
+    "hi",
+    "es",
+    "fr",
+    "de",
+    "pt",
+    "it",
+    "nl",
+    "ja",
+    "ko",
+    "ru",
+    "ta",
+    "te",
+    "bn",
+    "mr"
+   ]
+  }
+ },
+ "specs": {
+  "none/groq_llama_3_3": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "none/groq_gpt_oss_120b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "openai/gpt-oss-120b",
+   "body": {
+    "temperature": 0.15,
+    "reasoning_effort": "low"
+   },
+   "reasoningTokenAllowance": 1024,
+   "toolCalling": true
+  },
+  "none/groq_gpt_oss_20b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "openai/gpt-oss-20b",
+   "body": {
+    "temperature": 0.15,
+    "reasoning_effort": "low"
+   },
+   "reasoningTokenAllowance": 1024,
+   "toolCalling": true
+  },
+  "none/groq_qwen_3_6_27b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "none/groq_qwen_3_8_27b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "none/gemini_3_flash": {
+   "provider": "gemini",
+   "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+   "apiKeyEnv": "GEMINI_API_KEY",
+   "model": "gemini-3.8-flash",
+   "body": {},
+   "toolCalling": true
+  },
+  "none/openai_gpt_4_1_mini": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-4.1-mini",
+   "body": {},
+   "toolCalling": true
+  },
+  "none/openai_gpt_5_2": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.2",
+   "body": {},
+   "toolCalling": true
+  },
+  "none/openai_gpt_5_4": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.4",
+   "body": {},
+   "toolCalling": true
+  },
+  "none/openai_gpt_5_4_mini": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.4-mini",
+   "body": {},
+   "toolCalling": true
+  },
+  "none/telnyx_kimi_k2_6": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "moonshotai/Kimi-K2.6",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred",
+    "enable_thinking": false,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "none/telnyx_deepseek_v4_flash_0731": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "deepseek-ai/DeepSeek-V4-Flash-0731",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred",
+    "enable_thinking": false,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "none/telnyx_llama_3_3_70b_instruct": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "meta-llama/Llama-3.3-70B-Instruct",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred"
+   },
+   "toolCalling": false
+  },
+  "none/telnyx_kimi_k3": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "moonshotai/Kimi-K3",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred",
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "reasoning/groq_llama_3_3": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "reasoning/groq_gpt_oss_120b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "openai/gpt-oss-120b",
+   "body": {
+    "temperature": 0.15,
+    "reasoning_effort": "high"
+   },
+   "reasoningTokenAllowance": 2048,
+   "toolCalling": true
+  },
+  "reasoning/groq_gpt_oss_20b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "openai/gpt-oss-20b",
+   "body": {
+    "temperature": 0.15,
+    "reasoning_effort": "high"
+   },
+   "reasoningTokenAllowance": 2048,
+   "toolCalling": true
+  },
+  "reasoning/groq_qwen_3_6_27b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "reasoning/groq_qwen_3_8_27b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "reasoning/gemini_3_flash": {
+   "provider": "gemini",
+   "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+   "apiKeyEnv": "GEMINI_API_KEY",
+   "model": "gemini-3.8-flash",
+   "body": {},
+   "toolCalling": true
+  },
+  "reasoning/openai_gpt_4_1_mini": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-4.1-mini",
+   "body": {},
+   "toolCalling": true
+  },
+  "reasoning/openai_gpt_5_2": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.2",
+   "body": {},
+   "toolCalling": true
+  },
+  "reasoning/openai_gpt_5_4": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.4",
+   "body": {},
+   "toolCalling": true
+  },
+  "reasoning/openai_gpt_5_4_mini": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.4-mini",
+   "body": {},
+   "toolCalling": true
+  },
+  "reasoning/telnyx_kimi_k2_6": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "moonshotai/Kimi-K2.6",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred",
+    "enable_thinking": false,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "reasoning/telnyx_deepseek_v4_flash_0731": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "deepseek-ai/DeepSeek-V4-Flash-0731",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred",
+    "enable_thinking": false,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "reasoning/telnyx_llama_3_3_70b_instruct": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "meta-llama/Llama-3.3-70B-Instruct",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred"
+   },
+   "toolCalling": false
+  },
+  "reasoning/telnyx_kimi_k3": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "moonshotai/Kimi-K3",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred",
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "strict/groq_llama_3_3": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "strict/groq_gpt_oss_120b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "openai/gpt-oss-120b",
+   "body": {
+    "temperature": 0.15,
+    "reasoning_effort": "low"
+   },
+   "reasoningTokenAllowance": 1024,
+   "toolCalling": true
+  },
+  "strict/groq_gpt_oss_20b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "openai/gpt-oss-20b",
+   "body": {
+    "temperature": 0.15,
+    "reasoning_effort": "low"
+   },
+   "reasoningTokenAllowance": 1024,
+   "toolCalling": true
+  },
+  "strict/groq_qwen_3_6_27b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "strict/groq_qwen_3_8_27b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "strict/gemini_3_flash": {
+   "provider": "gemini",
+   "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+   "apiKeyEnv": "GEMINI_API_KEY",
+   "model": "gemini-3.8-flash",
+   "body": {},
+   "toolCalling": true
+  },
+  "strict/openai_gpt_4_1_mini": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-4.1-mini",
+   "body": {},
+   "toolCalling": true
+  },
+  "strict/openai_gpt_5_2": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.2",
+   "body": {},
+   "toolCalling": true
+  },
+  "strict/openai_gpt_5_4": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.4",
+   "body": {},
+   "toolCalling": true
+  },
+  "strict/openai_gpt_5_4_mini": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.4-mini",
+   "body": {},
+   "toolCalling": true
+  },
+  "strict/telnyx_kimi_k2_6": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "moonshotai/Kimi-K2.6",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "strict",
+    "enable_thinking": false,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "strict/telnyx_deepseek_v4_flash_0731": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "deepseek-ai/DeepSeek-V4-Flash-0731",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "strict",
+    "enable_thinking": false,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "strict/telnyx_llama_3_3_70b_instruct": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "meta-llama/Llama-3.3-70B-Instruct",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "strict"
+   },
+   "toolCalling": false
+  },
+  "strict/telnyx_kimi_k3": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "moonshotai/Kimi-K3",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "strict",
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "badEffort/groq_llama_3_3": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "badEffort/groq_gpt_oss_120b": {
+   "error": "AI_LLM_REASONING_EFFORT must be 'low', 'medium' or 'high'"
+  },
+  "badEffort/groq_gpt_oss_20b": {
+   "error": "AI_LLM_REASONING_EFFORT must be 'low', 'medium' or 'high'"
+  },
+  "badEffort/groq_qwen_3_6_27b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "badEffort/groq_qwen_3_8_27b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "badEffort/gemini_3_flash": {
+   "provider": "gemini",
+   "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+   "apiKeyEnv": "GEMINI_API_KEY",
+   "model": "gemini-3.8-flash",
+   "body": {},
+   "toolCalling": true
+  },
+  "badEffort/openai_gpt_4_1_mini": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-4.1-mini",
+   "body": {},
+   "toolCalling": true
+  },
+  "badEffort/openai_gpt_5_2": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.2",
+   "body": {},
+   "toolCalling": true
+  },
+  "badEffort/openai_gpt_5_4": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.4",
+   "body": {},
+   "toolCalling": true
+  },
+  "badEffort/openai_gpt_5_4_mini": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.4-mini",
+   "body": {},
+   "toolCalling": true
+  },
+  "badEffort/telnyx_kimi_k2_6": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "moonshotai/Kimi-K2.6",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred",
+    "enable_thinking": false,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "badEffort/telnyx_deepseek_v4_flash_0731": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "deepseek-ai/DeepSeek-V4-Flash-0731",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred",
+    "enable_thinking": false,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "badEffort/telnyx_llama_3_3_70b_instruct": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "meta-llama/Llama-3.3-70B-Instruct",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred"
+   },
+   "toolCalling": false
+  },
+  "badEffort/telnyx_kimi_k3": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "moonshotai/Kimi-K3",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred",
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "badTokens/groq_llama_3_3": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "badTokens/groq_gpt_oss_120b": {
+   "error": "AI_LLM_REASONING_TOKENS must be a whole number from 0 to 8192"
+  },
+  "badTokens/groq_gpt_oss_20b": {
+   "error": "AI_LLM_REASONING_TOKENS must be a whole number from 0 to 8192"
+  },
+  "badTokens/groq_qwen_3_6_27b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "badTokens/groq_qwen_3_8_27b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "badTokens/gemini_3_flash": {
+   "provider": "gemini",
+   "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+   "apiKeyEnv": "GEMINI_API_KEY",
+   "model": "gemini-3.8-flash",
+   "body": {},
+   "toolCalling": true
+  },
+  "badTokens/openai_gpt_4_1_mini": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-4.1-mini",
+   "body": {},
+   "toolCalling": true
+  },
+  "badTokens/openai_gpt_5_2": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.2",
+   "body": {},
+   "toolCalling": true
+  },
+  "badTokens/openai_gpt_5_4": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.4",
+   "body": {},
+   "toolCalling": true
+  },
+  "badTokens/openai_gpt_5_4_mini": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.4-mini",
+   "body": {},
+   "toolCalling": true
+  },
+  "badTokens/telnyx_kimi_k2_6": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "moonshotai/Kimi-K2.6",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred",
+    "enable_thinking": false,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "badTokens/telnyx_deepseek_v4_flash_0731": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "deepseek-ai/DeepSeek-V4-Flash-0731",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred",
+    "enable_thinking": false,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "badTokens/telnyx_llama_3_3_70b_instruct": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "meta-llama/Llama-3.3-70B-Instruct",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred"
+   },
+   "toolCalling": false
+  },
+  "badTokens/telnyx_kimi_k3": {
+   "provider": "telnyx",
+   "baseUrl": "https://api.telnyx.com/v2/ai/openai",
+   "apiKeyEnv": "TELNYX_API_KEY",
+   "model": "moonshotai/Kimi-K3",
+   "body": {
+    "temperature": 0.3,
+    "region": "AUS",
+    "mode": "preferred",
+    "reasoning_effort": "none"
+   },
+   "toolCalling": false
+  },
+  "badMode/groq_llama_3_3": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "badMode/groq_gpt_oss_120b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "openai/gpt-oss-120b",
+   "body": {
+    "temperature": 0.15,
+    "reasoning_effort": "low"
+   },
+   "reasoningTokenAllowance": 1024,
+   "toolCalling": true
+  },
+  "badMode/groq_gpt_oss_20b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "openai/gpt-oss-20b",
+   "body": {
+    "temperature": 0.15,
+    "reasoning_effort": "low"
+   },
+   "reasoningTokenAllowance": 1024,
+   "toolCalling": true
+  },
+  "badMode/groq_qwen_3_6_27b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "badMode/groq_qwen_3_8_27b": {
+   "provider": "groq",
+   "baseUrl": "https://api.groq.com/openai/v1",
+   "apiKeyEnv": "GROQ_API_KEY",
+   "model": "qwen/qwen3.8-27b",
+   "body": {
+    "temperature": 0.4,
+    "reasoning_effort": "none"
+   },
+   "toolCalling": true
+  },
+  "badMode/gemini_3_flash": {
+   "provider": "gemini",
+   "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+   "apiKeyEnv": "GEMINI_API_KEY",
+   "model": "gemini-3.8-flash",
+   "body": {},
+   "toolCalling": true
+  },
+  "badMode/openai_gpt_4_1_mini": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-4.1-mini",
+   "body": {},
+   "toolCalling": true
+  },
+  "badMode/openai_gpt_5_2": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.2",
+   "body": {},
+   "toolCalling": true
+  },
+  "badMode/openai_gpt_5_4": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.4",
+   "body": {},
+   "toolCalling": true
+  },
+  "badMode/openai_gpt_5_4_mini": {
+   "provider": "openai",
+   "baseUrl": "https://api.openai.com/v1",
+   "apiKeyEnv": "OPENAI_API_KEY",
+   "model": "gpt-5.4-mini",
+   "body": {},
+   "toolCalling": true
+  },
+  "badMode/telnyx_kimi_k2_6": {
+   "error": "TELNYX_LLM_REGION_MODE must be preferred or strict"
+  },
+  "badMode/telnyx_deepseek_v4_flash_0731": {
+   "error": "TELNYX_LLM_REGION_MODE must be preferred or strict"
+  },
+  "badMode/telnyx_llama_3_3_70b_instruct": {
+   "error": "TELNYX_LLM_REGION_MODE must be preferred or strict"
+  },
+  "badMode/telnyx_kimi_k3": {
+   "error": "TELNYX_LLM_REGION_MODE must be preferred or strict"
+  }
+ },
+ "resolve": {
+  "groq_llama_3_3": "groq_llama_3_3",
+  "groq_gpt_oss_120b": "groq_gpt_oss_120b",
+  "groq_gpt_oss_20b": "groq_gpt_oss_20b",
+  "groq_qwen_3_6_27b": "groq_qwen_3_6_27b",
+  "groq_qwen_3_8_27b": "groq_qwen_3_8_27b",
+  "gemini_3_flash": "gemini_3_flash",
+  "openai_gpt_4_1_mini": "openai_gpt_4_1_mini",
+  "openai_gpt_5_2": "openai_gpt_5_2",
+  "openai_gpt_5_4": "openai_gpt_5_4",
+  "openai_gpt_5_4_mini": "openai_gpt_5_4_mini",
+  "telnyx_kimi_k2_6": "telnyx_kimi_k2_6",
+  "telnyx_deepseek_v4_flash_0731": "telnyx_deepseek_v4_flash_0731",
+  "telnyx_llama_3_3_70b_instruct": "telnyx_llama_3_3_70b_instruct",
+  "telnyx_kimi_k3": "telnyx_kimi_k3",
+  "qwen3.8-27b": "groq_qwen_3_8_27b",
+  "qwen/qwen3.8-27b": "groq_qwen_3_8_27b",
+  "gpt-oss-120b": "groq_gpt_oss_120b",
+  "openai/gpt-oss-120b": "groq_gpt_oss_120b",
+  "moonshotai/Kimi-K3": "telnyx_kimi_k3",
+  "moonshotai/Kimi K3": "telnyx_kimi_k3",
+  "moonshotai/kimi-k3": "telnyx_kimi_k3",
+  "telnyx/moonshotai/Kimi-K3": "telnyx_kimi_k3",
+  "telnyx/moonshotai/kimi-k3": "telnyx_kimi_k3",
+  "telnyx-kimi-k3": "telnyx_kimi_k3",
+  "kimi-k3": "telnyx_kimi_k3",
+  "kimi_k3": "telnyx_kimi_k3",
+  "Llama-3.3-70B-Instruct": "telnyx_llama_3_3_70b_instruct",
+  "llama-3.3-70b-instruct": "telnyx_llama_3_3_70b_instruct",
+  "meta-llama/Llama-3.3-70B-Instruct": "telnyx_llama_3_3_70b_instruct",
+  "meta-llama/llama-3.3-70b-instruct": "telnyx_llama_3_3_70b_instruct",
+  "telnyx/meta-llama/Llama-3.3-70B-Instruct": "telnyx_llama_3_3_70b_instruct",
+  "telnyx-llama-3-3-70b-instruct": "telnyx_llama_3_3_70b_instruct",
+  "telnyx_llama_3_3": "telnyx_llama_3_3_70b_instruct",
+  "llama-3.3-70b": "telnyx_llama_3_3_70b_instruct",
+  "moonshotai/Kimi-K2.6": "telnyx_kimi_k2_6",
+  "deepseek-ai/DeepSeek-V4-Flash-0731": "telnyx_deepseek_v4_flash_0731",
+  "KIMI-K3": "telnyx_kimi_k3",
+  "GROQ_QWEN_3_8_27B": "groq_qwen_3_8_27b",
+  "nope": null,
+  " telnyx_kimi_k3 ": "telnyx_kimi_k3"
+ },
+ "prices": {
+  "llm/groq_llama_3_3": "$0.8/1M input, $4/1M output tokens",
+  "llm/groq_gpt_oss_120b": "$0.15/1M input, $0.6/1M output tokens",
+  "llm/groq_gpt_oss_20b": "$0.075/1M input, $0.3/1M output tokens",
+  "llm/groq_qwen_3_6_27b": "$0.8/1M input, $4/1M output tokens",
+  "llm/groq_qwen_3_8_27b": "$0.8/1M input, $4/1M output tokens",
+  "llm/gemini_3_flash": "no price in the source catalog",
+  "llm/openai_gpt_4_1_mini": "$0.4/1M input, $1.6/1M output tokens",
+  "llm/openai_gpt_5_2": "$1.75/1M input, $14/1M output tokens",
+  "llm/openai_gpt_5_4": "$2.5/1M input, $15/1M output tokens",
+  "llm/openai_gpt_5_4_mini": "$0.75/1M input, $4.5/1M output tokens",
+  "llm/telnyx_kimi_k2_6": "$0.665/1M input, $4/1M output tokens",
+  "llm/telnyx_deepseek_v4_flash_0731": "$0.13/1M input, $0.26/1M output tokens",
+  "llm/telnyx_llama_3_3_70b_instruct": "no price in the source catalog",
+  "llm/telnyx_kimi_k3": "$2.7/1M input, $13.5/1M output tokens",
+  "stt/assemblyai": "no price in the source catalog",
+  "stt/nova-3": "no price in the source catalog",
+  "stt/nova-3-multi": "$0.0058/min (plan-specific)",
+  "stt/flux": "no price in the source catalog",
+  "stt/groq_whisper": "$0.00185/min",
+  "stt/soniox": "no price in the source catalog",
+  "stt/stt-rt-v5": "no price in the source catalog",
+  "stt/ink-whisper": "no price in the source catalog",
+  "tts/deepgram": "$30/1M characters",
+  "tts/inworld": "no price in the source catalog",
+  "tts/soniox": "no price in the source catalog",
+  "tts/murf_falcon_2": "no price in the source catalog",
+  "tts/murf": "no price in the source catalog",
+  "tts/murf_falcon_2_hi": "no price in the source catalog",
+  "tts/cartesia": "$37.38/1M characters (plan-specific)",
+  "tts/sarvam": "no price in the source catalog",
+  "tts/elevenlabs": "no price in the source catalog"
+ },
+ "costs": {
+  "groq_llama_3_3|groq_whisper|cartesia": 0.171294,
+  "groq_llama_3_3|groq_whisper|deepgram": 0.139405,
+  "groq_llama_3_3|groq_whisper|inworld": null,
+  "groq_llama_3_3|nova-3-multi|cartesia": 0.179523,
+  "groq_llama_3_3|nova-3-multi|deepgram": 0.147634,
+  "groq_llama_3_3|nova-3-multi|inworld": null,
+  "groq_llama_3_3|nova-3|cartesia": null,
+  "groq_llama_3_3|nova-3|deepgram": null,
+  "groq_llama_3_3|nova-3|inworld": null,
+  "groq_llama_3_3|soniox|cartesia": null,
+  "groq_llama_3_3|soniox|deepgram": null,
+  "groq_llama_3_3|soniox|inworld": null,
+  "groq_gpt_oss_120b|groq_whisper|cartesia": 0.166365,
+  "groq_gpt_oss_120b|groq_whisper|deepgram": 0.134476,
+  "groq_gpt_oss_120b|groq_whisper|inworld": null,
+  "groq_gpt_oss_120b|nova-3-multi|cartesia": 0.174594,
+  "groq_gpt_oss_120b|nova-3-multi|deepgram": 0.142705,
+  "groq_gpt_oss_120b|nova-3-multi|inworld": null,
+  "groq_gpt_oss_120b|nova-3|cartesia": null,
+  "groq_gpt_oss_120b|nova-3|deepgram": null,
+  "groq_gpt_oss_120b|nova-3|inworld": null,
+  "groq_gpt_oss_120b|soniox|cartesia": null,
+  "groq_gpt_oss_120b|soniox|deepgram": null,
+  "groq_gpt_oss_120b|soniox|inworld": null,
+  "groq_gpt_oss_20b|groq_whisper|cartesia": 0.165869,
+  "groq_gpt_oss_20b|groq_whisper|deepgram": 0.13398,
+  "groq_gpt_oss_20b|groq_whisper|inworld": null,
+  "groq_gpt_oss_20b|nova-3-multi|cartesia": 0.174098,
+  "groq_gpt_oss_20b|nova-3-multi|deepgram": 0.142209,
+  "groq_gpt_oss_20b|nova-3-multi|inworld": null,
+  "groq_gpt_oss_20b|nova-3|cartesia": null,
+  "groq_gpt_oss_20b|nova-3|deepgram": null,
+  "groq_gpt_oss_20b|nova-3|inworld": null,
+  "groq_gpt_oss_20b|soniox|cartesia": null,
+  "groq_gpt_oss_20b|soniox|deepgram": null,
+  "groq_gpt_oss_20b|soniox|inworld": null,
+  "groq_qwen_3_6_27b|groq_whisper|cartesia": 0.171294,
+  "groq_qwen_3_6_27b|groq_whisper|deepgram": 0.139405,
+  "groq_qwen_3_6_27b|groq_whisper|inworld": null,
+  "groq_qwen_3_6_27b|nova-3-multi|cartesia": 0.179523,
+  "groq_qwen_3_6_27b|nova-3-multi|deepgram": 0.147634,
+  "groq_qwen_3_6_27b|nova-3-multi|inworld": null,
+  "groq_qwen_3_6_27b|nova-3|cartesia": null,
+  "groq_qwen_3_6_27b|nova-3|deepgram": null,
+  "groq_qwen_3_6_27b|nova-3|inworld": null,
+  "groq_qwen_3_6_27b|soniox|cartesia": null,
+  "groq_qwen_3_6_27b|soniox|deepgram": null,
+  "groq_qwen_3_6_27b|soniox|inworld": null,
+  "groq_qwen_3_8_27b|groq_whisper|cartesia": 0.171294,
+  "groq_qwen_3_8_27b|groq_whisper|deepgram": 0.139405,
+  "groq_qwen_3_8_27b|groq_whisper|inworld": null,
+  "groq_qwen_3_8_27b|nova-3-multi|cartesia": 0.179523,
+  "groq_qwen_3_8_27b|nova-3-multi|deepgram": 0.147634,
+  "groq_qwen_3_8_27b|nova-3-multi|inworld": null,
+  "groq_qwen_3_8_27b|nova-3|cartesia": null,
+  "groq_qwen_3_8_27b|nova-3|deepgram": null,
+  "groq_qwen_3_8_27b|nova-3|inworld": null,
+  "groq_qwen_3_8_27b|soniox|cartesia": null,
+  "groq_qwen_3_8_27b|soniox|deepgram": null,
+  "groq_qwen_3_8_27b|soniox|inworld": null,
+  "gemini_3_flash|groq_whisper|cartesia": null,
+  "gemini_3_flash|groq_whisper|deepgram": null,
+  "gemini_3_flash|groq_whisper|inworld": null,
+  "gemini_3_flash|nova-3-multi|cartesia": null,
+  "gemini_3_flash|nova-3-multi|deepgram": null,
+  "gemini_3_flash|nova-3-multi|inworld": null,
+  "gemini_3_flash|nova-3|cartesia": null,
+  "gemini_3_flash|nova-3|deepgram": null,
+  "gemini_3_flash|nova-3|inworld": null,
+  "gemini_3_flash|soniox|cartesia": null,
+  "gemini_3_flash|soniox|deepgram": null,
+  "gemini_3_flash|soniox|inworld": null,
+  "openai_gpt_4_1_mini|groq_whisper|cartesia": 0.168018,
+  "openai_gpt_4_1_mini|groq_whisper|deepgram": 0.136129,
+  "openai_gpt_4_1_mini|groq_whisper|inworld": null,
+  "openai_gpt_4_1_mini|nova-3-multi|cartesia": 0.176247,
+  "openai_gpt_4_1_mini|nova-3-multi|deepgram": 0.144358,
+  "openai_gpt_4_1_mini|nova-3-multi|inworld": null,
+  "openai_gpt_4_1_mini|nova-3|cartesia": null,
+  "openai_gpt_4_1_mini|nova-3|deepgram": null,
+  "openai_gpt_4_1_mini|nova-3|inworld": null,
+  "openai_gpt_4_1_mini|soniox|cartesia": null,
+  "openai_gpt_4_1_mini|soniox|deepgram": null,
+  "openai_gpt_4_1_mini|soniox|inworld": null,
+  "openai_gpt_5_2|groq_whisper|cartesia": 0.182467,
+  "openai_gpt_5_2|groq_whisper|deepgram": 0.150578,
+  "openai_gpt_5_2|groq_whisper|inworld": null,
+  "openai_gpt_5_2|nova-3-multi|cartesia": 0.190696,
+  "openai_gpt_5_2|nova-3-multi|deepgram": 0.158807,
+  "openai_gpt_5_2|nova-3-multi|inworld": null,
+  "openai_gpt_5_2|nova-3|cartesia": null,
+  "openai_gpt_5_2|nova-3|deepgram": null,
+  "openai_gpt_5_2|nova-3|inworld": null,
+  "openai_gpt_5_2|soniox|cartesia": null,
+  "openai_gpt_5_2|soniox|deepgram": null,
+  "openai_gpt_5_2|soniox|inworld": null,
+  "openai_gpt_5_4|groq_whisper|cartesia": 0.185848,
+  "openai_gpt_5_4|groq_whisper|deepgram": 0.153959,
+  "openai_gpt_5_4|groq_whisper|inworld": null,
+  "openai_gpt_5_4|nova-3-multi|cartesia": 0.194077,
+  "openai_gpt_5_4|nova-3-multi|deepgram": 0.162188,
+  "openai_gpt_5_4|nova-3-multi|inworld": null,
+  "openai_gpt_5_4|nova-3|cartesia": null,
+  "openai_gpt_5_4|nova-3|deepgram": null,
+  "openai_gpt_5_4|nova-3|inworld": null,
+  "openai_gpt_5_4|soniox|cartesia": null,
+  "openai_gpt_5_4|soniox|deepgram": null,
+  "openai_gpt_5_4|soniox|inworld": null,
+  "openai_gpt_5_4_mini|groq_whisper|cartesia": 0.171516,
+  "openai_gpt_5_4_mini|groq_whisper|deepgram": 0.139627,
+  "openai_gpt_5_4_mini|groq_whisper|inworld": null,
+  "openai_gpt_5_4_mini|nova-3-multi|cartesia": 0.179745,
+  "openai_gpt_5_4_mini|nova-3-multi|deepgram": 0.147856,
+  "openai_gpt_5_4_mini|nova-3-multi|inworld": null,
+  "openai_gpt_5_4_mini|nova-3|cartesia": null,
+  "openai_gpt_5_4_mini|nova-3|deepgram": null,
+  "openai_gpt_5_4_mini|nova-3|inworld": null,
+  "openai_gpt_5_4_mini|soniox|cartesia": null,
+  "openai_gpt_5_4_mini|soniox|deepgram": null,
+  "openai_gpt_5_4_mini|soniox|inworld": null,
+  "telnyx_kimi_k2_6|groq_whisper|cartesia": 0.170827,
+  "telnyx_kimi_k2_6|groq_whisper|deepgram": 0.138938,
+  "telnyx_kimi_k2_6|groq_whisper|inworld": null,
+  "telnyx_kimi_k2_6|nova-3-multi|cartesia": 0.179057,
+  "telnyx_kimi_k2_6|nova-3-multi|deepgram": 0.147168,
+  "telnyx_kimi_k2_6|nova-3-multi|inworld": null,
+  "telnyx_kimi_k2_6|nova-3|cartesia": null,
+  "telnyx_kimi_k2_6|nova-3|deepgram": null,
+  "telnyx_kimi_k2_6|nova-3|inworld": null,
+  "telnyx_kimi_k2_6|soniox|cartesia": null,
+  "telnyx_kimi_k2_6|soniox|deepgram": null,
+  "telnyx_kimi_k2_6|soniox|inworld": null,
+  "telnyx_deepseek_v4_flash_0731|groq_whisper|cartesia": 0.166028,
+  "telnyx_deepseek_v4_flash_0731|groq_whisper|deepgram": 0.134139,
+  "telnyx_deepseek_v4_flash_0731|groq_whisper|inworld": null,
+  "telnyx_deepseek_v4_flash_0731|nova-3-multi|cartesia": 0.174257,
+  "telnyx_deepseek_v4_flash_0731|nova-3-multi|deepgram": 0.142368,
+  "telnyx_deepseek_v4_flash_0731|nova-3-multi|inworld": null,
+  "telnyx_deepseek_v4_flash_0731|nova-3|cartesia": null,
+  "telnyx_deepseek_v4_flash_0731|nova-3|deepgram": null,
+  "telnyx_deepseek_v4_flash_0731|nova-3|inworld": null,
+  "telnyx_deepseek_v4_flash_0731|soniox|cartesia": null,
+  "telnyx_deepseek_v4_flash_0731|soniox|deepgram": null,
+  "telnyx_deepseek_v4_flash_0731|soniox|inworld": null,
+  "telnyx_llama_3_3_70b_instruct|groq_whisper|cartesia": null,
+  "telnyx_llama_3_3_70b_instruct|groq_whisper|deepgram": null,
+  "telnyx_llama_3_3_70b_instruct|groq_whisper|inworld": null,
+  "telnyx_llama_3_3_70b_instruct|nova-3-multi|cartesia": null,
+  "telnyx_llama_3_3_70b_instruct|nova-3-multi|deepgram": null,
+  "telnyx_llama_3_3_70b_instruct|nova-3-multi|inworld": null,
+  "telnyx_llama_3_3_70b_instruct|nova-3|cartesia": null,
+  "telnyx_llama_3_3_70b_instruct|nova-3|deepgram": null,
+  "telnyx_llama_3_3_70b_instruct|nova-3|inworld": null,
+  "telnyx_llama_3_3_70b_instruct|soniox|cartesia": null,
+  "telnyx_llama_3_3_70b_instruct|soniox|deepgram": null,
+  "telnyx_llama_3_3_70b_instruct|soniox|inworld": null,
+  "telnyx_kimi_k3|groq_whisper|cartesia": 0.185356,
+  "telnyx_kimi_k3|groq_whisper|deepgram": 0.153467,
+  "telnyx_kimi_k3|groq_whisper|inworld": null,
+  "telnyx_kimi_k3|nova-3-multi|cartesia": 0.193585,
+  "telnyx_kimi_k3|nova-3-multi|deepgram": 0.161696,
+  "telnyx_kimi_k3|nova-3-multi|inworld": null,
+  "telnyx_kimi_k3|nova-3|cartesia": null,
+  "telnyx_kimi_k3|nova-3|deepgram": null,
+  "telnyx_kimi_k3|nova-3|inworld": null,
+  "telnyx_kimi_k3|soniox|cartesia": null,
+  "telnyx_kimi_k3|soniox|deepgram": null,
+  "telnyx_kimi_k3|soniox|inworld": null,
+  "llmOnly": 0.01
+ },
+ "tables": {
+  "STT_CATALOG": {
+   "assemblyai": {
+    "provider": "assemblyai",
+    "model": null,
+    "implemented": false
+   },
+   "nova-3": {
+    "provider": "deepgram",
+    "model": "nova-3",
+    "implemented": true
+   },
+   "nova-3-multi": {
+    "provider": "deepgram",
+    "model": "nova-3",
+    "implemented": true
+   },
+   "flux": {
+    "provider": "deepgram-flux",
+    "model": "flux-general-en",
+    "implemented": true
+   },
+   "groq_whisper": {
+    "provider": "groq",
+    "model": "whisper-large-v3-turbo",
+    "implemented": true
+   },
+   "soniox": {
+    "provider": "soniox",
+    "model": "stt-rt-v5",
+    "implemented": true
+   },
+   "stt-rt-v5": {
+    "provider": "soniox",
+    "model": "stt-rt-v5",
+    "implemented": true
+   },
+   "ink-whisper": {
+    "provider": "cartesia",
+    "model": "ink-whisper",
+    "implemented": true
+   }
+  },
+  "TTS_CATALOG": {
+   "deepgram": {
+    "defaultVoice": "flux-alexis-en",
+    "implemented": true
+   },
+   "inworld": {
+    "defaultVoice": "Sarah",
+    "implemented": true
+   },
+   "soniox": {
+    "defaultVoice": "Adrian",
+    "implemented": true
+   },
+   "murf_falcon_2": {
+    "defaultVoice": "en-US-natalie",
+    "implemented": true
+   },
+   "murf": {
+    "defaultVoice": "Natalie",
+    "implemented": false
+   },
+   "murf_falcon_2_hi": {
+    "defaultVoice": "Pooja",
+    "implemented": true
+   },
+   "cartesia": {
+    "defaultVoice": "katie",
+    "implemented": true
+   },
+   "sarvam": {
+    "defaultVoice": "shubh",
+    "implemented": false
+   },
+   "elevenlabs": {
+    "defaultVoice": "cgSgspJ2msm6clMCkdW9",
+    "implemented": true
+   }
+  },
+  "STT_KEY_ENV": {
+   "deepgram": "DEEPGRAM_API_KEY",
+   "deepgram-flux": "DEEPGRAM_API_KEY",
+   "groq": "GROQ_API_KEY",
+   "soniox": "SONIOX_API_KEY",
+   "cartesia": "CARTESIA_API_KEY",
+   "assemblyai": null
+  },
+  "TTS_KEY_ENV": {
+   "deepgram": "DEEPGRAM_API_KEY",
+   "cartesia": "CARTESIA_API_KEY",
+   "elevenlabs": "ELEVENLABS_API_KEY",
+   "murf_falcon_2": "MURF_API_KEY",
+   "murf_falcon_2_hi": "MURF_API_KEY",
+   "murf": "MURF_API_KEY",
+   "inworld": "INWORLD_API_KEY",
+   "soniox": "SONIOX_API_KEY"
+  },
+  "TTS_MODELS": {
+   "cartesia": [
+    "sonic-3"
+   ],
+   "elevenlabs": [
+    "eleven_flash_v2_5",
+    "eleven_multilingual_v2",
+    "eleven_turbo_v2_5"
+   ],
+   "murf_falcon_2": [
+    "falcon-2.1"
+   ],
+   "murf_falcon_2_hi": [
+    "falcon-2.1"
+   ],
+   "soniox": [
+    "tts-rt-v2"
+   ],
+   "inworld": [
+    "inworld-tts-2"
+   ]
+  },
+  "TTS_PCM_RATES": {
+   "cartesia": [
+    8000,
+    16000,
+    22050,
+    24000,
+    44100,
+    48000
+   ],
+   "elevenlabs": [
+    8000,
+    16000,
+    22050,
+    24000,
+    44100,
+    48000
+   ],
+   "murf_falcon_2": [
+    8000,
+    16000,
+    24000,
+    44100,
+    48000
+   ],
+   "murf_falcon_2_hi": [
+    8000,
+    16000,
+    24000,
+    44100,
+    48000
+   ],
+   "soniox": [
+    8000,
+    16000,
+    24000,
+    44100,
+    48000
+   ],
+   "inworld": [
+    8000,
+    16000,
+    22050,
+    24000,
+    32000,
+    44100,
+    48000
+   ],
+   "deepgram": [
+    8000,
+    16000,
+    24000,
+    32000,
+    48000
+   ]
+  },
+  "TTS_PROVIDER_NAMES": {
+   "cartesia": "Cartesia",
+   "elevenlabs": "ElevenLabs",
+   "murf_falcon_2": "Murf",
+   "murf_falcon_2_hi": "Murf",
+   "soniox": "Soniox",
+   "inworld": "Inworld",
+   "deepgram": "Deepgram"
+  },
+  "CARTESIA_VOICES": {
+   "katie": "f786b574-daa5-4673-aa0c-cbe3e8534c02",
+   "brooke": "e07c00bc-4134-4eae-9ea4-1a55fb45746b",
+   "kiefer": "228fca29-3a0a-435c-8728-5cb483251068",
+   "riya": "faf0731e-dfb9-4cfc-8119-259a79b27e12",
+   "cathy": "e8e5fffb-252c-436d-b842-8879b84445b6",
+   "tessa": "6ccbfb76-1fc6-48f7-b71d-91ac6298247b",
+   "cindy": "1242fb95-7ddd-44ac-8a05-9e8a22a6137d",
+   "kyle": "c961b81c-a935-4c17-bfb3-ba2239de8c2f",
+   "carolina": "f9836c6e-a0bd-460e-9d3c-f7299fa60f94",
+   "southern_belle": "69267136-1bdc-412f-ad78-0caad210fb40",
+   "british_lady": "7360f116-6306-4e9a-b487-1235f35a0f21",
+   "arushi": "95d51f79-c397-46f9-b49a-23763d3eaa2d",
+   "celine": "ca566b43-944e-4474-b494-7d9f0695f307"
+  }
+ }
+}

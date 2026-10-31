@@ -214,7 +214,9 @@ describe('one response per caller turn', () => {
     expect(results.map((r) => r.status)).toEqual(['cancelled', 'skipped', 'completed']);
     expect(results[1].reason).toBe('merged-into-newer-utterance');
     expect(providers.stt.calls).toHaveLength(2);
-    expect(providers.stt.calls[1].bytes).toBe(b.length + c.length);
+    // A's words were never committed (it was cancelled during recognition), so its audio is not dropped: the merged
+    // turn transcribes the whole sentence, A + B + C, once.
+    expect(providers.stt.calls[1].bytes).toBe(a.length + b.length + c.length);
   });
 
   it('interrupt() stops speech that is being played and keeps only what was heard in the history', async () => {

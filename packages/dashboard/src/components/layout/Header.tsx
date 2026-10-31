@@ -6,13 +6,13 @@ import { useGateway } from '../../lib/context/GatewayContext';
 import { Radio, RefreshCw, Settings, ShieldCheck, Wifi, WifiOff } from 'lucide-react';
 
 export function Header() {
-  const { connectionState, health, telemetry, isSimulated, refreshHealth, isLoading } =
+  const { connectionState, health, telemetry, hardware, linkIssue, refreshHealth, isLoading } =
     useGateway();
 
   const signalBars = telemetry.signal?.bars ?? 0;
   const rssi = telemetry.signal?.rssi ?? 0;
   const dBm = telemetry.signal?.dBm ?? null;
-  const carrier = telemetry.network?.operatorName ?? health?.modem?.network?.operatorName ?? 'Vi India';
+  const carrier = telemetry.network?.operatorName ?? health?.modem?.network?.operatorName ?? '—';
 
   return (
     <header className="h-14 border-b border-slate-800 bg-[#090d16]/90 backdrop-blur sticky top-0 z-40 px-4 md:px-6 flex items-center justify-between">
@@ -27,14 +27,21 @@ export function Header() {
           </span>
         </Link>
 
-        {/* Driver Type Badge */}
-        {isSimulated ? (
+        {/* Driver Type Badge: what the gateway itself reports. Before it has answered, the mode is unknown, not a simulation. */}
+        {hardware.mode === 'mock' ? (
           <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-cyan-950/80 text-cyan-400 border border-cyan-800/60">
             MOCK SIMULATION
           </span>
-        ) : (
+        ) : hardware.mode === 'hardware' ? (
           <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-emerald-950/80 text-emerald-400 border border-emerald-800/60">
             PHYSICAL HARDWARE
+          </span>
+        ) : (
+          <span
+            title="The gateway has not answered yet, so whether it uses a real modem or a simulation is not known."
+            className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-slate-900 text-slate-400 border border-slate-700"
+          >
+            HARDWARE UNKNOWN
           </span>
         )}
       </div>
@@ -77,6 +84,11 @@ export function Header() {
               <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping" />
               <span className="text-amber-400">CONNECTING</span>
             </>
+          ) : linkIssue ? (
+            <Link href="/settings" title={linkIssue.message} className="flex items-center gap-1.5">
+              <WifiOff className="w-3 h-3 text-amber-400" />
+              <span className="text-amber-400">{linkIssue.label}</span>
+            </Link>
           ) : (
             <>
               <WifiOff className="w-3 h-3 text-rose-400" />

@@ -106,6 +106,7 @@ export class AtParser {
     if (trimmed === 'NO ANSWER') return true;
     if (trimmed === 'BUSY') return true;
     if (trimmed === 'ALERTING') return true;
+    if (AtParser.parseCmti(trimmed)) return true;
     if (trimmed.startsWith('+CEREG:') && !trimmed.includes('?')) return true;
     if (trimmed.startsWith('+CREG:') && !trimmed.includes('?')) return true;
     return false;
@@ -227,6 +228,19 @@ export class AtParser {
       };
     }
 
+    // 9b. New-message indication: +CMTI: "SM",3  (where the message was stored, and its index). It carries no
+    // message content; the text is read later through the AT queue.
+    const sms = AtParser.parseCmti(trimmed);
+    if (sms) {
+      return {
+        raw: trimmed,
+        type: 'CUSTOM',
+        payload: { kind: 'sms-indication', storage: sms.storage, index: sms.index },
+        timestamp: new Date().toISOString(),
+        isSimulated: false,
+      };
+    }
+
     // 10. CEREG/CREG registration update
     if (trimmed.startsWith('+CEREG:') || trimmed.startsWith('+CREG:')) {
       const status = AtParser.parseCregOrCereg(trimmed);
@@ -240,6 +254,12 @@ export class AtParser {
     }
 
     return null;
+  }
+
+  /** `+CMTI: "SM",3` (a whole line, nothing else on it). */
+  static parseCmti(line: string): { storage: string; index: number } | null {
+    const m = /^\+CMTI:\s*"([A-Za-z0-9]{2,4})",\s*(\d{1,4})$/.exec(line.trim());
+    return m ? { storage: m[1], index: Number(m[2]) } : null;
   }
 
   /**

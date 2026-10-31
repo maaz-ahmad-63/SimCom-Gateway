@@ -84,11 +84,11 @@ describe('ai_turns migration 003 (latency metrics)', () => {
       expect(c.notnull, c.name).toBe(0);
       expect(c.dflt_value, c.name).toBeNull();
     }
-    expect(db.prepare('SELECT version, name FROM _schema_migrations ORDER BY version').all()).toEqual([
-      { version: 1, name: '001_initial_schema' },
-      { version: 2, name: '002_ai_turn_log' },
-      { version: 3, name: '003_ai_turn_latency_metrics' },
-    ]);
+    expect(db.prepare('SELECT version, name FROM _schema_migrations ORDER BY version').all()).toEqual(
+      // Every migration the code defines, in order, applied exactly once: the list is read from the code, not retyped here.
+      migrations.map((x) => ({ version: x.version, name: x.name }))
+    );
+    expect(migrations.map((x) => x.version)).toEqual(migrations.map((_, i) => i + 1)); // no gaps, no duplicates
   });
 
   it('keeps every existing row unchanged, with the new columns reading NULL', () => {

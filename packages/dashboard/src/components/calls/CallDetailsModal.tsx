@@ -4,6 +4,8 @@ import React, { useEffect, useState } from 'react';
 import { CallSession } from '@sim-gateway/shared';
 import { apiClient, CallEventRecord } from '../../lib/api-client';
 import { formatDate, formatDuration, getOutcomeBadge } from '../../lib/utils';
+import Link from 'next/link';
+import { callLogHref } from '../../lib/call-logs';
 import { X, Clock, FileAudio, AlertCircle } from 'lucide-react';
 
 interface CallDetailsModalProps {
@@ -63,6 +65,7 @@ export function CallDetailsModal({ callId, onClose }: CallDetailsModalProps) {
               )}
             </h2>
             <p className="text-[11px] text-slate-500 font-mono mt-0.5">{callId}</p>
+            <Link href={callLogHref(callId)} className="text-[11px] text-cyan-400 hover:underline">Open the full call log (turns, transcripts, timings)</Link>
           </div>
 
           <button

@@ -97,6 +97,8 @@ export class GatewayAudioSink implements AgentAudioSink {
       lateFrames: result.lateFrames + result.underruns,
       riskFrames: result.riskFrames + result.underruns,
       maxLateMs: Math.round(result.maxLateMs),
+      maxWriteMs: Math.round(result.maxWriteMs),
+      slowWrites: result.slowWrites,
     };
   }
 
@@ -138,6 +140,8 @@ export class GatewayAudioSink implements AgentAudioSink {
       lateFrames: result.lateFrames,
       riskFrames: result.riskFrames,
       maxLateMs: Math.round(result.maxLateMs),
+      maxWriteMs: Math.round(result.maxWriteMs),
+      slowWrites: result.slowWrites,
     };
   }
 

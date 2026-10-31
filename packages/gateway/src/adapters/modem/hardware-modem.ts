@@ -30,6 +30,12 @@ export interface HardwareModemOptions {
   reconnectIntervalMs?: number;
   maxReconnectAttempts?: number;
   transport?: ISerialTransport;
+  /**
+   * Automatic port discovery: asked for the AT port just before the port is opened (first connect and every reconnect), so
+   * a COM number Windows reassigned is followed. Throws when the modem cannot be identified; the attempt then fails and is
+   * retried like any other. Not used while the port is already open, so it never causes a second connection.
+   */
+  resolvePort?: () => Promise<string>;
 }
 
 /**
@@ -56,6 +62,7 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
   private isClosing = false;
   private serialFailureHandled = false;
   private readonly logger: Logger;
+  private readonly resolvePort?: () => Promise<string>;
 
   constructor(options: HardwareModemOptions) {
     super();
@@ -72,7 +79,8 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
       maxReconnectAttempts: options.maxReconnectAttempts ?? 10,
     };
 
-    this.logger = createLogger(`Modem:${this.config.atPort}`);
+    this.resolvePort = options.resolvePort;
+    this.logger = createLogger(this.resolvePort ? 'Modem' : `Modem:${this.config.atPort}`);
 
     // Inject transport (for tests) or create NodeSerialTransport
     this.transport =
@@ -195,6 +203,13 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
         }
       }
       if (!this.transport.isOpen()) {
+        if (this.resolvePort) {
+          step = 'discover-port';
+          const path = await this.resolvePort();
+          if (path !== this.config.atPort) this.logger.info(`AT port discovered: ${path}${this.config.atPort && this.config.atPort !== 'auto' ? ` (was ${this.config.atPort})` : ''}`);
+          this.config = { ...this.config, atPort: path };
+          step = 'open-port';
+        }
         await this.transport.open({
           path: this.config.atPort,
           baudRate: this.config.atBaudRate,
@@ -287,6 +302,26 @@ export class Sim7600HardwareAdapter extends EventEmitter implements IModemAdapte
 
   async executeCommand(command: string, timeoutMs?: number): Promise<string> {
     return this.queue.execute(command, timeoutMs);
+  }
+
+  /**
+   * Send one text-mode SMS with AT+CMGS through the same serialized AT queue as every other command: the command line,
+   * the '>' prompt, the body and Ctrl+Z, and the final result are one uninterrupted exchange. Changes no modem setting
+   * (text mode, SMSC, parameters and charset are whatever the modem currently has; SmsService checks them first).
+   * `to` must already be validated; the body must not contain Ctrl+Z or Escape.
+   */
+  async sendSmsText(
+    to: string,
+    text: string,
+    options: { promptTimeoutMs?: number; completionTimeoutMs?: number } = {}
+  ): Promise<{ messageReference: number | null; raw: string }> {
+    if (/["\r\n\x1a\x1b]/.test(to)) throw new Error('Invalid destination address');
+    const response = await this.queue.executeWithPrompt(`AT+CMGS="${to}"`, text, {
+      promptTimeoutMs: options.promptTimeoutMs,
+      timeoutMs: options.completionTimeoutMs,
+    });
+    const match = /\+CMGS:\s*(\d+)/.exec(response);
+    return { messageReference: match ? Number(match[1]) : null, raw: response };
   }
 
   async dial(phoneNumber: string): Promise<void> {

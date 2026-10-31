@@ -12,16 +12,21 @@ import { createLogger } from '../core/logger.js';
 import { GatewayEventBus } from '../core/event-bus.js';
 import { AgentAudioSink, assertEnginePcm, AudioFormat, CallerAudioSource } from './audio.js';
 import { AiConfig, AiConfigResult, describeConfig } from './config.js';
-import { ConversationEvent, ConversationSession, SessionTotals, TraceInput, TurnResult } from './conversation.js';
-import { IdleManager, idleMessages } from './idle.js';
+import { ConversationEvent, ConversationSession, ConversationTools, SessionTotals, TraceInput, TurnResult } from './conversation.js';
+import { agentFor } from './directions.js';
+import type { ToolRegistry } from './tools/registry.js';
+import { IdleManager, idleActionAfterTurn, idleMessages } from './idle.js';
 import { AudioMeter } from './meter.js';
 import { TraceHub } from './trace.js';
+import { createLoopLag, LoopLag } from './loop-lag.js';
+import { activeRegistry } from './registry/active.js';
 import { AiUsageStore } from './usage-store.js';
 import { BargeInDetector } from './barge-in.js';
-import { assessUtterance, EnergyEndpointer } from './endpointer.js';
+import { assessUtterance, EnergyEndpointer, SpeechDetector } from './endpointer.js';
+import { loadSileroSession, SileroSession, SileroSpeechDetector } from './vad/silero.js';
 import { KnowledgeProvider, LocalKnowledgeBase } from './knowledge.js';
 import { GatewayAudioSink, GatewayAudioSource } from './gateway-adapters.js';
-import { ProviderSet } from './providers/types.js';
+import { ProviderSet, StreamingSttProvider, SttStream } from './providers/types.js';
 import { AiReadiness } from './readiness.js';
 
 /** How often, and for how long, an eligible call waits for readiness (USB audio is activated after the call connects). */
@@ -36,6 +41,12 @@ export class AiNotReadyError extends Error {
 }
 
 export interface OrchestratorDeps {
+  /** Per-call details (a campaign contact) and an optional greeting for that call only; null for an ordinary call. */
+  callContext?: (call: CallSession) => { contextBlock: string; greeting?: string | null; campaignId: string; contactId: number } | null;
+  /** The person on a campaign call clearly asked not to be called again. Must not throw. */
+  onOptOut?: (call: CallSession) => void;
+  /** Functions the model may call, and the rule that stops anything being recorded for a call's person. Absent: no tools. */
+  tools?: { registry: ToolRegistry; restriction: (call: CallSession) => string | null };
   configResult: AiConfigResult;
   manager: ICallSessionManager;
   audio: IAudioAdapter;
@@ -68,6 +79,8 @@ export interface OrchestratorDeps {
   callLimitMs?: number;
   /** Replace the folder-based company knowledge with another KnowledgeProvider (a vector store, a service). */
   knowledge?: KnowledgeProvider | null;
+  /** Test seam: replace the Silero model loader (the real one needs onnxruntime-node and a model file). */
+  loadSilero?: (modelPath: string) => Promise<SileroSession>;
 }
 
 interface Attached {
@@ -99,6 +112,11 @@ interface Attached {
   bargeFalse: number;
   bargeDisabled: boolean;
   bargeTimer: NodeJS.Timeout | null;
+  /** Streaming recognizer for the utterance in progress (AI_STT_STREAMING); handed to the session at the endpoint. */
+  stream: SttStream | null;
+  streamAbort: AbortController | null;
+  /** The recognizer provider of this call, kept so its spare connection is released when the call ends. */
+  streamProvider: StreamingSttProvider | null;
 }
 
 export interface AiSessionStatus {
@@ -129,6 +147,8 @@ export interface AiSessionStatus {
 export class AiCallOrchestrator extends EventEmitter {
   private readonly logger = createLogger('AiOrchestrator');
   private readonly attached = new Map<string, Attached>();
+  /** Created on first attach, stopped with the orchestrator. */
+  private loopLag: LoopLag | null = null;
   /** Fixed spoken lines (greeting, follow-ups), kept in memory across calls so they start instantly after the first time. */
   private readonly fixedAudioCache = new Map<string, Buffer>();
   private readonly armed = new Set<string>();
@@ -137,6 +157,7 @@ export class AiCallOrchestrator extends EventEmitter {
   private readonly onState = (event: CallStateChangeEvent) => this.handleStateChanged(event);
   private readonly onEnded = (session: CallSession) => {
     this.limited.delete(session.id);
+    this.unattachable.delete(session.id);
     void this.detach(session.id, 'call-ended');
   };
 
@@ -158,6 +179,17 @@ export class AiCallOrchestrator extends EventEmitter {
     const mode = this.mode;
     if (mode === 'active') return this.deps.configResult.usable;
     return mode === 'passive' && this.deps.configResult.passiveUsable;
+  }
+
+  /** Why the configuration cannot run the AI in the current mode (the first thing to fix, in the operator's words). */
+  private notRunnableReasons(): string[] {
+    const result = this.deps.configResult;
+    const reasons = this.mode === 'active' ? result.errors : result.selectionErrors;
+    const keyReason = this.mode === 'passive' && result.sttKeyEnv && result.missingKeys.includes(result.sttKeyEnv)
+      ? [`${result.sttKeyEnv} is required by the selected providers but is not set`]
+      : [];
+    const all = [...reasons, ...keyReason];
+    return all.length > 0 ? all : ['AI is not enabled'];
   }
 
   private readyFor(readiness: AiReadiness): boolean {
@@ -186,6 +218,8 @@ export class AiCallOrchestrator extends EventEmitter {
 
   /** Calls whose AI time limit was reached; automatic attachment will not pick them up again. */
   private readonly limited = new Set<string>();
+  /** Calls already told (once) that the AI cannot take them because the configuration is unusable. */
+  private readonly unattachable = new Set<string>();
 
   private startIdle(entry: Attached): void {
     if (!this.config.automation.idleFollowUps || entry.idle || entry.session.isPassive || entry.session.isClosed) return;
@@ -194,6 +228,7 @@ export class AiCallOrchestrator extends EventEmitter {
       followups: messages.followups,
       goodbye: messages.goodbye,
       say: (text) => entry.session.say(text),
+      isBusy: () => entry.session.isAgentActive,
       disconnect: () => this.handleIdleTimeout(entry.callId),
       waitsMs: this.deps.idleWaitsMs,
     });
@@ -226,6 +261,53 @@ export class AiCallOrchestrator extends EventEmitter {
     this.started = true;
     this.deps.manager.on('call:state_changed', this.onState);
     this.deps.manager.on('call:ended', this.onEnded);
+    this.prepareSilero();
+  }
+
+  /** The loaded Silero model, shared by every call (the recurrent state lives in each call's detector). */
+  private silero: SileroSession | null = null;
+
+  /**
+   * Silero is opt-in (AI_VAD_ENGINE=silero). Loading is asynchronous and may fail (no onnxruntime-node, no model file);
+   * either way the energy detector keeps working and the reason is reported once.
+   */
+  private prepareSilero(): void {
+    if (this.config.vad.engine !== 'silero') return;
+    const modelPath = this.config.vad.silero.modelPath;
+    if (!modelPath) {
+      this.alert('warn', 'AI_VAD_ENGINE=silero needs AI_VAD_SILERO_MODEL (the path of silero_vad.onnx): using the energy detector');
+      return;
+    }
+    const load = this.deps.loadSilero ?? loadSileroSession;
+    void load(modelPath).then(
+      (session) => {
+        this.silero = session;
+        this.logger.info('Silero VAD model loaded');
+      },
+      (error) => this.alert('warn', `Silero VAD is unavailable (${(error as Error).message}): using the energy detector`)
+    );
+  }
+
+  private speechDetectorFor(format: AudioFormat): SpeechDetector | null {
+    if (this.config.vad.engine !== 'silero') return null;
+    if (!this.silero) {
+      this.alert('warn', 'Silero VAD is not loaded: this call uses the energy detector');
+      return null;
+    }
+    return new SileroSpeechDetector({
+      session: this.silero,
+      inputRate: format.sampleRate,
+      threshold: this.config.vad.silero.threshold,
+      onError: (error) => this.alert('warn', `Silero VAD failed (${error.message}): falling back to the energy detector for this call`),
+    });
+  }
+
+  /** Release the streaming recognizer of an utterance that is being discarded or abandoned. */
+  private closeStream(entry: Attached): void {
+    entry.streamAbort?.abort();
+    entry.stream?.close();
+    entry.stream = null;
+    entry.streamAbort = null;
   }
 
   async stop(): Promise<void> {
@@ -234,6 +316,8 @@ export class AiCallOrchestrator extends EventEmitter {
     this.deps.manager.off('call:state_changed', this.onState);
     this.deps.manager.off('call:ended', this.onEnded);
     await Promise.all([...this.attached.keys()].map((id) => this.detach(id, 'orchestrator-stopped')));
+    this.loopLag?.stop();
+    this.loopLag = null;
     for (const id of [...this.waiting.keys()]) this.stopWaiting(id);
     this.armed.clear();
   }
@@ -252,13 +336,7 @@ export class AiCallOrchestrator extends EventEmitter {
   /** Mark the current call for AI handling. Refused unless readiness passes right now. */
   async arm(callId: string): Promise<void> {
     if (this.mode === 'off') throw new AiNotReadyError(['AI mode is off']);
-    if (!this.canRun) {
-      const reasons = this.mode === 'active' ? this.deps.configResult.errors : this.deps.configResult.selectionErrors;
-      const keyReason = this.mode === 'passive' && this.deps.configResult.sttKeyEnv && this.deps.configResult.missingKeys.includes(this.deps.configResult.sttKeyEnv)
-        ? [`${this.deps.configResult.sttKeyEnv} is required by the selected providers but is not set`]
-        : [];
-      throw new AiNotReadyError([...reasons, ...keyReason].length ? [...reasons, ...keyReason] : ['AI is not enabled']);
-    }
+    if (!this.canRun) throw new AiNotReadyError(this.notRunnableReasons());
     const call = this.deps.manager.getCurrentCall();
     if (!call || call.id !== callId) {
       throw new Error('Only the current call can be armed');
@@ -343,7 +421,7 @@ export class AiCallOrchestrator extends EventEmitter {
     } else {
       entry.idle?.stop();
       entry.idle = null;
-      entry.session.interrupt();
+      entry.session.interrupt('manual');
     }
     this.publish(callId, { turnId: null, stage: 'call', status: 'ok', detail: enabled ? 'Conversation mode ON for this call (operator)' : 'Conversation mode OFF for this call (operator)' });
   }
@@ -381,6 +459,17 @@ export class AiCallOrchestrator extends EventEmitter {
         lateFrames: m.firstAudioMs === null ? null : m.lateFrames,
         riskFrames: m.firstAudioMs === null ? null : m.riskFrames,
         knowledgeHits: m.knowledgeHits,
+        turnRef: `${callId}:t${result.turnId}`,
+        llmTotalMs: m.llmTotalMs,
+        // Only a stage that ran has a duration: a turn that never reached synthesis or playback records null, not 0.
+        ttsTotalMs: m.ttsFirstMs === null ? null : m.ttsTotalMs,
+        playMs: m.firstAudioMs === null ? null : m.playMs,
+        tftAvailable: m.tftAvailable,
+        sttMode: m.sttMode,
+        // Jitter only describes a turn that played audio; the loop stall is for the whole turn.
+        maxLateMs: m.firstAudioMs === null ? null : m.maxLateMs,
+        loopLagMaxMs: m.loopLagMaxMs,
+        cancelSource: result.cancelSource ?? null,
       });
     } catch (error) {
       this.logger.warn(`Could not record AI turn: ${(error as Error).message}`);
@@ -430,7 +519,15 @@ export class AiCallOrchestrator extends EventEmitter {
   private handleStateChanged(event: CallStateChangeEvent): void {
     if (event.currentState !== 'ACTIVE') return;
     const call = event.session;
-    if (!this.canRun || !this.eligible(call) || this.limited.has(call.id)) return;
+    if (!this.eligible(call) || this.limited.has(call.id)) return;
+    if (!this.canRun) {
+      // Switched off on purpose is silent; an invalid configuration is not, or a call would just never get an agent.
+      if (this.mode !== 'off' && !this.unattachable.has(call.id)) {
+        this.unattachable.add(call.id);
+        this.alert('error', `AI agent not attached: ${this.notRunnableReasons().join('; ')}`);
+      }
+      return;
+    }
     if (this.attached.has(call.id) || this.waiting.has(call.id)) return;
     this.tryAttach(call);
   }
@@ -523,14 +620,24 @@ export class AiCallOrchestrator extends EventEmitter {
           }),
         };
 
+    const callContext = this.deps.callContext?.(call) ?? null;
+    // One voice engine, two configurations: the call's direction picks the instructions and the greeting.
+    const agent = agentFor(this.config, call.direction);
+    const toolsDeps = this.deps.tools;
+    const tools: ConversationTools | null = toolsDeps
+      ? { registry: toolsDeps.registry, mode: call.direction, campaignId: callContext?.campaignId ?? null, contactId: callContext?.contactId ?? null, restriction: () => toolsDeps.restriction(call) }
+      : null;
     const session = new ConversationSession({
       callId: call.id,
-      config: this.config,
+      config: { ...this.config, systemPrompt: agent.systemPrompt, greeting: agent.greeting },
+      tools,
       providers,
       sink,
       passive: this.mode !== 'active',
       fixedAudioCache: this.fixedAudioCache,
       knowledge: this.knowledgeProvider(),
+      loopLag: (this.loopLag ??= createLoopLag()),
+      callContext: callContext?.contextBlock ?? null,
       emit: (event) => this.handleConversationEvent(call.id, event),
       trace: (event) => this.publish(call.id, event),
     });
@@ -567,22 +674,47 @@ export class AiCallOrchestrator extends EventEmitter {
       bargeFalse: 0,
       bargeDisabled: false,
       bargeTimer: null,
+      stream: null,
+      streamAbort: null,
+      streamProvider: providers.sttStream ?? null,
     };
+    providers.sttStream?.warm?.(format); // a connection is ready before the caller's first word, not opened after it
 
+    if (this.config.sttStreaming.enabled && !providers.sttStream) {
+      this.alert('warn', 'Streaming speech-to-text is on (AI_STT_STREAMING) but unavailable (no DEEPGRAM_API_KEY): the batch provider is used');
+    }
+    const speechDetector = this.speechDetectorFor(format);
     const vad = this.config.vad;
     entry.endpointer = new EnergyEndpointer(
       format,
       {
         ...vad,
+        speechDetector: speechDetector ?? undefined,
         // Transcribing during the pause only pays off (and only makes sense) when something will be said in reply.
-        softSilenceMs: vad.speculativeStt || vad.earlyCommit ? vad.softSilenceMs : 0,
+        softSilenceMs: vad.speculativeStt || vad.earlyCommit || providers.sttStream ? vad.softSilenceMs : 0,
       },
       {
         onSpeechStart: () => {
           entry.idle?.pause(); // someone is talking: the silence clock stops
-          if (this.config.bargeIn.enabled && session.isBusy) session.interrupt();
+          if (this.config.bargeIn.enabled && session.isBusy) session.interrupt('caller-speech');
+        },
+        onUtteranceAudio: (pcm, info) => {
+          const streaming = providers.sttStream;
+          if (!streaming) return;
+          if (info.start) {
+            this.closeStream(entry);
+            entry.streamAbort = new AbortController();
+            entry.stream = streaming.open(format, entry.streamAbort.signal);
+          }
+          entry.stream?.push(pcm);
         },
         onSoftEnd: (pcm, info) => {
+          if (entry.stream) {
+            // A pause: ask the recognizer to flush what it has, so the final text is nearly ready at the endpoint.
+            // The stream replaces the speculative batch request; it can never start a turn.
+            entry.stream.flush();
+            return;
+          }
           if (session.isPassive) return;
           session.beginSpeculative(pcm, info.id);
           if (vad.earlyCommit) void this.tryEarlyCommit(entry, session, info.id, info.durationMs);
@@ -599,8 +731,12 @@ export class AiCallOrchestrator extends EventEmitter {
             this.logger.warn(`Diagnostic recording failed: ${(error as Error).message}`);
           }
           const verdict = entry.bargeAwaitingVerdict;
+          // The streaming recognizer for this utterance now belongs to the session, which releases it.
+          const stream = entry.stream ?? undefined;
+          entry.stream = null;
+          entry.streamAbort = null;
           void session
-            .handleUtterance(pcm, id, { speechEndedAt: info.speechEndedAt, endpointedAt: info.endpointedAt, speculativeId: info.softId, afterBargeIn: verdict })
+            .handleUtterance(pcm, id, { speechEndedAt: info.speechEndedAt, endpointedAt: info.endpointedAt, speculativeId: info.softId, afterBargeIn: verdict, stream })
             .then((result) => {
               // After an interruption, an utterance with no speech in it means the interruption was echo or noise.
               if (verdict) this.settleBarge(entry, !['silent', 'too-short', 'unlikely-speech', 'empty-transcript', 'echo'].includes(result.reason ?? ''));
@@ -615,6 +751,7 @@ export class AiCallOrchestrator extends EventEmitter {
       if (session.isDeaf()) {
         if (!entry.deaf) {
           entry.deaf = true;
+          this.closeStream(entry); // the utterance in progress is dropped unheard, and so is its recognizer
           entry.endpointer.reset();
           entry.barge?.reset();
           entry.bargeRing = [];
@@ -641,7 +778,7 @@ export class AiCallOrchestrator extends EventEmitter {
       stage: 'call',
       status: 'ok',
       detail: `AI attached in ${this.mode === 'active' ? 'active' : 'passive'} mode`,
-      data: { simulated: entry.isSimulated, sampleRate: format.sampleRate },
+      data: { simulated: entry.isSimulated, sampleRate: format.sampleRate, direction: call.direction, instructionsFrom: agent.source.instructions, greetingFrom: agent.source.greeting, ...this.selectionFacts(), ...(callContext ? { campaignId: callContext.campaignId, campaignContactId: callContext.contactId } : {}) },
     });
 
     // Cost bound: the AI lets go of the call after a fixed time. The call itself keeps running.
@@ -654,7 +791,8 @@ export class AiCallOrchestrator extends EventEmitter {
     entry.limitTimer.unref?.();
 
     if (this.mode === 'active') {
-      const greeting = this.config.greeting ? session.say(this.config.greeting) : Promise.resolve();
+      const greetingText = callContext?.greeting ?? agent.greeting;
+      const greeting = greetingText ? session.say(greetingText) : Promise.resolve();
       // The silence clock starts after the greeting, as in the source project.
       void Promise.resolve(greeting).finally(() => this.startIdle(entry));
     }
@@ -697,9 +835,10 @@ export class AiCallOrchestrator extends EventEmitter {
       status: 'ok',
       detail: 'Caller interrupted the agent (barge-in): the reply was stopped and the caller is being listened to',
     });
-    session.interrupt();
+    session.interrupt('caller-speech');
     session.resumeListening();
     entry.deaf = false;
+    this.closeStream(entry);
     entry.endpointer.reset();
     for (const chunk of entry.bargeRing) entry.endpointer.feed(chunk);
     entry.bargeRing = [];
@@ -728,6 +867,25 @@ export class AiCallOrchestrator extends EventEmitter {
     }
   }
 
+  /** The providers and models this call runs with, recorded on the attach event so every call log says what it used. */
+  private selectionFacts(): Record<string, string> {
+    const c = this.config;
+    const registry = activeRegistry();
+    const stt = registry.stt(c.stt.key);
+    const llm = registry.llm(c.llm.key);
+    return {
+      sttKey: c.stt.key,
+      sttProvider: stt?.vendor ?? c.stt.key,
+      sttModel: stt?.model ?? '',
+      llmKey: c.llm.key,
+      llmProvider: llm?.family ?? llm?.vendor ?? c.llm.key,
+      llmModel: llm?.model ?? '',
+      ttsKey: c.tts.key,
+      ttsProvider: c.tts.key,
+      ttsModel: c.tts.model ?? '',
+    };
+  }
+
   private async detach(callId: string, reason: string): Promise<void> {
     const entry = this.attached.get(callId);
     this.armed.delete(callId);
@@ -739,10 +897,12 @@ export class AiCallOrchestrator extends EventEmitter {
     if (entry.bargeTimer) clearTimeout(entry.bargeTimer);
     entry.unsubscribe();
     // An utterance still being spoken when the call ends is dropped, not processed.
+    this.closeStream(entry);
+    entry.streamProvider?.dispose?.();
     entry.endpointer.reset();
     await entry.session.close(reason);
     this.logger.info(`AI agent detached from the call (${reason})`);
-    this.publish(callId, { turnId: null, stage: 'call', status: 'ok', detail: `AI detached (${reason})` });
+    this.publish(callId, { turnId: null, stage: 'call', status: 'ok', detail: `AI detached (${reason})`, data: { detached: true, reason } });
   }
 
   private handleConversationEvent(callId: string, event: ConversationEvent): void {
@@ -754,14 +914,26 @@ export class AiCallOrchestrator extends EventEmitter {
         this.recordTurn(callId, event.result, entry);
         if (entry && !entry.idle && !entry.session.isPassive && (event.result.transcriptChars ?? 0) > 0) this.startIdle(entry);
         if (entry?.idle?.isEnabled) {
-          // Real words from the caller reset the count; anything else (including our own follow-up) just restarts the clock.
-          if ((event.result.transcriptChars ?? 0) > 0) entry.idle.resetOnUserSpeech();
-          else entry.idle.start();
+          const action = idleActionAfterTurn(event.result);
+          if (action === 'reset') entry.idle.resetOnUserSpeech();
+          else if (action === 'restart') entry.idle.start();
         }
         this.logger.info(
-          `AI turn ${event.result.turnId} ${event.result.status}${event.result.reason ? ` (${event.result.reason})` : ''}: stt=${fmt(event.result.metrics.sttMs)} llmFirst=${fmt(event.result.metrics.llmFirstTokenMs)} ttsFirst=${fmt(event.result.metrics.ttsFirstMs)} total=${fmt(event.result.metrics.totalMs)} firstAudioAfterCallerStopped=${fmt(event.result.metrics.perceivedFirstAudioMs)}${event.result.metrics.speculativeStt ? ' (speculative STT)' : ''} gapRiskFrames=${event.result.metrics.riskFrames} ms`
+          `AI turn ${event.result.turnId} ${event.result.status}${event.result.reason ? ` (${event.result.reason})` : ''}${event.result.cancelSource ? ` [cancelled by ${event.result.cancelSource}]` : ''}: stt=${fmt(event.result.metrics.sttMs)} llmFirst=${fmt(event.result.metrics.llmFirstTokenMs)} ttsFirst=${fmt(event.result.metrics.ttsFirstMs)} total=${fmt(event.result.metrics.totalMs)} firstAudioAfterCallerStopped=${fmt(event.result.metrics.perceivedFirstAudioMs)}${event.result.metrics.speculativeStt ? ' (speculative STT)' : ''}${event.result.metrics.sttFallbackReason ? ` (speech-to-text stream not used: ${event.result.metrics.sttFallbackReason})` : ''}${event.result.metrics.llmEmptyReplies ? ` (model returned an empty reply ${event.result.metrics.llmEmptyReplies}x)` : ''} gapRiskFrames=${event.result.metrics.riskFrames} ms`
         );
         break;
+      case 'opt-out': {
+        const call = this.deps.manager.getCurrentCall();
+        if (call && call.id === callId) {
+          try {
+            this.deps.onOptOut?.(call);
+          } catch (error) {
+            this.logger.warn(`Could not record the opt-out request: ${(error as Error).message}`);
+          }
+          this.alert('info', 'The person on this campaign call asked not to be called again; the number was added to the do-not-call list');
+        }
+        break;
+      }
       case 'error':
         // Provider error text is already scrubbed of credentials; transcripts are never in it.
         this.logger.warn(`AI ${event.stage} error: ${event.message}`);
