@@ -4,6 +4,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 import type { AiCatalogResponse, AiInspectorEvent } from '@sim-gateway/shared';
 import { AiStateResponse, apiClient } from '../api-client';
 import { applyInspectorEvent, emptyInspector, InspectorState, mergeInspectorEvents } from '../ai-inspector';
+import { catalogChanged } from '../catalog-sync';
 import { socketService } from '../socket-service';
 
 type InspectorAction =
@@ -30,6 +31,8 @@ interface AiContextValue {
   error: string | null;
   loading: boolean;
   refresh: () => Promise<void>;
+  /** Fetch the model catalog again (after the registry changed). The page also does this by itself when the gateway reports a new revision. */
+  refreshCatalog: () => Promise<void>;
   clearInspector: () => void;
 }
 
@@ -44,6 +47,16 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [inspector, dispatch] = useReducer(inspectorReducer, undefined, emptyInspector);
   const mounted = useRef(true);
+  const catalogRevision = useRef<number | null>(null);
+
+  const refreshCatalog = useCallback(async () => {
+    try {
+      const next = await apiClient.getAiCatalog();
+      if (mounted.current) setCatalog(next);
+    } catch (err) {
+      if (mounted.current) setError((err as Error).message);
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -51,12 +64,16 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
       if (!mounted.current) return;
       setState(next);
       setError(null);
+      // The model registry changed since the catalog was fetched (a model added, switched off or removed): fetch it again.
+      const check = catalogChanged(catalogRevision.current, next);
+      catalogRevision.current = check.revision;
+      if (check.reload && catalogRevision.current !== null) void refreshCatalog();
     } catch (err) {
       if (mounted.current) setError((err as Error).message);
     } finally {
       if (mounted.current) setLoading(false);
     }
-  }, []);
+  }, [refreshCatalog]);
 
   const catchUp = useCallback(async () => {
     try {
@@ -70,10 +87,7 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     mounted.current = true;
     void refresh();
-    apiClient
-      .getAiCatalog()
-      .then((c) => mounted.current && setCatalog(c))
-      .catch((err) => mounted.current && setError((err as Error).message));
+    void refreshCatalog();
     const timer = setInterval(() => void refresh(), POLL_MS);
 
     const offEvent = socketService.on('ai:event', (event) => dispatch({ type: 'event', event }));
@@ -87,11 +101,11 @@ export function AiProvider({ children }: { children: React.ReactNode }) {
       offEvent();
       offState();
     };
-  }, [refresh, catchUp]);
+  }, [refresh, refreshCatalog, catchUp]);
 
   const value = useMemo<AiContextValue>(
-    () => ({ state, catalog, inspector, error, loading, refresh, clearInspector: () => dispatch({ type: 'reset' }) }),
-    [state, catalog, inspector, error, loading, refresh]
+    () => ({ state, catalog, inspector, error, loading, refresh, refreshCatalog, clearInspector: () => dispatch({ type: 'reset' }) }),
+    [state, catalog, inspector, error, loading, refresh, refreshCatalog]
   );
   return <AiContext.Provider value={value}>{children}</AiContext.Provider>;
 }

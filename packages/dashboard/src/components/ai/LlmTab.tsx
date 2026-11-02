@@ -1,5 +1,6 @@
 'use client';
 
+import { keyEnvFor } from '../../lib/ai-keys';
 import React, { useEffect, useState } from 'react';
 import type { AiTurnLogEntry } from '@sim-gateway/shared';
 import { AiLlmTestResult, apiClient } from '../../lib/api-client';
@@ -12,6 +13,23 @@ const average = (values: Array<number | null>): number | null => {
   const nums = values.filter((v): v is number => v !== null);
   return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
 };
+
+/**
+ * The language model dropdown. Its options are exactly the gateway's catalog (which is built from the model registry): there is no
+ * list of models in the dashboard. A model that cannot run is listed but cannot be chosen.
+ */
+export function LlmModelSelect({ catalog, value, onChange }: { catalog: { llm: Array<{ key: string; label: string; model: string | null; implemented: boolean; unavailableReason?: string | null }> }; value: string; onChange: (key: string) => void }) {
+  return (
+    <Select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Language model">
+      {catalog.llm.map((o) => (
+        <option key={o.key} value={o.key} disabled={!o.implemented} title={o.unavailableReason ?? undefined}>
+          {o.label} · {o.model}
+          {o.implemented ? '' : o.unavailableReason ? ` (${o.unavailableReason.toLowerCase()})` : ' (not ported yet)'}
+        </option>
+      ))}
+    </Select>
+  );
+}
 
 function TextTest() {
   const [prompt, setPrompt] = useState('Hi, what are your opening hours?');
@@ -84,7 +102,7 @@ export function LlmTab() {
 
   if (!draft || !catalog || !state) return <p className="text-xs text-slate-500">Loading…</p>;
   const option = catalog.llm.find((o) => o.key === draft.llm);
-  const keyName = option?.provider === 'openai' ? 'OPENAI_API_KEY' : option?.provider === 'telnyx' ? 'TELNYX_API_KEY' : 'GROQ_API_KEY';
+  const keyName = keyEnvFor(option);
   const key = state.credentials.find((c) => c.name === keyName);
   const badges = key ? credentialBadges(key) : null;
   const u = state.usageToday;
@@ -95,14 +113,7 @@ export function LlmTab() {
       <Card title="Language model" subtitle="Which model writes the agent's replies. One conversation per call; no history is shared between calls.">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <Field label="Model" hint={option?.priceNote ?? undefined}>
-            <Select value={draft.llm} onChange={(e) => setDraft({ ...draft, llm: e.target.value })}>
-              {catalog.llm.map((o) => (
-                <option key={o.key} value={o.key} disabled={!o.implemented}>
-                  {o.label} · {o.model}
-                  {o.implemented ? '' : ' (not ported yet)'}
-                </option>
-              ))}
-            </Select>
+            <LlmModelSelect catalog={catalog} value={draft.llm} onChange={(llm) => setDraft({ ...draft, llm })} />
           </Field>
           <Field label="Max reply tokens (empty = provider default)" hint="The only model parameter you can change. Replies are also capped by length below.">
             <TextInput

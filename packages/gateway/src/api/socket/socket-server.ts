@@ -29,6 +29,8 @@ export interface SocketServerOptions {
   eventBus: GatewayEventBus;
   atPort: string;
   audioPort: string;
+  /** The ports in use now (discovered or configured). */
+  currentPorts?: () => { at: string; audio: string };
 }
 
 export class GatewaySocketServer {
@@ -220,8 +222,8 @@ export class GatewaySocketServer {
           info,
           signal,
           network,
-          atPort: this.options.atPort,
-          audioPort: this.options.audioPort,
+          atPort: this.options.currentPorts?.().at ?? this.options.atPort,
+          audioPort: this.options.currentPorts?.().audio ?? this.options.audioPort,
         },
         activeCall,
         audioStreaming: this.options.audio ? this.options.audio.getStats().isStreaming : false,

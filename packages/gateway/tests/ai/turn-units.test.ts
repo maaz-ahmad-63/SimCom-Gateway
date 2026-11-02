@@ -246,7 +246,18 @@ describe('the standing instructions', () => {
 describe('configuration of the new turn-taking features', () => {
   it('has safe, documented defaults', () => {
     const c = makeConfig();
-    expect(c.vad).toMatchObject({ adaptive: true, minSilenceFloorMs: 450, softSilenceMs: 350, speculativeStt: true, earlyCommit: false });
+    // adaptive is off by default: its ratchet toward the 450 ms floor cut callers off mid-sentence.
+    expect(c.vad).toMatchObject({
+      adaptive: false,
+      minSilenceFloorMs: 450,
+      softSilenceMs: 350,
+      speculativeStt: true,
+      earlyCommit: false,
+      onsetHangoverMs: 100,
+      engine: 'energy',
+      silero: { modelPath: null, threshold: 0.5 },
+    });
+    expect(c.sttStreaming).toEqual({ enabled: false, finalizeTimeoutMs: 1500, hedgeMs: 700 });
     expect(c.bargeIn).toMatchObject({ enabled: true, whileSpeaking: true, minMs: 300, echoMultiplier: 2.5, maxFalseTriggers: 2 });
     expect(c.playback).toEqual({ leadFrames: 2, prerollMs: 150 });
     expect(c.knowledge).toEqual({ dir: null, topK: 3, maxChars: 1200 });

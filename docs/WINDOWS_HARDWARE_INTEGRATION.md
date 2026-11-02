@@ -513,6 +513,49 @@ that the modem transmitted audible audio.
 
 ## 6. Connecting from the macOS Dashboard
 
+### Finding the modem's ports automatically
+
+`MODEM_AT_PORT` and `MODEM_AUDIO_PORT` are optional. When they are empty, the gateway lists the serial ports Windows reports
+(this opens none of them) every time it is about to open the modem, and picks the AT and USB-audio interfaces from their USB
+identity: vendor `1E0E`, interface `MI_02` (AT) and `MI_04` (audio), confirmed against the driver's port name, and grouped into
+one physical modem by the parent instance prefix in the PnP id. COM numbers do not matter, need not be consecutive, and may change
+on every replug; nothing is written back to `.env`.
+
+- **One modem:** used. The Hardware page shows the ports and the modem id (`1E0E:9001:<parent>`).
+- **No modem, or one missing its AT or audio interface:** nothing is opened; the reason is on the Hardware page and the gateway keeps
+  looking (it also notices a modem plugged back in after its own reconnect attempts ran out).
+- **Two or more modems:** nothing is opened and the gateway does not guess. Set `MODEM_DEVICE` to the id shown on the Hardware page.
+- **One port set, the other empty:** the other is taken from the same physical modem, or nothing is opened.
+- **Both set:** used exactly as given; the Hardware page only warns if they look wrong.
+
+Limits: whether a port is free (not held by another program) can only be learned by opening it, which discovery never does; the open
+itself then fails and is retried. A modem moved to another USB socket gets a new id; with one modem it is adopted (and reported),
+with several you choose again. The interface numbers are those observed on this SIM7600EI; another firmware or USB composition may
+differ, in which case set the ports explicitly.
+
+### Which machine runs what (read this first)
+
+Two programs, two separate environments. The **gateway** reads the repository's root `.env` on the machine that has the modem.
+The **dashboard** (Next.js) reads `.env` files from `packages/dashboard/` only, and its browser pages additionally keep an
+address and key entered on the Settings page. Hardware settings (COM ports, audio rate, driver) live only in the gateway's `.env`;
+the dashboard displays what the gateway reports and cannot change it.
+
+| Layout | Dashboard server needs | Gateway `.env` needs | Browser (`/settings`) |
+| --- | --- | --- | --- |
+| **A.** Gateway and dashboard on the Windows PC, browser on that PC (`http://localhost:3000`) | Nothing. With no key of its own it uses `GATEWAY_API_KEY` and `PORT` from the repository `.env` and contacts `http://127.0.0.1:<PORT>` | `HOST=0.0.0.0` or `127.0.0.1`, `GATEWAY_API_KEY`, default `CORS_ORIGIN=http://localhost:3000` | Gateway URL `http://localhost:4000` (the default) and the API key |
+| **B.** Both on the Windows PC, browser on the Mac (`http://<PC_IP>:3000`) | Nothing, plus `DASHBOARD_SMS_ALLOW_REMOTE=true` in `packages/dashboard/.env.local` to use the SMS page from the Mac | `HOST=0.0.0.0`, `CORS_ORIGIN=http://<PC_IP>:3000` | Gateway URL `http://<PC_IP>:4000` (the default when the page was opened by that address) and the API key |
+| **C.** Dashboard on the Mac, gateway on the Windows PC | `packages/dashboard/.env.local` on the Mac: `GATEWAY_API_KEY=<the gateway's key>` and `GATEWAY_INTERNAL_URL=http://<PC_IP>:4000` | `HOST=0.0.0.0`, default `CORS_ORIGIN=http://localhost:3000` | Gateway URL `http://<PC_IP>:4000` and the API key |
+
+`<PC_IP>` is the Windows PC's private LAN address (`ipconfig`). Do not expose port 4000 beyond the private network: restrict the
+firewall rule to the local subnet (`-RemoteAddress LocalSubnet`, `-Profile Private`), and never forward it on a router.
+
+What the header shows, and what it means: `PHYSICAL HARDWARE` / `MOCK SIMULATION` is what the gateway itself reports. `HARDWARE
+UNKNOWN` means the gateway has not answered at all (it says nothing about a mock). `KEY REQUIRED` means the gateway is running
+but refused the key saved in this browser. `NO ROUTE` means the dashboard server can reach the gateway but this browser cannot
+(wrong address in Settings, or `CORS_ORIGIN` does not match the page's address). `OFFLINE` means no gateway is answering at the
+address shown on hover. COM ports read "unknown" until the gateway answers, and "not configured on the gateway" only if the
+gateway reported none.
+
 1. On your macOS development machine, start the dashboard:
    ```bash
    npm run dev:dashboard

@@ -16,6 +16,10 @@ function envString(name: string): string | undefined {
   return value ? value : undefined;
 }
 
+/** The port value meaning "discover it at runtime" (never a COM name, so it can never be opened by mistake). */
+export const AUTO_PORT = 'auto';
+export const isAutoPort = (port: string | undefined | null): boolean => !port || port.trim().toLowerCase() === AUTO_PORT;
+
 export function loadConfig(overrides: Partial<GatewayConfigInput> = {}): GatewayConfigInput {
   const driver = overrides.modemDriver ?? process.env.MODEM_DRIVER ?? 'mock';
   const rawApiKey = overrides.gatewayApiKey ?? process.env.GATEWAY_API_KEY;
@@ -33,19 +37,17 @@ export function loadConfig(overrides: Partial<GatewayConfigInput> = {}): Gateway
       );
     }
 
-    // COM numbers are reassigned by Windows whenever the modem re-enumerates, so no port is assumed.
+    // COM numbers are reassigned by Windows whenever the modem re-enumerates, so no port is assumed. A port that is not set
+    // is discovered at runtime from the USB identity of the modem's interfaces (src/hardware/port-discovery.ts); a port that
+    // is set is used exactly as given.
     const atPort = (overrides.atPort ?? envString('MODEM_AT_PORT'))?.trim();
     const audioPort = (overrides.audioPort ?? envString('MODEM_AUDIO_PORT'))?.trim();
-    if (!atPort || !audioPort) {
-      throw new Error(
-        'Configuration Error: MODEM_AT_PORT and MODEM_AUDIO_PORT must both be set explicitly when running with MODEM_DRIVER=hardware. List the live ports with: powershell -File tools/inspect-sim7600-windows.ps1 -List'
-      );
-    }
-    if (atPort.toUpperCase() === audioPort.toUpperCase()) {
+    if (atPort && audioPort && atPort.toUpperCase() === audioPort.toUpperCase() && !isAutoPort(atPort)) {
       throw new Error(
         `Configuration Error: MODEM_AT_PORT and MODEM_AUDIO_PORT must be different ports (both are ${atPort}).`
       );
     }
+    overrides = { ...overrides, atPort: atPort || AUTO_PORT, audioPort: audioPort || AUTO_PORT };
   }
 
   // Booleans are passed through as raw env strings; the shared schema parses them strictly.

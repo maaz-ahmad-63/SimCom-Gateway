@@ -1,21 +1,28 @@
 import fs from 'node:fs';
 import { PcmFormat } from '../diagnostics/pcm-tools.js';
-import {
-  CARTESIA_RAW_SAMPLE_RATES,
-  DEFAULT_LLM_KEY,
-  DEFAULT_STT_KEY,
-  DEFAULT_TTS_KEY,
-  LLM_CATALOG,
-  openAiCompatibleSpec,
-  OpenAiCompatibleSpec,
-  resolveLlmKey,
-  STT_CATALOG,
-  SttEntry,
-  TTS_CATALOG,
-} from './catalog.js';
+import { DEFAULT_LLM_KEY, DEFAULT_STT_KEY, DEFAULT_TTS_KEY, OpenAiCompatibleSpec } from './catalog.js';
+import { activeRegistry } from './registry/active.js';
+import { buildLlmSpec } from './registry/registry.js';
 import { DEFAULT_SYSTEM_PROMPT } from './prompt.js';
 
+/** The speech-to-text model in use, as the providers and the call log need it (resolved from the model registry). */
+export interface SttSelection {
+  /** The vendor name (deepgram, soniox, groq ...). */
+  provider: string;
+  providerId: string;
+  /** The wire protocol that serves it; null when none does. */
+  protocol: string | null;
+  model: string | null;
+  implemented: boolean;
+  params: { language?: 'multi' };
+}
+
 export type AutoHandle = 'off' | 'inbound' | 'outbound' | 'all';
+
+export interface DirectionAgent {
+  instructions: string | null;
+  greeting: string | null;
+}
 
 export interface AiConfig {
   /** AI_ENABLED. Everything below is inert unless this is true AND the config is usable. */
@@ -23,11 +30,18 @@ export interface AiConfig {
   /** Which calls get an AI agent without being armed by hand. Default 'off'. */
   autoHandle: AutoHandle;
   language: string;
-  stt: { key: string; entry: SttEntry; keyterms: string[] };
+  stt: { key: string; entry: SttSelection; keyterms: string[] };
   llm: { key: string; spec: OpenAiCompatibleSpec | null };
-  tts: { key: string; voice: string };
+  /** `model`: the operator's choice of the provider's model, or null for the provider's default. */
+  tts: { key: string; voice: string; model: string | null };
   systemPrompt: string;
   greeting: string | null;
+  /** The built-in rules (or AI_SYSTEM_PROMPT_FILE) with no operator instructions in front: what `systemPrompt` is built on. */
+  promptBody: string;
+  /** AI_SYSTEM_INSTRUCTIONS: the instructions every call uses unless its own direction sets some. */
+  sharedInstructions: string | null;
+  /** Instructions and greeting for one kind of call only (see agentFor). Unset means that kind of call uses the shared ones. */
+  directions: { inbound: DirectionAgent; outbound: DirectionAgent };
   timeoutsMs: { stt: number; llmFirstToken: number; llmTotal: number; tts: number };
   maxRetries: number;
   limits: {
@@ -37,6 +51,8 @@ export interface AiConfig {
     maxLlmTokens: number | null;
     /** The first sentence of a reply is released for speech at this length (AI_FIRST_SENTENCE_MIN_CHARS, default 24 like later sentences). */
     firstSentenceMinChars: number;
+    /** The first chunk of a reply may end at a comma/colon once it is this long, so speech starts before the sentence ends. 0 = sentence ends only. */
+    firstClauseMinChars: number;
     /** Simultaneous text-to-speech requests to one provider (AI_TTS_CONCURRENCY). 1 never trips a provider's limit. */
     ttsConcurrency: number;
   };
@@ -69,7 +85,22 @@ export interface AiConfig {
      * silence (AI_EARLY_COMMIT). Off by default: a caller who pauses after a full sentence is then answered early.
      */
     earlyCommit: boolean;
+    /** A quiet gap this short does not restart the minimum-speech count at the start of an utterance (AI_VAD_ONSET_HANGOVER_MS). */
+    onsetHangoverMs: number;
+    /**
+     * Which detector decides what is speech (AI_VAD_ENGINE): 'energy' (frame loudness, the default) or 'silero'
+     * (ONNX model; needs onnxruntime-node and a model file, otherwise the gateway reports it and uses 'energy').
+     */
+    engine: 'energy' | 'silero';
+    /** Silero: path of silero_vad.onnx (AI_VAD_SILERO_MODEL) and the speech probability that counts as speech (AI_VAD_SILERO_THRESHOLD, 0.5 like the source). */
+    silero: { modelPath: string | null; threshold: number };
   };
+  /**
+   * Streaming speech-to-text (AI_STT_STREAMING). Off by default. When on, caller audio goes to Deepgram over a
+   * WebSocket while the caller is still speaking; only FINAL text, at the confirmed end of the utterance, is used,
+   * and the batch provider chosen by AI_STT is the fallback for any stream that fails.
+   */
+  sttStreaming: { enabled: boolean; finalizeTimeoutMs: number; hedgeMs: number };
   utterance: { minDurationMs: number; skipUnlikelySpeech: boolean };
   bargeIn: {
     /** AI_BARGE_IN. Cancel the agent's reply when the caller starts talking. */
@@ -91,7 +122,8 @@ export interface AiConfig {
   /** Verified company knowledge (AI_KNOWLEDGE_DIR): retrieved per question, never pasted whole into the prompt. */
   knowledge: { dir: string | null; topK: number; maxChars: number };
   /** Rolling call notes (AI_CALL_NOTES): facts from turns that have scrolled out of the recent history. */
-  memory: { callNotes: boolean };
+  /** callNotes: AI_CALL_NOTES. contactDetails: AI_CONTACT_DETAILS (the name and phone number the caller gave, tracked so they are not asked for again). */
+  memory: { callNotes: boolean; contactDetails: boolean };
   /**
    * Half-duplex turn-taking: while the agent is speaking (plus a short guard afterwards) caller audio is
    * discarded instead of transcribed, so the agent never answers its own voice coming back through the
@@ -189,48 +221,79 @@ export function loadAiConfig(env: Env = process.env): AiConfigResult {
   if (autoHandle !== autoRaw) errors.push("AI_AUTO_HANDLE must be one of: off, inbound, outbound, all");
 
   // --- providers -----------------------------------------------------------
+  // The providers and models come from the model registry (the built-in entries are the original catalog; a model added or
+  // switched off on the AI page or in the registry JSON is seen here). An unknown, unported or switched-off choice is an error,
+  // never replaced by another one.
+  const registry = activeRegistry();
   const sttKey = (text(env, 'AI_STT') ?? DEFAULT_STT_KEY).toLowerCase();
-  const sttEntry = STT_CATALOG[sttKey] ?? STT_CATALOG[DEFAULT_STT_KEY];
-  if (!(sttKey in STT_CATALOG)) {
-    errors.push(`AI_STT '${sttKey}' is not a known STT slug (known: ${Object.keys(STT_CATALOG).join(', ')})`);
-  } else if (!sttEntry.implemented) {
-    errors.push(`AI_STT '${sttKey}' (${sttEntry.provider}) is not ported to the gateway yet; use nova-3 or groq_whisper`);
+  const sttFound = registry.stt(sttKey);
+  const sttResolved = sttFound ?? registry.stt(DEFAULT_STT_KEY)!;
+  if (!sttFound) {
+    errors.push(`AI_STT '${sttKey}' is not a known STT slug (known: ${registry.sttKeys().join(', ')})`);
+  } else if (!sttResolved.implemented) {
+    errors.push(`AI_STT '${sttKey}' (${sttResolved.vendor}) is not ported to the gateway yet; use nova-3 or groq_whisper`);
+  } else if (sttResolved.disabled) {
+    errors.push(`AI_STT '${sttKey}' is switched off in the model registry`);
   }
+  const sttEntry: SttSelection = {
+    provider: sttResolved.vendor,
+    providerId: sttResolved.providerId,
+    protocol: sttResolved.protocol,
+    model: sttResolved.model,
+    implemented: sttResolved.implemented,
+    params: sttResolved.params,
+  };
 
   const llmRequested = text(env, 'AI_LLM') ?? DEFAULT_LLM_KEY;
-  const llmKey = resolveLlmKey(llmRequested);
+  const llmKey = registry.resolveLlmKey(llmRequested);
   let llmSpec: OpenAiCompatibleSpec | null = null;
   if (!llmKey) {
-    errors.push(`AI_LLM '${llmRequested}' is not a known LLM slug (known: ${Object.keys(LLM_CATALOG).join(', ')})`);
+    errors.push(`AI_LLM '${llmRequested}' is not a known LLM slug (known: ${registry.llmKeys().join(', ')})`);
   } else {
+    const llmResolved = registry.llm(llmKey)!;
     try {
-      llmSpec = openAiCompatibleSpec(LLM_CATALOG[llmKey], env);
-      if (!llmSpec) errors.push(`AI_LLM '${llmKey}' (${LLM_CATALOG[llmKey].family}) is not ported to the gateway yet`);
+      llmSpec = buildLlmSpec(llmResolved, env);
+      if (!llmSpec) errors.push(`AI_LLM '${llmKey}' (${llmResolved.family ?? llmResolved.vendor}) is not ported to the gateway yet`);
+      else if (llmResolved.disabled) {
+        errors.push(`AI_LLM '${llmKey}' is switched off in the model registry`);
+        llmSpec = null;
+      }
     } catch (error) {
       errors.push((error as Error).message);
     }
   }
 
   const ttsKey = (text(env, 'AI_TTS') ?? DEFAULT_TTS_KEY).toLowerCase();
-  const ttsEntry = TTS_CATALOG[ttsKey];
+  const ttsEntry = registry.tts(ttsKey);
   let voice = text(env, 'AI_TTS_VOICE') ?? ttsEntry?.defaultVoice ?? '';
   if (!ttsEntry) {
-    errors.push(`AI_TTS '${ttsKey}' is not a known TTS slug (known: ${Object.keys(TTS_CATALOG).join(', ')})`);
+    errors.push(`AI_TTS '${ttsKey}' is not a known TTS slug (known: ${registry.ttsKeys().join(', ')})`);
   } else if (!ttsEntry.implemented) {
     errors.push(`AI_TTS '${ttsKey}' is not ported to the gateway yet; use cartesia or deepgram`);
-  } else if (ttsKey === 'deepgram' && !voice.startsWith('aura-')) {
+  } else if (ttsEntry.disabled) {
+    errors.push(`AI_TTS '${ttsKey}' is switched off in the model registry`);
+  } else if (ttsEntry.protocol === 'deepgram-tts' && !voice.startsWith('aura-')) {
     errors.push(
-      `AI_TTS=deepgram needs an Aura voice in AI_TTS_VOICE (for example aura-asteria-en); the source default '${voice}' uses Deepgram's v2 streaming protocol, which is not ported`
+      `AI_TTS=${ttsKey} needs an Aura voice in AI_TTS_VOICE (for example aura-asteria-en); the source default '${voice}' uses Deepgram's v2 streaming protocol, which is not ported`
     );
   }
 
   // --- credentials: names only, never values -------------------------------
   const requiredKeyEnv = new Set<string>();
-  if (sttEntry.provider === 'deepgram') requiredKeyEnv.add('DEEPGRAM_API_KEY');
-  if (sttEntry.provider === 'groq') requiredKeyEnv.add('GROQ_API_KEY');
+  if (sttResolved.keyEnv) requiredKeyEnv.add(sttResolved.keyEnv);
   if (llmSpec) requiredKeyEnv.add(llmSpec.apiKeyEnv);
-  if (ttsKey === 'deepgram') requiredKeyEnv.add('DEEPGRAM_API_KEY');
-  if (ttsKey === 'cartesia') requiredKeyEnv.add('CARTESIA_API_KEY');
+  if (ttsEntry?.keyEnv) requiredKeyEnv.add(ttsEntry.keyEnv);
+
+  // The model, when the operator chose one: it must be a model of the selected provider (an unsupported model is an error,
+  // never passed to the provider and never replaced by a default).
+  const ttsModelRaw = text(env, 'AI_TTS_MODEL') ?? null;
+  const knownModels = ttsEntry && ttsEntry.models.length > 0 ? ttsEntry.models : undefined;
+  let ttsModel: string | null = null;
+  if (ttsModelRaw) {
+    if (!knownModels) errors.push(`AI_TTS_MODEL '${ttsModelRaw}' cannot be used: '${ttsKey}' has no selectable model`);
+    else if (!knownModels.includes(ttsModelRaw)) errors.push(`AI_TTS_MODEL '${ttsModelRaw}' is not a model of '${ttsKey}' (supported: ${knownModels.join(', ')})`);
+    else ttsModel = ttsModelRaw;
+  }
   if (enabled) {
     for (const name of requiredKeyEnv) {
       if (!text(env, name)) errors.push(`${name} is required by the selected providers but is not set`);
@@ -243,11 +306,12 @@ export function loadAiConfig(env: Env = process.env): AiConfigResult {
   if (rateRaw !== undefined) {
     const rate = Number(rateRaw);
     if (!Number.isInteger(rate) || rate < 8000 || rate > 48000) {
-      errors.push('AI_AUDIO_SAMPLE_RATE must be an integer between 8000 and 48000');
+      errors.push(`AI_AUDIO_SAMPLE_RATE must be an integer between 8000 and 48000 (got ${rateRaw})`);
     } else {
       format = { sampleRate: rate, channels: 1, bitDepth: 16, endianness: 'little-endian' };
-      if (ttsKey === 'cartesia' && !CARTESIA_RAW_SAMPLE_RATES.includes(rate)) {
-        errors.push(`AI_AUDIO_SAMPLE_RATE ${rate} is not a raw rate Cartesia supports (${CARTESIA_RAW_SAMPLE_RATES.join(', ')})`);
+      const supported = ttsEntry && ttsEntry.sampleRates.length > 0 ? ttsEntry.sampleRates : undefined;
+      if (ttsEntry?.implemented && supported && !supported.includes(rate)) {
+        errors.push(`AI_AUDIO_SAMPLE_RATE ${rate} is not a raw rate ${ttsEntry.providerName ?? ttsKey} supports (${supported.join(', ')})`);
       }
     }
   } else if (enabled) {
@@ -271,6 +335,7 @@ export function loadAiConfig(env: Env = process.env): AiConfigResult {
       errors.push('AI_SYSTEM_PROMPT_FILE could not be read');
     }
   }
+  const promptBody = systemPrompt;
   const instructions = text(env, 'AI_SYSTEM_INSTRUCTIONS');
   if (instructions) systemPrompt = `${instructions}\n\n${systemPrompt}`;
 
@@ -284,9 +349,15 @@ export function loadAiConfig(env: Env = process.env): AiConfigResult {
       keyterms: (text(env, 'AI_STT_KEYTERMS') ?? '').split(',').map((t) => t.trim()).filter(Boolean),
     },
     llm: { key: llmKey ?? llmRequested, spec: llmSpec },
-    tts: { key: ttsKey, voice },
+    tts: { key: ttsKey, voice, model: ttsModel },
     systemPrompt,
     greeting: text(env, 'AI_GREETING') ?? null,
+    promptBody,
+    sharedInstructions: instructions ?? null,
+    directions: {
+      inbound: { instructions: text(env, 'AI_INBOUND_INSTRUCTIONS') ?? null, greeting: text(env, 'AI_INBOUND_GREETING') ?? null },
+      outbound: { instructions: text(env, 'AI_OUTBOUND_INSTRUCTIONS') ?? null, greeting: text(env, 'AI_OUTBOUND_GREETING') ?? null },
+    },
     timeoutsMs: {
       stt: num(env, 'AI_STT_TIMEOUT_MS', 8000, 500, 60000, errors),
       llmFirstToken: num(env, 'AI_LLM_FIRST_TOKEN_TIMEOUT_MS', 8000, 500, 60000, errors),
@@ -302,6 +373,7 @@ export function loadAiConfig(env: Env = process.env): AiConfigResult {
       maxLlmTokens: text(env, 'AI_LLM_MAX_TOKENS') ? num(env, 'AI_LLM_MAX_TOKENS', 300, 16, 4096, errors) : 220,
       ttsConcurrency: Math.floor(num(env, 'AI_TTS_CONCURRENCY', 1, 1, 4, errors)),
       firstSentenceMinChars: Math.floor(num(env, 'AI_FIRST_SENTENCE_MIN_CHARS', 24, 4, 200, errors)),
+      firstClauseMinChars: Math.floor(num(env, 'AI_FIRST_CLAUSE_MIN_CHARS', 32, 0, 200, errors)),
     },
     audio: {
       format,
@@ -315,11 +387,32 @@ export function loadAiConfig(env: Env = process.env): AiConfigResult {
       minSilenceMs: num(env, 'AI_VAD_MIN_SILENCE_MS', 1000, 100, 5000, errors),
       maxUtteranceMs: num(env, 'AI_VAD_MAX_UTTERANCE_MS', 15000, 1000, 60000, errors),
       preRollMs: num(env, 'AI_VAD_PREROLL_MS', 200, 0, 1000, errors),
-      adaptive: bool(env, 'AI_VAD_ADAPTIVE', true, errors),
+      // Off by default: the adaptive wait only ever saw pauses shorter than its own target, so it ratcheted down to its
+      // floor and cut callers off mid-sentence. The wait is the stable AI_VAD_MIN_SILENCE_MS unless this is turned on.
+      adaptive: bool(env, 'AI_VAD_ADAPTIVE', false, errors),
       minSilenceFloorMs: num(env, 'AI_VAD_MIN_SILENCE_FLOOR_MS', 450, 100, 3000, errors),
       softSilenceMs: num(env, 'AI_VAD_SOFT_SILENCE_MS', 350, 0, 3000, errors),
       speculativeStt: bool(env, 'AI_SPECULATIVE_STT', true, errors),
       earlyCommit: bool(env, 'AI_EARLY_COMMIT', false, errors),
+      onsetHangoverMs: num(env, 'AI_VAD_ONSET_HANGOVER_MS', 100, 0, 500, errors),
+      engine: ((): 'energy' | 'silero' => {
+        const raw = (text(env, 'AI_VAD_ENGINE') ?? 'energy').toLowerCase();
+        if (raw === 'energy' || raw === 'silero') return raw;
+        errors.push("AI_VAD_ENGINE must be 'energy' or 'silero'");
+        return 'energy';
+      })(),
+      silero: {
+        modelPath: text(env, 'AI_VAD_SILERO_MODEL') ?? null,
+        threshold: num(env, 'AI_VAD_SILERO_THRESHOLD', 0.5, 0.05, 0.95, errors),
+      },
+    },
+    sttStreaming: {
+      enabled: bool(env, 'AI_STT_STREAMING', false, errors),
+      // How long the end of an utterance waits for Deepgram's final text before the batch provider takes over.
+      finalizeTimeoutMs: num(env, 'AI_STT_STREAM_FINALIZE_MS', 1500, 200, 10000, errors),
+      // If the stream has not answered this long after the utterance ended, the batch request starts too, instead of only after
+      // the timeout. The stream still wins if it answers first. 0 turns it off.
+      hedgeMs: num(env, 'AI_STT_STREAM_HEDGE_MS', 700, 0, 5000, errors),
     },
     utterance: {
       minDurationMs: num(env, 'AI_MIN_UTTERANCE_MS', 300, 50, 5000, errors),
@@ -341,7 +434,7 @@ export function loadAiConfig(env: Env = process.env): AiConfigResult {
       topK: Math.floor(num(env, 'AI_KNOWLEDGE_TOP_K', 3, 1, 10, errors)),
       maxChars: Math.floor(num(env, 'AI_KNOWLEDGE_MAX_CHARS', 1200, 200, 6000, errors)),
     },
-    memory: { callNotes: bool(env, 'AI_CALL_NOTES', true, errors) },
+    memory: { callNotes: bool(env, 'AI_CALL_NOTES', true, errors), contactDetails: bool(env, 'AI_CONTACT_DETAILS', true, errors) },
     halfDuplex: bool(env, 'AI_HALF_DUPLEX', true, errors),
     playbackGuardMs: num(env, 'AI_PLAYBACK_GUARD_MS', 500, 0, 3000, errors),
     allowAgentHangup: bool(env, 'AI_ALLOW_AGENT_HANGUP', false, errors),
@@ -364,7 +457,7 @@ export function loadAiConfig(env: Env = process.env): AiConfigResult {
   const keyErrorPattern = /is required by the selected providers but is not set$/;
   const selectionErrors = reported.filter((e) => !keyErrorPattern.test(e));
   const missingKeys = [...requiredKeyEnv].filter((name) => !text(env, name));
-  const sttKeyEnv = sttEntry.provider === 'deepgram' ? 'DEEPGRAM_API_KEY' : sttEntry.provider === 'groq' ? 'GROQ_API_KEY' : null;
+  const sttKeyEnv = sttResolved.keyEnv;
   return {
     config,
     errors: reported,

@@ -16,7 +16,9 @@ export class TraceHub {
 
   constructor(
     private readonly sink: (event: AiInspectorEvent) => void,
-    private readonly showTranscripts: () => boolean
+    private readonly showTranscripts: () => boolean,
+    /** Where every event is also written (the observability store). Must not throw; a throw is swallowed anyway. */
+    private readonly persist?: (callId: string, event: AiInspectorEvent) => void
   ) {}
 
   publish(callId: string, input: TraceInput): AiInspectorEvent {
@@ -38,6 +40,11 @@ export class TraceHub {
     }
     list.push(event);
     if (list.length > PER_CALL_LIMIT) list.splice(0, list.length - PER_CALL_LIMIT);
+    try {
+      this.persist?.(callId, event);
+    } catch {
+      // Telemetry must never break the call pipeline.
+    }
     try {
       this.sink(event);
     } catch {

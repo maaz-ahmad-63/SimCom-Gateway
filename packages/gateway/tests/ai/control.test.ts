@@ -144,8 +144,7 @@ describe('AI control center (settings, credentials, passive mode, tests, usage)'
     const bad: Array<Record<string, unknown>> = [
       { stt: 'no-such-model' },
       { stt: 'assemblyai' }, // listed but not ported
-      { tts: 'elevenlabs' }, // listed but not ported
-      { llm: 'gemini_3_flash' }, // listed but not ported
+      { tts: 'murf' }, // listed but not ported
       { tts: 'deepgram', ttsVoice: 'flux-alexis-en' }, // v2 streaming voice, not ported
       { language: 'English please' },
       { audioSampleRate: 123 },
@@ -175,7 +174,7 @@ describe('AI control center (settings, credentials, passive mode, tests, usage)'
     expect(stt.assemblyai).toMatchObject({ implemented: false });
     expect(stt.assemblyai.unavailableReason).toMatch(/Not ported/);
     const llm = Object.fromEntries(catalog.llm.map((o: any) => [o.key, o]));
-    expect(llm.gemini_3_flash.implemented).toBe(false);
+    expect(llm.gemini_3_flash.implemented).toBe(true);
     expect(llm.groq_qwen_3_8_27b.supportedParams).toEqual(['maxTokens']);
     expect(llm.groq_qwen_3_8_27b.fixedParams).toMatchObject({ temperature: 0.4 });
   });

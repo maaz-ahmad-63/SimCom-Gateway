@@ -8,7 +8,7 @@ export interface AutomationDeps {
   manager: ICallSessionManager;
   eventBus: GatewayEventBus;
   /** Always the current effective configuration (settings can change at any time). */
-  getConfig: () => { config: AiConfig; passiveUsable: boolean; usable: boolean };
+  getConfig: () => { config: AiConfig; passiveUsable: boolean; usable: boolean; errors?: string[] };
   /** The runtime mode: automation does nothing while it is 'off'. */
   getMode: () => 'off' | 'passive' | 'active';
   /** Connection state of the modem; answering needs a READY modem. */
@@ -98,13 +98,14 @@ export class AiCallAutomation {
 
   /** Reasons automation must not act on a call, or an empty list if it may. */
   private blockers(direction: 'inbound' | 'outbound'): string[] {
-    const { config, passiveUsable, usable } = this.cfg;
+    const { config, passiveUsable, usable, errors } = this.cfg;
     const out: string[] = [];
     if (!config.enabled || this.deps.getMode() === 'off') out.push('the AI agent is off');
     if (!this.covers(direction)) out.push(`automatic attachment is not enabled for ${direction} calls`);
     // Replies mode needs the full configuration; passive transcription only needs speech-to-text.
     if (config.automation.autoReplies ? !usable : !passiveUsable) out.push('the AI configuration or provider keys are incomplete');
-    if (!config.audio.format) out.push('the gateway audio sample rate is not set');
+    // A rate that is set but invalid (160000 for 16000) is not "not set": say which it is.
+    if (!config.audio.format) out.push(errors?.find((e) => e.startsWith('AI_AUDIO_SAMPLE_RATE')) ?? 'the gateway audio sample rate is not set');
     return out;
   }
 

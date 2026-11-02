@@ -1,14 +1,17 @@
 import { AiConfig, readProviderKey } from '../config.js';
-import { FetchLike } from './http.js';
-import { OpenAiCompatibleLlm } from './llm.js';
-import { DeepgramStt, GroqWhisperStt } from './stt.js';
-import { CartesiaTts, DeepgramTts } from './tts.js';
+import { activeRegistry } from '../registry/active.js';
+import { CreateContext, LlmProtocol, protocolById, SttProtocol, TtsProtocol } from '../registry/protocols.js';
+import { ResolvedLlm, ResolvedStt, ResolvedTts } from '../registry/registry.js';
 import { sharedLimiter, LimitedTts } from '../tts-limiter.js';
-import { AiProviderError, AiStage, LlmProvider, ProviderSet, SttProvider, TtsProvider } from './types.js';
+import { deepgramUrl } from './endpoints.js';
+import { FetchLike } from './http.js';
+import { DeepgramStreamingStt, WebSocketFactory } from './stt-stream.js';
+import { AiProviderError, AiStage, LlmProvider, ProviderSet, StreamingSttProvider, SttProvider, TtsProvider } from './types.js';
 
 export * from './types.js';
 export { requestWithRetry, redactSecrets } from './http.js';
 export type { FetchLike } from './http.js';
+export { deepgramUrl, deepgramSpeakUrl } from './endpoints.js';
 
 export interface ProviderFactoryOptions {
   env?: Record<string, string | undefined>;
@@ -19,6 +22,8 @@ export interface ProviderFactoryOptions {
    * key is needed. Passive transcription uses 'stt'; the dashboard's LLM and TTS tests use 'llm' / 'tts'.
    */
   only?: AiStage;
+  /** Test seam for the streaming recognizer's WebSocket. Production uses Node's built-in one. */
+  webSocketFactory?: WebSocketFactory;
 }
 
 function stub(stage: AiStage): ProviderSet[AiStage] {
@@ -52,112 +57,82 @@ function stub(stage: AiStage): ProviderSet[AiStage] {
 }
 
 /**
- * Optional override of the Deepgram text-to-speech endpoint (the default is the AU region, as in the source project),
- * for comparing regions. The API key is sent to this URL, so it must be an https deepgram.com host.
- */
-export function deepgramUrl(name: string, value: string | undefined): string | undefined {
-  const raw = value?.trim();
-  if (!raw) return undefined;
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error(`${name} is not a valid URL`);
-  }
-  if (url.protocol !== 'https:' || !(url.hostname === 'deepgram.com' || url.hostname.endsWith('.deepgram.com'))) {
-    throw new Error(`${name} must be an https URL on deepgram.com (the API key is sent there)`);
-  }
-  return url.toString();
-}
-
-export function deepgramSpeakUrl(value: string | undefined): string | undefined {
-  return deepgramUrl('AI_DEEPGRAM_SPEAK_URL', value);
-}
-
-/**
- * Build the configured STT, LLM and TTS providers. Keys are read from the environment here, at
- * construction time, and live only inside the provider objects (never in config, status or logs).
- * Throws a plain Error naming the missing variable (never its value) if a key is absent.
+ * Build the configured STT, LLM and TTS providers. Each model names its provider and protocol in the registry; the protocol builds the
+ * client (protocols.ts), so nothing here lists providers. Keys are read from the credential the provider names (the encrypted store
+ * first, then the environment) at construction time, and live only inside the client built (never in config, status or logs). Throws a
+ * plain Error naming the missing variable (never its value) if a key is absent.
  */
 export function createProviders(config: AiConfig, options: ProviderFactoryOptions = {}): ProviderSet {
   const env = options.env ?? process.env;
   const fetchImpl: FetchLike = options.fetchImpl ?? ((url, init) => fetch(url, init));
+  const registry = activeRegistry();
   const key = (name: string): string => {
     const value = readProviderKey(env, name);
     if (!value) throw new Error(`${name} is required by the selected providers but is not set`);
     return value;
   };
-  const common = { fetchImpl, maxRetries: config.maxRetries, sleep: options.sleep };
   const want = (stage: AiStage): boolean => !options.only || options.only === stage;
+  const context = (model: ResolvedLlm | ResolvedStt | ResolvedTts): CreateContext => {
+    if (!model.keyEnv) throw new Error(`${model.stage.toUpperCase()} '${model.key}' has no credential`);
+    return {
+      config,
+      env,
+      fetchImpl,
+      maxRetries: config.maxRetries,
+      sleep: options.sleep,
+      apiKey: key(model.keyEnv),
+      endpoint: model.endpoint ?? undefined,
+      webSocketFactory: options.webSocketFactory,
+    };
+  };
 
   // STT
   let stt = stub('stt') as SttProvider;
   if (want('stt')) {
-    const sttEntry = config.stt.entry;
-    if (!sttEntry.implemented || !sttEntry.model) {
-      throw new Error(`STT '${config.stt.key}' is not implemented`);
+    const model = registry.stt(config.stt.key);
+    if (!model || !model.implemented || !model.model) throw new Error(`STT '${config.stt.key}' is not implemented`);
+    stt = (protocolById(model.protocol) as SttProtocol).create(context(model), model);
+  }
+
+  // Streaming STT (optional, off unless AI_STT_STREAMING). Needs a Deepgram key; without one the batch provider above
+  // simply keeps doing the work, so a missing key never blocks a call.
+  let sttStream: StreamingSttProvider | undefined;
+  if (want('stt') && config.sttStreaming.enabled) {
+    const deepgramKey = readProviderKey(env, 'DEEPGRAM_API_KEY');
+    if (deepgramKey) {
+      const selected = registry.stt(config.stt.key);
+      const deepgramSelected = selected?.protocol === 'deepgram-listen';
+      sttStream = new DeepgramStreamingStt({
+        apiKey: deepgramKey,
+        model: deepgramSelected && selected?.model ? selected.model : 'nova-3',
+        // As in the batch provider: the multilingual model is selected by language=multi.
+        language: config.stt.entry.params.language === 'multi' ? 'multi' : (env.AI_STT_LANGUAGE ?? process.env.AI_STT_LANGUAGE)?.trim() || config.language,
+        keyterms: config.stt.keyterms,
+        baseUrl: (deepgramSelected ? selected?.endpoint : null) ?? deepgramUrl('AI_DEEPGRAM_LISTEN_URL', env.AI_DEEPGRAM_LISTEN_URL ?? process.env.AI_DEEPGRAM_LISTEN_URL),
+        finalizeTimeoutMs: config.sttStreaming.finalizeTimeoutMs,
+        warmStandby: options.webSocketFactory === undefined, // a spare idle connection; tests that inject a socket factory count connections
+        webSocketFactory: options.webSocketFactory,
+      });
     }
-    stt =
-      sttEntry.provider === 'deepgram'
-        ? new DeepgramStt({
-            ...common,
-            apiKey: key('DEEPGRAM_API_KEY'),
-            model: sttEntry.model,
-            // The multilingual model is selected by language=multi; without it nova-3-multi would behave like nova-3.
-            language: config.stt.key === 'nova-3-multi' ? 'multi' : config.language,
-            keyterms: config.stt.keyterms,
-            baseUrl: deepgramUrl('AI_DEEPGRAM_LISTEN_URL', env.AI_DEEPGRAM_LISTEN_URL ?? process.env.AI_DEEPGRAM_LISTEN_URL),
-            timeoutMs: config.timeoutsMs.stt,
-          })
-        : new GroqWhisperStt({
-            ...common,
-            apiKey: key('GROQ_API_KEY'),
-            model: sttEntry.model,
-            // AI_STT_LANGUAGE can pin what the caller speaks without changing the language the agent writes in.
-            language: (env.AI_STT_LANGUAGE ?? process.env.AI_STT_LANGUAGE)?.trim() || config.language,
-            prompt: (env.AI_STT_PROMPT ?? process.env.AI_STT_PROMPT)?.trim() || undefined,
-            timeoutMs: config.timeoutsMs.stt,
-          });
   }
 
   // LLM
   let llm = stub('llm') as LlmProvider;
   if (want('llm')) {
-    const spec = config.llm.spec;
-    if (!spec) throw new Error(`LLM '${config.llm.key}' is not implemented`);
-    llm = new OpenAiCompatibleLlm({
-      ...common,
-      spec,
-      apiKey: key(spec.apiKeyEnv),
-      firstTokenTimeoutMs: config.timeoutsMs.llmFirstToken,
-      totalTimeoutMs: config.timeoutsMs.llmTotal,
-      maxTokens: config.limits.maxLlmTokens,
-    });
+    const model = registry.llm(config.llm.key);
+    if (!model || !config.llm.spec) throw new Error(`LLM '${config.llm.key}' is not implemented`);
+    llm = (protocolById(model.protocol) as LlmProtocol).create(context(model), model);
   }
 
   // TTS
   let tts = stub('tts') as TtsProvider;
   if (want('tts')) {
-    tts =
-      config.tts.key === 'cartesia'
-        ? new CartesiaTts({
-            ...common,
-            apiKey: key('CARTESIA_API_KEY'),
-            voice: config.tts.voice,
-            language: config.language,
-            version: env.CARTESIA_VERSION ?? process.env.CARTESIA_VERSION,
-            timeoutMs: config.timeoutsMs.tts,
-          })
-        : new DeepgramTts({
-            ...common,
-            apiKey: key('DEEPGRAM_API_KEY'),
-            voice: config.tts.voice,
-            baseUrl: deepgramSpeakUrl(env.AI_DEEPGRAM_SPEAK_URL ?? process.env.AI_DEEPGRAM_SPEAK_URL),
-            timeoutMs: config.timeoutsMs.tts,
-          });
+    const model = registry.tts(config.tts.key);
+    if (!model || !model.implemented) throw new Error(`TTS '${config.tts.key}' is not implemented`);
+    tts = (protocolById(model.protocol) as TtsProtocol).create(context(model), model);
     // Never more than the configured number of simultaneous requests to this provider, process-wide.
     tts = new LimitedTts(tts, sharedLimiter(config.tts.key, config.limits.ttsConcurrency));
   }
 
-  return { stt, llm, tts };
+  return { stt, llm, tts, ...(sttStream ? { sttStream } : {}) };
 }

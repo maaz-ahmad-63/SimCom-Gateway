@@ -33,10 +33,18 @@ export interface PacedPlaybackResult {
    * the write-ahead absorbed.
    */
   riskFrames: number;
+  /** Longest single write, and writes slower than one frame: the port pushing back, as opposed to the loop being late. */
+  maxWriteMs: number;
+  slowWrites: number;
   stoppedBy: string | null;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+function noteWrite(result: PacedPlaybackResult, ms: number, frameMs: number): void {
+  if (ms > result.maxWriteMs) result.maxWriteMs = ms;
+  if (ms > frameMs) result.slowWrites++;
+}
 
 export async function playPcmPaced(
   write: (chunk: Buffer) => Promise<void>,
@@ -53,6 +61,8 @@ export async function playPcmPaced(
     lateFrames: 0,
     maxLateMs: 0,
     riskFrames: 0,
+    maxWriteMs: 0,
+    slowWrites: 0,
     stoppedBy: null,
   };
 
@@ -74,7 +84,9 @@ export async function playPcmPaced(
     if (lateMs > result.maxLateMs) result.maxLateMs = lateMs;
 
     const chunk = pcm.subarray(offset, Math.min(offset + frameBytes, pcm.length));
+    const writeStart = performance.now();
     await write(chunk);
+    noteWrite(result, performance.now() - writeStart, frameMs);
     result.framesWritten++;
     result.bytesWritten += chunk.length;
   }
@@ -111,7 +123,7 @@ export async function playPcmStreamPaced(
   const frameBytes = Math.round((options.sampleRate * frameMs) / 1000) * 2;
   const prerollBytes = Math.round((options.sampleRate * (options.prerollMs ?? 150)) / 1000) * 2;
 
-  const result: PacedStreamResult = { framesWritten: 0, bytesWritten: 0, lateFrames: 0, maxLateMs: 0, riskFrames: 0, stoppedBy: null, underruns: 0 };
+  const result: PacedStreamResult = { framesWritten: 0, bytesWritten: 0, lateFrames: 0, maxLateMs: 0, riskFrames: 0, maxWriteMs: 0, slowWrites: 0, stoppedBy: null, underruns: 0 };
   const iterator = chunks[Symbol.asyncIterator]();
   let buffer: Buffer = Buffer.alloc(0);
   let ended = false;
@@ -163,7 +175,9 @@ export async function playPcmStreamPaced(
         announced = true;
         options.onFirstWrite?.();
       }
+      const writeStart = performance.now();
       await write(frame);
+      noteWrite(result, performance.now() - writeStart, frameMs);
       result.framesWritten++;
       result.bytesWritten += frame.length;
     }

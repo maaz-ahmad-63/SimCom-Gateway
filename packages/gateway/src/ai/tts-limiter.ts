@@ -109,11 +109,12 @@ export class LimitedTts implements TtsProvider {
   get synthesizeStream(): TtsProvider['synthesizeStream'] {
     if (!this.inner.synthesizeStream) return undefined;
     const inner = this.inner.synthesizeStream.bind(this.inner);
-    return (text, format, signal) => {
+    return (text, format, signal, hooks) => {
       const queue = new ChunkQueue();
       void this.limiter
         .run(
           async () => {
+            hooks?.onStart?.();
             for await (const chunk of inner(text, format, signal)) queue.push(chunk);
           },
           signal,

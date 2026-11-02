@@ -9,6 +9,7 @@ import {
 } from '../../lib/config';
 import { apiClient, GatewayApiClient, GatewayApiError } from '../../lib/api-client';
 import { useGateway } from '../../lib/context/GatewayContext';
+import { portText } from '../../lib/hardware-mode';
 import {
   Sliders,
   CheckCircle2,
@@ -23,7 +24,7 @@ import {
 } from 'lucide-react';
 
 export default function SettingsPage() {
-  const { health, refreshHealth } = useGateway();
+  const { hardware, linkIssue, refreshHealth } = useGateway();
 
   const [url, setUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -218,18 +219,30 @@ export default function SettingsPage() {
           Gateway Host Configuration (Read-Only)
         </h2>
 
+        {linkIssue && (
+          <div role="alert" className="p-3.5 rounded-lg bg-rose-950/40 border border-rose-800/60 text-rose-300 text-[11px] leading-relaxed">
+            <span className="font-bold">Cannot read the gateway from this browser: </span>
+            {linkIssue.message}
+          </div>
+        )}
+        {!hardware.known && (
+          <p className="text-[11px] text-slate-500">
+            The COM ports below are reported by the gateway. Until it answers they are shown as unknown, not as unconfigured.
+          </p>
+        )}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-mono">
           <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/80">
             <span className="text-slate-500 text-[10px] uppercase">Modem AT Port</span>
             <div className="text-slate-200 font-semibold mt-0.5">
-              {health?.modem.atPort || 'not configured'} (115200 baud)
+              {portText(hardware, 'at')}{hardware.known ? ' (115200 baud)' : ''}
             </div>
           </div>
 
           <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/80">
             <span className="text-slate-500 text-[10px] uppercase">USB Audio Port</span>
             <div className="text-slate-200 font-semibold mt-0.5">
-              {health?.modem.audioPort || 'not configured'} (115200 baud)
+              {portText(hardware, 'audio')}{hardware.known ? ' (115200 baud)' : ''}
             </div>
           </div>
         </div>

@@ -3,6 +3,9 @@ import { AiConfigResult, readProviderKey } from './config.js';
 
 export type CheckStatus = 'pass' | 'fail' | 'unverified';
 
+/** The module's documented PCM rates over USB audio: AT+CPCMFRM 0 = 8 kHz, 1 = 16 kHz. */
+export const CPCMFRM_RATE: Record<number, number> = { 0: 8000, 1: 16000 };
+
 export interface ReadinessCheck {
   name: string;
   status: CheckStatus;
@@ -139,6 +142,27 @@ export function checkAiReadiness(input: ReadinessInput): AiReadiness {
     );
   } else {
     add('inbound-wire', 'pass', 'PCM bytes are flowing now (flowing is not speech)', true);
+  }
+
+  // 7b. The module's own rate. The gateway writes frames at the configured rate and the module plays them at its own, so
+  // a disagreement (16 kHz audio into a module still at 8 kHz) plays at the wrong speed and breaks up, and caller audio
+  // would be labelled with the wrong rate for speech recognition. Compared only once the module has said which it uses.
+  if (config.audio.format) {
+    const cpcmfrm = usb?.moduleAudioFormat?.cpcmfrm;
+    const moduleRate = cpcmfrm === null || cpcmfrm === undefined ? null : (CPCMFRM_RATE[cpcmfrm] ?? null);
+    if (moduleRate !== null && cpcmfrm !== null && cpcmfrm !== undefined) {
+      const configured = config.audio.format.sampleRate;
+      if (moduleRate === configured) {
+        add('audio-rate', 'pass', `the module and the gateway both use ${configured} Hz`, true);
+      } else {
+        add(
+          'audio-rate',
+          'fail',
+          `the module reports ${moduleRate} Hz (AT+CPCMFRM=${cpcmfrm}) but the gateway is set to ${configured} Hz; speech would play at the wrong speed and break up. Set the gateway sample rate to ${moduleRate} Hz (TTS tab), or put the module on ${configured} Hz, before the call`,
+          true
+        );
+      }
+    }
   }
 
   // 8. Incoming audio: evidence flag AND live wire state

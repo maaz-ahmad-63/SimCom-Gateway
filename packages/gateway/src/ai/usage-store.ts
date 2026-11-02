@@ -32,6 +32,18 @@ export interface TurnRecord {
   lateFrames?: number | null;
   riskFrames?: number | null;
   knowledgeHits?: number | null;
+  /** Correlation id of the turn (`<callId>:t<n>`), the same id the trace events carry. */
+  turnRef?: string | null;
+  llmTotalMs?: number | null;
+  ttsTotalMs?: number | null;
+  playMs?: number | null;
+  /** True/false when a model request was made (does the model stream?); null/undefined when none was. */
+  tftAvailable?: boolean | null;
+  /** What sttMs measured: 'batch' (whole request), 'speculative' (request started during the pause), 'stream' (wait for the final text of a live stream). */
+  sttMode?: 'batch' | 'speculative' | 'stream' | null;
+  maxLateMs?: number | null;
+  loopLagMaxMs?: number | null;
+  cancelSource?: string | null;
 }
 
 interface Row {
@@ -70,8 +82,9 @@ export class AiUsageStore {
       .prepare(
         `INSERT INTO ai_turns (call_id, at, status, reason, stt_ms, llm_first_token_ms, tts_first_ms, total_ms, utterance_ms,
            stt_seconds, llm_prompt_tokens, llm_completion_tokens, tts_chars, stt_key, llm_key, tts_key, mock, transcript, reply,
-           first_audio_ms, perceived_first_audio_ms, endpoint_ms, stt_waited_ms, speculative_stt, late_frames, risk_frames, knowledge_hits)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           first_audio_ms, perceived_first_audio_ms, endpoint_ms, stt_waited_ms, speculative_stt, late_frames, risk_frames, knowledge_hits,
+           turn_ref, llm_total_ms, tts_total_ms, play_ms, tft_available, stt_mode, max_late_ms, loop_lag_max_ms, cancel_source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         turn.callId,
@@ -100,7 +113,16 @@ export class AiUsageStore {
         turn.speculativeStt === undefined || turn.speculativeStt === null ? null : turn.speculativeStt ? 1 : 0,
         turn.lateFrames ?? null,
         turn.riskFrames ?? null,
-        turn.knowledgeHits ?? null
+        turn.knowledgeHits ?? null,
+        turn.turnRef ?? null,
+        turn.llmTotalMs ?? null,
+        turn.ttsTotalMs ?? null,
+        turn.playMs ?? null,
+        turn.tftAvailable === undefined || turn.tftAvailable === null ? null : turn.tftAvailable ? 1 : 0,
+        turn.sttMode ?? null,
+        turn.maxLateMs ?? null,
+        turn.loopLagMaxMs ?? null,
+        turn.cancelSource ?? null
       );
   }
 

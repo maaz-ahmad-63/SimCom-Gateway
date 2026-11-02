@@ -28,12 +28,49 @@ export interface HardwareStatus {
       lastFailure: { at: string; message: string } | null;
     } | null;
   };
+  /** Automatic port discovery (hardware mode). Missing on older gateways and in mock mode. */
+  discovery?: DiscoveryView | null;
   usbAudio: Record<string, unknown> | null;
   audio: { bytesReceived: number; framesReceived: number; msSinceLastFrame: number | null; lastFrameAt: string | null } | null;
   layers: HardwareLayer[];
 }
 
+/** What the gateway reports about finding the modem's ports (GET /api/gateway/hardware/status, `discovery`). */
+export interface DiscoveryView {
+  mode: 'explicit' | 'discovery';
+  explicit: { at: string | null; audio: string | null };
+  selector: string | null;
+  lastScanAt: string | null;
+  ok: boolean | null;
+  code: string | null;
+  message: string | null;
+  warnings: string[];
+  at: string | null;
+  audio: string | null;
+  device: { id: string; vendorId: string; productId: string | null } | null;
+  modems: Array<{ id: string; at: string | null; audio: string | null; problems: string[]; interfaces: Array<{ path: string; interface: string | null; role: string; name: string | null }> }>;
+}
+
+/** One line for the discovery state, in the operator's words. Never infers anything the gateway did not report. */
+export function discoverySummary(d: DiscoveryView | null | undefined): { state: LayerState; text: string } {
+  if (!d) return { state: 'unknown', text: 'This gateway does not report port discovery (mock mode or an older build).' };
+  if (d.mode === 'explicit') {
+    return {
+      state: d.warnings.length > 0 ? 'warn' : 'ok',
+      text: `Ports set explicitly: AT ${d.explicit.at}, USB audio ${d.explicit.audio}${d.warnings.length ? `. ${d.warnings.join('. ')}` : ''}`,
+    };
+  }
+  if (d.ok === null) return { state: 'unknown', text: 'Discovery has not run yet: the gateway looks for the modem when it opens its ports.' };
+  if (d.ok === false) return { state: 'bad', text: d.message ?? `Discovery failed (${d.code ?? 'unknown'})` };
+  return {
+    state: d.warnings.length > 0 ? 'warn' : 'ok',
+    text: `Discovered automatically: AT ${d.at}, USB audio ${d.audio}${d.device ? ` on modem ${d.device.id}` : ''}${d.warnings.length ? `. ${d.warnings.join('. ')}` : ''}`,
+  };
+}
+
 export interface HardwarePorts {
+  mode?: 'explicit' | 'discovery';
+  modems?: Array<{ id: string; at: string | null; audio: string | null; problems: string[] }>;
   configured: { at: string | null; audio: string | null };
   ports: Array<{ path: string; interface: string | null; role: string; roleBasis?: string; vendorId?: string }>;
   findings: Array<{ level: 'info' | 'warn' | 'error'; message: string }>;

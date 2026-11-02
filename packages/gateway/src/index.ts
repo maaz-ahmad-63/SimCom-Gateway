@@ -23,8 +23,9 @@ async function main() {
       `Driver: ${server.modem.driverType.toUpperCase()} (Simulated: ${server.modem.isSimulated})`
     );
     if (server.modem.driverType === 'hardware') {
-      rootLogger.info(`Physical AT Port: ${server.config.atPort} @ ${server.config.atBaudRate} baud`);
-      rootLogger.info(`Physical Audio Port: ${server.config.audioPort} @ ${server.config.audioBaudRate} baud`);
+      const auto = (port: string) => (port === 'auto' ? 'discovered automatically from the modem\'s USB identity (see /api/gateway/hardware/status)' : port);
+      rootLogger.info(`Physical AT Port: ${auto(server.config.atPort)} @ ${server.config.atBaudRate} baud`);
+      rootLogger.info(`Physical Audio Port: ${auto(server.config.audioPort)} @ ${server.config.audioBaudRate} baud`);
     }
 
     const shutdown = async () => {

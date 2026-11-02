@@ -8,10 +8,10 @@ import { Cpu, HardDrive, Radio, Signal, Server } from 'lucide-react';
 export function ModemTelemetryCard() {
   const { health, telemetry, isSimulated } = useGateway();
 
-  const model = health?.modem?.info?.model || 'SIMCOM_SIM7600EI';
-  const firmware = health?.modem?.info?.firmwareRevision || 'SIM7600M21-A_V1.1';
-  const carrier = telemetry.network?.operatorName || health?.modem?.network?.operatorName || 'Vi India';
-  const regStatus = telemetry.network?.registration || health?.modem?.network?.registration || 'REGISTERED_HOME';
+  const model = health?.modem?.info?.model || '—';
+  const firmware = health?.modem?.info?.firmwareRevision || '—';
+  const carrier = telemetry.network?.operatorName || health?.modem?.network?.operatorName || '—';
+  const regStatus = telemetry.network?.registration || health?.modem?.network?.registration || 'UNKNOWN';
   const signal = telemetry.signal || health?.modem?.signal;
   const uptime = health?.uptimeSeconds ? formatDuration(health.uptimeSeconds) : '—';
   const memoryMb = health?.system?.memoryUsageMb ?? 0;

@@ -319,7 +319,7 @@ describe('configuration', () => {
   it('selects Deepgram for speech only when asked, and only with an Aura voice', () => {
     expect(() => makeConfig({ AI_TTS: 'deepgram', AI_TTS_VOICE: 'flux-alexis-en' })).toThrow(/Aura voice/);
     const cfg = makeConfig({ AI_TTS: 'deepgram', AI_TTS_VOICE: 'aura-asteria-en' });
-    expect(cfg.tts).toEqual({ key: 'deepgram', voice: 'aura-asteria-en' });
+    expect(cfg.tts).toEqual({ key: 'deepgram', voice: 'aura-asteria-en', model: null });
     expect(cfg.requiredKeyEnv).toContain('DEEPGRAM_API_KEY');
     expect(ToneTts).toBeDefined();
   });

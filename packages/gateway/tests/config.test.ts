@@ -74,12 +74,12 @@ describe('loadConfig environment parsing', () => {
   describe('serial ports', () => {
     const hardware = { modemDriver: 'hardware' as const, gatewayApiKey: 'secure-windows-hardware-key-32ch' };
 
-    it('requires both ports to be set explicitly in hardware mode', () => {
-      expect(() => loadConfig(hardware)).toThrow(/MODEM_AT_PORT and MODEM_AUDIO_PORT/);
+    it('discovers a port that is not set, instead of assuming a COM number (the schema default is never used)', () => {
+      expect(loadConfig(hardware)).toMatchObject({ atPort: 'auto', audioPort: 'auto' });
       process.env.MODEM_AT_PORT = 'COM22';
-      expect(() => loadConfig(hardware)).toThrow(/MODEM_AT_PORT and MODEM_AUDIO_PORT/);
+      expect(loadConfig(hardware)).toMatchObject({ atPort: 'COM22', audioPort: 'auto' });
       process.env.MODEM_AUDIO_PORT = '   ';
-      expect(() => loadConfig(hardware)).toThrow(/MODEM_AT_PORT and MODEM_AUDIO_PORT/);
+      expect(loadConfig(hardware)).toMatchObject({ atPort: 'COM22', audioPort: 'auto' });
     });
 
     it('reads any port assignment from the environment', () => {

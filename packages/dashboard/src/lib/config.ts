@@ -14,6 +14,22 @@ const STORAGE_KEY_API_KEY = 'sim_gateway_api_key';
 export const DEFAULT_GATEWAY_URL =
   process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://127.0.0.1:4000';
 
+/** The gateway's default port. */
+const GATEWAY_PORT = 4000;
+
+/**
+ * The address a browser uses when nothing was saved on the Settings page and no build-time default exists. 127.0.0.1 means
+ * "this browser's own computer", which is wrong whenever the dashboard page was opened from another machine (a Mac browser on
+ * the Windows PC's LAN address), so the default is the host the page itself was loaded from. A gateway on yet another
+ * machine is set on the Settings page.
+ */
+export function defaultGatewayUrl(pageHostname?: string | null): string {
+  if (process.env.NEXT_PUBLIC_GATEWAY_URL) return process.env.NEXT_PUBLIC_GATEWAY_URL;
+  const host = pageHostname?.trim();
+  if (!host) return DEFAULT_GATEWAY_URL;
+  return `http://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}:${GATEWAY_PORT}`;
+}
+
 export const DEFAULT_API_KEY =
   process.env.NEXT_PUBLIC_GATEWAY_API_KEY || 'change-this-to-a-secure-random-token';
 
@@ -29,7 +45,7 @@ export function getGatewayClientConfig(): GatewayClientConfig {
   const storedKey = localStorage.getItem(STORAGE_KEY_API_KEY);
 
   return {
-    gatewayUrl: storedUrl || DEFAULT_GATEWAY_URL,
+    gatewayUrl: storedUrl || defaultGatewayUrl(window.location.hostname),
     apiKey: storedKey || DEFAULT_API_KEY,
   };
 }

@@ -8,6 +8,29 @@ export interface SerialTransportOptions {
   baudRate: number;
   lock?: boolean;
   autoOpen?: boolean;
+  /**
+   * Wait for the device to drain each write before it resolves (default true, and what every port uses today). The wait is
+   * also the audio port's backpressure: it bounds how much stale audio can be queued behind a barge-in. Turning it off for
+   * audio would remove that bound, so it is only a switch for a hardware experiment, never on by default.
+   */
+  drainAfterWrite?: boolean;
+}
+
+/** The two port operations a write uses (a test seam; the real one is serialport's SerialPort). */
+export interface WritablePort {
+  write(data: string | Buffer, callback: (err: Error | null | undefined) => void): unknown;
+  drain(callback: (err: Error | null | undefined) => void): unknown;
+}
+
+/** One write: resolved once the OS accepted the data, and, when asked, once the device has drained it. */
+export function writeToPort(port: WritablePort, data: string | Buffer, drain: boolean, fail: (err: Error, what: string) => Error): Promise<void> {
+  return new Promise((resolve, reject) => {
+    port.write(data, (err) => {
+      if (err) return reject(fail(err, 'write'));
+      if (!drain) return resolve();
+      port.drain((drainErr) => (drainErr ? reject(fail(drainErr, 'drain')) : resolve()));
+    });
+  });
 }
 
 /**
@@ -75,6 +98,7 @@ export class NodeSerialTransport extends EventEmitter implements ISerialTranspor
   readonly path: string;
   readonly baudRate: number;
   private readonly lock: boolean;
+  private readonly drainAfterWrite: boolean;
   private readonly logger: Logger;
   private port: SerialPort | null = null;
   private readonly hostClosing = new WeakSet<SerialPort>();
@@ -88,6 +112,7 @@ export class NodeSerialTransport extends EventEmitter implements ISerialTranspor
     this.path = options.path;
     this.baudRate = options.baudRate;
     this.lock = options.lock ?? true;
+    this.drainAfterWrite = options.drainAfterWrite ?? true;
     this.logger = createLogger(`Serial:${this.path}`);
   }
 
@@ -296,21 +321,7 @@ export class NodeSerialTransport extends EventEmitter implements ISerialTranspor
       return err;
     };
 
-    return new Promise((resolve, reject) => {
-      port.write(data, (err) => {
-        if (err) {
-          reject(fail(err, 'write'));
-        } else {
-          port.drain((drainErr) => {
-            if (drainErr) {
-              reject(fail(drainErr, 'drain'));
-            } else {
-              resolve();
-            }
-          });
-        }
-      });
-    });
+    return writeToPort(port, data, this.drainAfterWrite, fail);
   }
 }
 

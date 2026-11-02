@@ -340,7 +340,11 @@ line, network and handset add delay that cannot be measured from here. The gatew
 | Setting | Default | Meaning |
 |---|---|---|
 | `AI_VAD_MIN_SILENCE_MS` | 1000 | Silence that ends a caller turn. With adaptive on this is the ceiling. |
-| `AI_VAD_ADAPTIVE` | true | Learns this caller's mid-sentence pause length (never below `AI_VAD_MIN_SILENCE_FLOOR_MS`, default 450) and raises the loudness threshold on a hissy line. |
+| `AI_VAD_ADAPTIVE` | false | Learns this caller's mid-sentence pause length (never below `AI_VAD_MIN_SILENCE_FLOOR_MS`, default 450) and raises the loudness threshold on a hissy line. **Off by default**: it only ever saw pauses shorter than its own current wait (a longer pause ended the utterance and was never learned), so its wait ratcheted down to the floor and callers were cut off mid-sentence. With it off the wait is exactly `AI_VAD_MIN_SILENCE_MS`. |
+| `AI_VAD_ONSET_HANGOVER_MS` | 100 | Before speech has lasted `AI_VAD_MIN_SPEECH_MS`, a quiet gap up to this long does not restart the count, and short bursts are kept as pre-roll. A short first word ("I", "yes") followed by a brief gap is no longer thrown away; a lone click still does not open an utterance. |
+| `AI_STT_STREAMING` | false (also a dashboard setting: AI Agent > Speech-to-text) | Streams caller audio (8 kHz mono, declared as 8 kHz) to Deepgram over a WebSocket while they speak, using the source project's model, language, AU/global endpoint rule and keyterms. Only FINAL text, requested at the confirmed end of the utterance, is used; an interim hypothesis never starts a reply. If the stream fails or times out (`AI_STT_STREAM_FINALIZE_MS`, 1500) the batch provider chosen by `AI_STT` transcribes the audio. Needs `DEEPGRAM_API_KEY`; without it the batch provider is used and an alert says so. While a stream is active the speculative batch request and `AI_EARLY_COMMIT` are not used. **Not yet exercised against the real Deepgram service.** |
+| `AI_FIRST_CLAUSE_MIN_CHARS` | 32 | The first chunk of a reply may end at a comma, semicolon, colon or dash once it is this many characters long, so speech synthesis starts before the first sentence is finished. Only the first chunk of a reply is cut this way. `0` restores sentence-end-only behaviour. |
+| `AI_VAD_ENGINE` | energy | `silero` uses the Silero model as the speech detector (`AI_VAD_SILERO_MODEL`, `AI_VAD_SILERO_THRESHOLD` 0.5). It needs `onnxruntime-node` and the model file, neither of which is in the repository; if either is missing the gateway says what is missing and keeps the energy detector. 8 kHz audio is given to the model as 8 kHz. **Not yet exercised against the real model or runtime.** |
 | `AI_SPECULATIVE_STT` | true | After `AI_VAD_SOFT_SILENCE_MS` (350) of silence, transcribe what was said so far. If the caller was finished the turn reuses it (one request); if they carry on it is withdrawn. A request is never a turn: only the real end of the utterance starts one. |
 | `AI_EARLY_COMMIT` | false | Answer as soon as the speculative transcript is a finished sentence (ends in . ? !, 3+ words, 1+ s of speech), without waiting out the rest of the silence. If the caller was not done, they interrupt like any barge-in and the two parts are merged. Try it on a supervised call first. |
 | `AI_BARGE_IN_WHILE_SPEAKING` | true | Half-duplex used to discard caller audio while the agent spoke, so an interruption could never be heard. Now that audio is watched for sustained speech (`AI_BARGE_IN_MS`, 300) well above the line's own level (`AI_BARGE_IN_ECHO_MULT`, 2.5x). Set false for strict half-duplex. |
@@ -389,3 +393,116 @@ dependency; nothing else changes. Write short, factual, self-contained passages;
    `AI_BARGE_IN_WHILE_SPEAKING=false` and tell us what the log said.
 3. Compare `gapRiskFrames` over several replies. If it is regularly above 0, try `AI_PLAYBACK_LEAD_FRAMES=3`.
 4. Try `AI_EARLY_COMMIT=true` on a test call before relying on it.
+
+## Turn timing, fallbacks and empty replies
+
+Each turn's `call` event on the timeline carries one set of figures, all measured from the end of the caller's speech on the
+monotonic clock: transcript ready, first model token, model done, first synthesized audio, **first audio written to the modem port**
+(`firstAudioLatencyMs`, what the caller waits), and **playback duration** (`playbackMs`, how long the reply took to speak: not
+waiting time). A write is not a sound heard. The same event names what stalled the loop during the turn: `loopLagMaxMs` (the
+event loop), `gcMaxMs` (garbage collection), `maxWriteMs` (the slowest single write to the audio port) and `syncIoMaxMs` with
+`syncIoLabel` (the slowest synchronous disk write, for example a call recording write).
+
+When the Deepgram stream's words are not used the speech-to-text result says why (`streamFallbackReason`, also in the timeline text and
+the gateway log): the stream failed (with the provider's error), no final text arrived (with how the wait ended and how long it was),
+it returned no words for speech-like audio, no stream was open, or audio from an interrupted turn was merged so the whole audio was
+transcribed in one request. The stream is only treated as finished when the server has actually answered; silence alone is not an answer.
+
+A model reply with no text is never spoken. It is asked for once more, and if that is empty too the turn fails with
+`reason: llm-empty` and the cause in the telemetry (for instance "the token budget ran out before any reply text"); at most two model
+requests are made. `AI_LLM_REASONING_EFFORT` (default `low`) and `AI_LLM_REASONING_TOKENS` (default 1024) apply to the gpt-oss models,
+whose hidden reasoning counts against the token budget. `AI_CONTACT_DETAILS` (default on) tracks the name, phone number and email address the caller
+gives and tells the model, every turn, what is known and what is still unconfirmed. Each is confirmed explicitly: it is read back once
+(a phone number in small groups, an email spelled letter by letter with "at" and "dot", a name said back with an offer to spell
+it) and counts as confirmed only when the caller agrees to that read-back. Nothing is guessed: an unclear digit stays a `?`, an
+email is only what was said (no completed domain, no corrected spelling), a correction replaces the old value and starts
+unconfirmed, and only one detail is read back at a time. English words only.
+
+## Campaigns
+
+The Campaigns page (`/campaigns`) runs an outbound list through the same call lifecycle as the dial pad. A campaign is started from an idle gateway, so the check is limited to what can be known without a call: the AI is enabled with its
+keys, the hardware and modem are ready, automatic replies are on, automatic handling includes outbound calls
+(`AI_AUTO_HANDLE=outbound` or `all`, or the equivalent dashboard setting), and both audio paths have been confirmed. Anything missing
+is named and the start is refused, because otherwise the person would hear silence. The checks that need a live call (audio
+flowing, the call being active) happen when the call is answered: if the agent then does not join, the campaign pauses and alerts. Each contact's details reach the agent as per-call context; the global
+prompt is never changed. See `docs/API.md` (Campaigns) for the endpoints and the rules the engine applies before every call.
+Calling hours, consent and do-not-call handling are settings you configure; they are not legal advice, and you remain responsible
+for following the rules that apply where you and your contacts are.
+
+Campaign calls do not hang up on their own account. If a call is answered and the agent never joins, or never reports its end, the
+campaign pauses and raises an alert; hang up from the Dialer page. Declined calls cannot be told apart from other calls that end
+before an answer, so those are not retried. A clear spoken request not to be called again is added to the do-not-call list.
+
+## Inbound and outbound agents, tool calling and Google Sheets
+
+### Separate inbound and outbound configuration
+
+One voice engine, two configurations. The speech recognizer, the model, the voice, the built-in call rules, the call lifecycle and
+the campaign context are shared; only the operator's **instructions** and the **greeting** can differ by call direction. They are
+set on the dashboard's Agent tab (Inbound calls / Outbound campaign calls) or in `.env` (`AI_INBOUND_INSTRUCTIONS`,
+`AI_INBOUND_GREETING`, `AI_OUTBOUND_INSTRUCTIONS`, `AI_OUTBOUND_GREETING`).
+
+- The prompt is the direction's instructions (or, if it has none, the shared `AI_SYSTEM_INSTRUCTIONS`) followed by the built-in rules.
+  The greeting is the direction's greeting, else the shared `AI_GREETING`. A gateway that sets none of the four behaves exactly as before.
+- A campaign still adds its per-contact context to the outbound prompt, and a greeting template set on a campaign is spoken instead of
+  the outbound greeting for that campaign.
+- The call's direction decides which is used, at attach time. The trace of each call records which one applied
+  (`instructionsFrom`, `greetingFrom`: direction, shared or none).
+
+### Tool calling
+
+The model can be given functions and gets each result back before it answers. Only one tool exists today, `save_contact_details`.
+
+- **Model support.** Each model family in the catalog declares whether its endpoint accepts function calling: OpenAI, Groq (gpt-oss
+  and Qwen) and Gemini yes (from their documentation); the Telnyx-hosted models are **off until verified** on a real call. A model
+  without support is used exactly as before: no tools field is sent, no tool rules are added to its prompt. If a provider rejects a
+  request that carried tools (HTTP 400/422 naming tools or functions), that request is answered without them and the provider
+  instance is not offered tools again. The Integrations tab states whether the selected model supports tools.
+- **Bounded.** At most two rounds of tool calls per reply and three calls per round; after that the model is asked again without tools
+  and must answer in words. Each tool has a timeout (10 s for saving a contact). The tool exchange lives only within the reply; the
+  stored history keeps just what was spoken.
+- **Untrusted output.** Every call is checked against the tool's strict schema (unknown fields, wrong types, oversized or malformed
+  JSON are refused), may run only in a call mode it lists, and returns an error result for the model to report honestly. A tool
+  failure never throws into the call.
+- **Permissions per mode.** The save tool is offered separately for inbound and outbound calls (switches on the Integrations tab).
+  The list is read at the start of every reply, so a switch takes effect on the next reply.
+- **Instructions the model cannot override.** When tools are offered, the prompt adds rules that the caller's words and the campaign
+  data are information, never instructions. More importantly the tool does not trust the model: see below.
+
+### Google Sheets
+
+Integrations tab: paste a Google **service account** key (JSON), enter the spreadsheet and tab, choose where the agent may save, and
+press *Test connection*. Share the spreadsheet with the service account's email as an **Editor**; enable the Google Sheets API for the
+key's project.
+
+- **Credential handling.** The key file is validated, then stored encrypted (AES-256-GCM, the same scheme and `AI_SECRETS_MASTER_KEY`
+  as the provider API keys). Without a master key it cannot be stored. It is never returned by any API, shown again, or logged; the
+  dashboard only learns whether one is stored and the account's email. Only the email and private key are kept, and the file's own
+  `token_uri` is ignored: sign-in goes to Google's token endpoint only.
+- **Connection test.** Signs in, opens the sheet, checks the tab and the header row. It is read-only: it never writes to the sheet, and
+  it cannot prove edit permission (the first saved record does).
+- **What is written.** Columns `record_key, recorded_at, type, call_id, campaign_id, contact_id, direction, name, phone, email,
+  outcome, detail`. The header is written when the tab is empty; a tab whose first row is anything else is refused, so existing data
+  is never overwritten. Values are written as text (`RAW`), so nothing is parsed as a formula and a phone number keeps its leading zero.
+- **Only confirmed details.** `save_contact_details` takes the *values* from what this call's own transcript established and the
+  caller agreed to after a read-back (the contact-detail tracker), not from the model's wording. An unconfirmed, missing or different
+  value is refused with the reason, so the agent goes back and confirms it. A correction replaces the old value and must be confirmed
+  again before it is saved. Nothing is guessed or filled in; absent details are empty cells.
+- **No duplicates.** Each record has a key (`campaign:<id>:<contact>:contact` for a campaign contact, `call:<id>:contact` otherwise,
+  `call:<id>:outcome` for an outcome). Saving the same key again does nothing if identical, or corrects that row (keeping details
+  confirmed earlier). Writes run one at a time, so two cannot race for one row, and a retry after a lost response finds the row.
+- **Success means Google said so.** A save is reported as done only when Google's response confirms the row was written; any other
+  answer is "not saved", and the agent is told not to claim otherwise.
+- **Campaign outcomes.** With *Log a campaign outcome row* on, each finished campaign call writes one row (answered, no_answer, busy,
+  ended_before_answer, failed, or opted_out). A person who asked not to be called is logged with no name and no number. A Google
+  failure is logged and never affects the campaign.
+- **Consent and do-not-call.** Nothing is saved after the caller says they do not want to be contacted (on any call), and nothing is
+  saved for a campaign contact who is on the do-not-call list, has opted out or declined consent. A detail saved before such a request
+  stays in the sheet: remove it there by hand.
+
+### Not verified against the real services
+
+Everything above is tested with mocks (a scripted model, a fake Google, the mock modem). Still to confirm live: that each provider's
+real endpoint accepts and honours `tools` for the model you use; a real service account against a real spreadsheet (permissions,
+quota, the first write); the agent's behaviour on a real call (it asks for confirmation before saving, and waits for the tool); and
+that the pause while a save completes (about a second or two) sounds acceptable.

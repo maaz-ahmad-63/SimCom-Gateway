@@ -49,10 +49,9 @@ describe('AI configuration', () => {
 
   it.each([
     [{ AI_STT: 'whisper-9000' }, /not a known STT slug/],
-    [{ AI_STT: 'soniox' }, /not ported to the gateway yet/],
+    [{ AI_STT: 'assemblyai' }, /not ported to the gateway yet/],
     [{ AI_LLM: 'gpt-9' }, /not a known LLM slug/],
-    [{ AI_LLM: 'gemini_3_flash' }, /not ported to the gateway yet/],
-    [{ AI_TTS: 'elevenlabs' }, /not ported to the gateway yet/],
+    [{ AI_TTS: 'murf' }, /not ported to the gateway yet/],
     [{ AI_TTS: 'nope' }, /not a known TTS slug/],
     [{ AI_TTS: 'deepgram' }, /needs an Aura voice/],
     [{ AI_AUDIO_SAMPLE_RATE: '12345' }, /not a raw rate Cartesia supports/],
@@ -93,7 +92,9 @@ describe('source catalog port', () => {
     const spec = (key: string, env: Record<string, string | undefined> = {}) =>
       openAiCompatibleSpec(LLM_CATALOG[key], env)!;
     expect(spec('groq_qwen_3_8_27b').body).toEqual({ temperature: 0.4, reasoning_effort: 'none' });
-    expect(spec('groq_gpt_oss_120b').body).toEqual({ temperature: 0.15, reasoning_effort: 'medium' });
+    // Low effort, with its own token allowance: at medium the reasoning used the whole 220-token reply budget (call 503ec8b2).
+    expect(spec('groq_gpt_oss_120b').body).toEqual({ temperature: 0.15, reasoning_effort: 'low' });
+    expect(spec('groq_gpt_oss_120b').reasoningTokenAllowance).toBe(1024);
     expect(spec('openai_gpt_5_4_mini').body).toEqual({}); // the source sets no temperature for OpenAI
     expect(spec('openai_gpt_5_4_mini')).toMatchObject({ baseUrl: 'https://api.openai.com/v1', apiKeyEnv: 'OPENAI_API_KEY' });
     expect(spec('telnyx_kimi_k3').body).toEqual({ temperature: 0.3, region: 'AUS', mode: 'preferred', reasoning_effort: 'none' });
@@ -106,7 +107,6 @@ describe('source catalog port', () => {
       reasoning_effort: 'none',
     });
     expect(spec('telnyx_kimi_k3').baseUrl).toBe('https://api.telnyx.com/v2/ai/openai');
-    expect(openAiCompatibleSpec(LLM_CATALOG.gemini_3_flash, {})).toBeNull();
   });
 });
 

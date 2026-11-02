@@ -62,6 +62,16 @@ export function idleMessages(language: string): { followups: string[]; goodbye: 
   };
 }
 
+/**
+ * What a finished turn means for the silence clock. Real words reset the count; a turn cancelled before any words (the caller
+ * spoke again) is not silence, so the caller's next utterance restarts the clock; anything else (an empty or skipped turn, our own
+ * follow-up) restarts the clock for the next stage.
+ */
+export function idleActionAfterTurn(result: { transcriptChars?: number; status: string }): 'reset' | 'restart' | 'none' {
+  if ((result.transcriptChars ?? 0) > 0) return 'reset';
+  return result.status === 'cancelled' ? 'none' : 'restart';
+}
+
 export interface IdleManagerOptions {
   followups: string[];
   goodbye: string;
@@ -69,6 +79,8 @@ export interface IdleManagerOptions {
   say: (text: string) => Promise<unknown>;
   /** Called after the goodbye was spoken. */
   disconnect: () => Promise<void> | void;
+  /** True while the agent is working or speaking: a check-in then would talk over it, so it waits another stage instead. */
+  isBusy?: () => boolean;
   waitsMs?: readonly [number, number, number];
   random?: () => number;
 }
@@ -128,6 +140,10 @@ export class IdleManager {
   private async fire(): Promise<void> {
     this.timer = null;
     if (!this.enabled) return;
+    if (this.options.isBusy?.()) {
+      this.start(); // the agent is mid-turn or speaking: the silence is not the caller's, so the count does not advance
+      return;
+    }
     this.idleCount++;
     try {
       if (this.idleCount <= 2) {

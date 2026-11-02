@@ -26,9 +26,12 @@ import { AiCallOrchestrator, OrchestratorDeps } from './orchestrator.js';
 import { estimateCostUsd } from './pricing.js';
 import { createProviders, FetchLike, ProviderSet } from './providers/index.js';
 import { checkAiReadiness } from './readiness.js';
-import { AiSettingsService, CREDENTIAL_PROVIDERS, SettingsError } from './settings.js';
+import { activeRegistry } from './registry/active.js';
+import { probeForProvider } from './registry/service.js';
+import { AiSettingsService, credentialProviders, SettingsError } from './settings.js';
 import { extractEndCall, hasSpeechContent, ProtocolTextFilter } from './text.js';
 import { TraceHub } from './trace.js';
+import type { ObservabilityStore } from './observability-store.js';
 import { AiUsageStore } from './usage-store.js';
 import { CallSession } from '@sim-gateway/shared';
 
@@ -40,8 +43,6 @@ const VALIDATION_TIMEOUT_MS = 8000;
 const TEST_TRANSCRIPT_MAX_AGE_MS = 60_000;
 const TEST_REPLY_MAX_CHARS = 300;
 const TEST_MAX_AUDIO_SECONDS = 25;
-/** The module's documented PCM rates over USB audio: AT+CPCMFRM 0 = 8 kHz, 1 = 16 kHz. */
-const CPCMFRM_RATE: Record<number, number> = { 0: 8000, 1: 16000 };
 
 export interface AiRuntimeOptions {
   settings: AiSettingsService;
@@ -55,6 +56,13 @@ export interface AiRuntimeOptions {
   /** Offline providers (tests, ai:loop). When set no network request is ever made for STT/LLM/TTS. */
   providers?: ProviderSet;
   fetchImpl?: FetchLike;
+  /** Persistent call telemetry: every inspector event is also written here. Absent means nothing is persisted. */
+  observability?: ObservabilityStore;
+  /** Per-call context for campaign calls (looked up from the call's metadata). */
+  callContext?: OrchestratorDeps['callContext'];
+  /** A campaign contact asked, during the call, not to be called again. */
+  onOptOut?: OrchestratorDeps['onOptOut'];
+  tools?: OrchestratorDeps['tools'];
   transports?: (call: CallSession, format: AudioFormat) => { source: CallerAudioSource; sink: AgentAudioSink };
   /** Test seam: let mock hardware satisfy the hardware check. */
   allowSimulatedHardware?: boolean;
@@ -121,7 +129,19 @@ export class AiRuntime {
     this.configResult = options.settings.loadConfig();
     this.hub = new TraceHub(
       (event) => options.eventBus.emit('ai:event', event),
-      () => this.configResult.config.logTranscripts
+      () => this.configResult.config.logTranscripts,
+      (callId, event) =>
+        options.observability?.record({
+          callId,
+          turnId: event.turnId,
+          stage: event.stage,
+          status: event.status,
+          latencyMs: event.latencyMs,
+          detail: event.detail,
+          data: event.data,
+          text: event.text,
+          role: event.role,
+        })
     );
     this.deps = {
       configResult: this.configResult,
@@ -134,6 +154,9 @@ export class AiRuntime {
       transports: options.transports,
       audioPortBusy: options.audioPortBusy,
       mode: () => this.mode,
+      callContext: options.callContext,
+      onOptOut: options.onOptOut,
+      tools: options.tools,
       hub: this.hub,
       usage: options.usage,
       providersAreMock: options.providers !== undefined,
@@ -151,7 +174,7 @@ export class AiRuntime {
     this.automation = new AiCallAutomation({
       manager: options.callManager,
       eventBus: options.eventBus,
-      getConfig: () => ({ config: this.configResult.config, passiveUsable: this.configResult.passiveUsable, usable: this.configResult.usable }),
+      getConfig: () => ({ config: this.configResult.config, passiveUsable: this.configResult.passiveUsable, usable: this.configResult.usable, errors: this.configResult.errors }),
       getMode: () => this.mode,
       modemReady: () => options.modem.getConnectionState() === 'READY',
       hasActiveSession: () => this.orchestrator.hasActiveSession,
@@ -195,6 +218,33 @@ export class AiRuntime {
     this.deps.configResult = this.configResult;
     this.deps.providersAreMock = this.options.providers !== undefined;
     this.orchestrator.applyMode();
+  }
+
+  /**
+   * After a settings save: say so when a sample-rate change reset what automatic replies depend on. The reset is deliberate (an
+   * audio confirmation made at the old rate proves nothing about the new one) but it used to be silent, and the visible result was
+   * a call that attached without a greeting.
+   */
+  announceSettingsEffects(before: ReturnType<AiSettingsService['getStored']>, after: ReturnType<AiSettingsService['getStored']>): void {
+    const emit = (level: 'info' | 'warn', message: string) => this.options.eventBus.emit('gateway:alert', { level, message, timestamp: new Date().toISOString() });
+    const hasAny = (['inbound', 'outbound'] as const).some((kind) => after.attestations?.[kind]);
+    if ((before.audioSampleRate ?? null) !== (after.audioSampleRate ?? null)) {
+      if (!hasAny) return;
+      const rate = after.audioSampleRate === undefined ? 'not configured' : `${after.audioSampleRate} Hz`;
+      const stale = (['inbound', 'outbound'] as const).filter((kind) => after.attestations?.[kind] && !this.options.settings.attestationState(kind, after).valid);
+      emit(
+        stale.length > 0 ? 'warn' : 'info',
+        stale.length > 0
+          ? `Audio sample rate changed to ${rate}. Your audio confirmations are kept, but they were made at another rate and do not count at ${rate}: ` +
+              `re-verify on a real call at the new rate, or switch back and they count again. Until then calls attach in passive mode (no greeting, no replies). ` +
+              'The modem must use the same rate (AT+CPCMFRM: 0 = 8000 Hz, 1 = 16000 Hz); the gateway checks this at the start of each call.'
+          : `Audio sample rate changed to ${rate}. Your audio confirmations were made at this rate and count again.`
+      );
+      return;
+    }
+    if (before.ttsVoice !== after.ttsVoice && hasAny) {
+      emit('info', 'TTS voice changed. The voice does not change the audio path to the phone line, so your audio confirmations stay valid; no re-verification is needed.');
+    }
   }
 
   get mode(): AiMode {
@@ -271,13 +321,16 @@ export class AiRuntime {
       throw new AiBlockedError('Simulated hardware cannot be attested: the mock modem proves nothing about the SIM7600EI audio path');
     }
     if (kind === 'inbound') {
-      const evidence = this.options.settings.getStored().inboundEvidence;
-      if (!evidence) {
+      const evidence = this.options.settings.inboundEvidenceState();
+      if (!evidence.evidence) {
         throw new AiBlockedError(
           'No live transcript from real caller audio has been recorded yet. Run a passive call and read the Live Inspector; confirm only after the transcript matched what the caller said'
         );
       }
-    } else if (!this.options.settings.getStored().attestations?.inbound && !this.configResult.config.audio.inboundVerified) {
+      if (!evidence.valid) {
+        throw new AiBlockedError(`${evidence.staleReason}. Run a passive call at the current rate and check its live transcript first`);
+      }
+    } else if (!this.options.settings.attestationState('inbound').valid && !this.configResult.config.audio.inboundVerified) {
       throw new AiBlockedError('Confirm incoming audio first: replies are pointless if the caller cannot be understood');
     }
     this.options.settings.setAttestation(kind, text);
@@ -298,6 +351,32 @@ export class AiRuntime {
 
   catalog() {
     return buildCatalog(this.env);
+  }
+
+  /**
+   * Why an outbound campaign could not be answered by the AI (empty when it can). This is asked while NO call is up, so it
+   * checks only what can be known without one: the AI is enabled and configured with its keys, the hardware and modem are
+   * ready, the audio rate is set, automatic replies are on, automatic handling includes outbound calls, and the operator has
+   * confirmed both audio paths. The checks that need a live call (audio bytes flowing, the call being active) are made by the
+   * attach step during the call itself; if the agent still does not join, the campaign pauses (see the runner). Asking
+   * `this.mode` here would be wrong: it is only 'active' during a call, so it would block every campaign from ever starting.
+   */
+  campaignBlockers(): string[] {
+    const blockers: string[] = [];
+    const config = this.configResult.config;
+    if (!config.enabled) blockers.push('The AI agent is not enabled (AI > Agent)');
+    else if (!this.configResult.usable) blockers.push(`The AI configuration is not complete: ${this.configResult.errors[0] ?? 'see AI > Overview'}`);
+    if (this.options.settings.getStored().mode === 'off' || this.options.forceMode === 'off') blockers.push('The AI mode is off (AI > Overview)');
+    // Only the checks that do not depend on a call being up. 'unverified' is the normal state of those while idle.
+    const staticChecks = new Set(['ai-config', 'stt-key', 'provider-keys', 'hardware', 'modem', 'audio-format', 'audio-rate']);
+    for (const check of this.readinessRaw().checks) {
+      if (staticChecks.has(check.name) && check.status === 'fail') blockers.push(`${check.name}: ${check.detail}`);
+    }
+    if (!config.automation.autoReplies) blockers.push('Automatic replies is off: without it the agent only transcribes and the person would hear nothing (AI > Overview)');
+    if (config.autoHandle !== 'outbound' && config.autoHandle !== 'all') blockers.push('Automatic handling must include outbound calls (AI > Overview > Automatic handling)');
+    if (!config.audio.inboundVerified) blockers.push('Incoming audio has not been confirmed (AI > Overview > audio confirmations)');
+    if (!config.audio.outboundVerified) blockers.push('Outgoing audio has not been confirmed: nobody has confirmed the person can hear the agent (AI > Overview > audio confirmations)');
+    return blockers;
   }
 
   // ---- credentials ------------------------------------------------------------------------------
@@ -322,12 +401,23 @@ export class AiRuntime {
    * and the key is never echoed. Network or provider outage reads as "unreachable", never as "invalid".
    */
   async validateCredential(name: string): Promise<{ check: AiCredentialCheck; detail: string }> {
-    if (!(name in CREDENTIAL_PROVIDERS)) throw new SettingsError(`Unknown credential '${name}'`, 404);
+    const labels = credentialProviders();
+    if (!(name in labels)) throw new SettingsError(`Unknown credential '${name}'`, 404);
     const key = this.options.settings.resolveSecret(name);
     if (!key) {
       throw new AiBlockedError(`${name} is not set, so there is nothing to validate`);
     }
-    const request = credentialProbe(name, key, this.env.CARTESIA_VERSION);
+    let request: { url: string; headers: Record<string, string> };
+    try {
+      request = credentialProbe(name, key, this.env.CARTESIA_VERSION);
+    } catch (error) {
+      // Not one of the built-in names: a provider added in the model registry is checked through its own adapter's listing request.
+      const registry = activeRegistry();
+      const provider = registry.file.providers.find((p) => p.credential === name);
+      const probe = provider ? probeForProvider(registry, provider.id, key, this.env.CARTESIA_VERSION) : null;
+      if (!probe) throw error;
+      request = probe;
+    }
     const fetchImpl: FetchLike = this.options.fetchImpl ?? ((url, init) => fetch(url, init));
     let result: { check: AiCredentialCheck; detail: string };
     try {
@@ -336,19 +426,19 @@ export class AiRuntime {
         headers: request.headers,
         signal: AbortSignal.timeout(VALIDATION_TIMEOUT_MS),
       });
-      if (response.ok) result = { check: 'ok', detail: `${CREDENTIAL_PROVIDERS[name]} accepted the key (HTTP ${response.status})` };
+      if (response.ok) result = { check: 'ok', detail: `${labels[name]} accepted the key (HTTP ${response.status})` };
       else if (response.status === 401 || response.status === 403) {
-        result = { check: 'invalid', detail: `${CREDENTIAL_PROVIDERS[name]} rejected the key (HTTP ${response.status})` };
+        result = { check: 'invalid', detail: `${labels[name]} rejected the key (HTTP ${response.status})` };
       } else {
         result = {
           check: 'unreachable',
-          detail: `${CREDENTIAL_PROVIDERS[name]} answered HTTP ${response.status}; the key could not be confirmed either way`,
+          detail: `${labels[name]} answered HTTP ${response.status}; the key could not be confirmed either way`,
         };
       }
       void response.body?.cancel().catch(() => {});
     } catch (error) {
       const reason = (error as Error).name === 'TimeoutError' ? 'timed out' : 'could not be reached';
-      result = { check: 'unreachable', detail: `${CREDENTIAL_PROVIDERS[name]} ${reason}; the key could not be checked` };
+      result = { check: 'unreachable', detail: `${labels[name]} ${reason}; the key could not be checked` };
     }
     this.options.settings.recordCheck(name, result.check, result.detail);
     return result;
@@ -634,14 +724,9 @@ export class AiRuntime {
 
     if (!this.options.audio.getStats().isStreaming) blockers.push('audio: the audio port is not open for this call');
 
-    // The format the module is using must agree with the format we synthesize in.
+    // The format the audio arrives in must agree with the format we synthesize in.
     if (format) {
-      const usb = this.options.callManager.getUsbAudioStatus?.();
-      const cpcmfrm = usb?.moduleAudioFormat?.cpcmfrm;
-      const moduleRate = cpcmfrm === null || cpcmfrm === undefined ? null : CPCMFRM_RATE[cpcmfrm] ?? null;
-      if (moduleRate !== null && moduleRate !== format.sampleRate) {
-        blockers.push(`format: the module reports ${moduleRate} Hz (AT+CPCMFRM=${cpcmfrm}) but the gateway is set to ${format.sampleRate} Hz`);
-      }
+      // (The rate the module reports is compared in the shared readiness check, which `base` already includes.)
       if (attached) {
         const observed = attached.meter.observedSampleRate;
         if (observed !== null && Math.abs(observed - format.sampleRate) / format.sampleRate > 0.15) {
@@ -925,6 +1010,18 @@ export function credentialProbe(
         url: 'https://api.cartesia.ai/voices?limit=1',
         headers: { Authorization: `Bearer ${key}`, 'Cartesia-Version': cartesiaVersion ?? '2026-08-14' },
       };
+    case 'MURF_API_KEY':
+      // The account's voice list: authenticated, read-only (documented: GET /v1/speech/voices, key in the api-key header).
+      return { url: 'https://global.api.murf.ai/v1/speech/voices', headers: { 'api-key': key } };
+    case 'INWORLD_API_KEY':
+      return { url: 'https://api.inworld.ai/voices/v1/voices?pageSize=1', headers: { Authorization: `Basic ${key}` } };
+    case 'SONIOX_API_KEY':
+      return { url: 'https://api.soniox.com/v1/models', headers: { Authorization: `Bearer ${key}` } };
+    case 'GEMINI_API_KEY':
+      return { url: 'https://generativelanguage.googleapis.com/v1beta/openai/models', headers: { Authorization: `Bearer ${key}` } };
+    case 'ELEVENLABS_API_KEY':
+      // The models list: authenticated, read-only, and not billed as characters.
+      return { url: 'https://api.elevenlabs.io/v1/models', headers: { 'xi-api-key': key } };
     default:
       throw new SettingsError(`Unknown credential '${name}'`, 404);
   }

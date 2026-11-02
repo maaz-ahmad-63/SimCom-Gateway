@@ -20,6 +20,11 @@ export interface HardwareAudioOptions {
   enableDumps?: boolean;
   dumpDir?: string;
   transport?: ISerialTransport;
+  /**
+   * Automatic port discovery: asked for the USB audio port just before the port is opened for a call, so a renumbered COM
+   * port is followed. Never asked while the port is open, so an active call is never moved or interrupted.
+   */
+  resolvePort?: () => Promise<string>;
 }
 
 /**
@@ -41,7 +46,9 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
   private outboundStream: Writable | null = null;
   private sequenceNumber = 0;
   private stats: AudioStreamStats;
-  private readonly options: Required<HardwareAudioOptions>;
+  private readonly options: Required<Omit<HardwareAudioOptions, 'resolvePort'>>;
+  private readonly resolvePort?: () => Promise<string>;
+  private portPath: string;
   private readonly logger: Logger;
 
   constructor(options: HardwareAudioOptions) {
@@ -64,7 +71,9 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
     };
 
     this.transport = this.options.transport;
-    this.logger = createLogger(`Audio:${this.options.audioPort}`);
+    this.resolvePort = options.resolvePort;
+    this.portPath = this.options.audioPort;
+    this.logger = createLogger(this.resolvePort ? 'Audio' : `Audio:${this.options.audioPort}`);
     this.logger.info(
       `Raw whole-call audio dump is ${this.options.enableDumps ? 'ENABLED (unbounded)' : 'disabled'}`
     );
@@ -105,7 +114,7 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
   private handleUnexpectedClose(info?: SerialCloseInfo): void {
     if (!this.isStreaming) return;
     this.markNotStreaming();
-    const message = `Audio port '${this.options.audioPort}' ${describeClose(info)} while the session was streaming`;
+    const message = `Audio port '${this.portPath}' ${describeClose(info)} while the session was streaming`;
     this.logger.error(message);
     if (this.listenerCount('error') > 0) {
       this.emit('error', new Error(message));
@@ -135,17 +144,17 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
     // Open audio COM port if not already open
     try {
       await this.openPort();
-      this.logger.info(`Audio transport '${this.options.audioPort}' opened for call ${callId}`);
+      this.logger.info(`Audio transport '${this.portPath}' opened for call ${callId}`);
     } catch (err) {
       // Audio open failure shouldn't crash the voice call session, but the session is not streaming
       this.markNotStreaming();
       if (this.listenerCount('error') > 0) {
         this.emit(
           'error',
-          new Error(`Could not open audio port ${this.options.audioPort}: ${(err as Error).message}`)
+          new Error(`Could not open audio port ${this.portPath}: ${(err as Error).message}`)
         );
       }
-      this.logger.error(`Could not open audio port ${this.options.audioPort}: ${(err as Error).message}`);
+      this.logger.error(`Could not open audio port ${this.portPath}: ${(err as Error).message}`);
     }
 
     // Initialize raw diagnostic file dump if enabled
@@ -165,8 +174,13 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
 
   private async openPort(): Promise<void> {
     if (!this.transport.isOpen()) {
+      if (this.resolvePort) {
+        const path = await this.resolvePort();
+        if (path !== this.portPath) this.logger.info(`USB audio port discovered: ${path}`);
+        this.portPath = path;
+      }
       await this.transport.open({
-        path: this.options.audioPort,
+        path: this.portPath,
         baudRate: this.options.audioBaudRate,
       });
     }
@@ -190,7 +204,7 @@ export class Sim7600HardwareAudioAdapter extends EventEmitter implements IAudioA
     await this.openPort();
     this.isStreaming = true;
     this.stats.isStreaming = true;
-    this.logger.info(`Audio transport '${this.options.audioPort}' reopened for call ${this.currentCallId}`);
+    this.logger.info(`Audio transport '${this.portPath}' reopened for call ${this.currentCallId}`);
   }
 
   async stopSession(): Promise<void> {

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Mic, ShieldCheck } from 'lucide-react';
-import type { AiMode, AiSessionView } from '@sim-gateway/shared';
+import type { AiMode, AiSessionView, AiSettingsView } from '@sim-gateway/shared';
 import { apiClient } from '../../lib/api-client';
 import { attachControlState, checklist, CHECK_LABELS, describeAudioHealth, formatDb, summarizeReadiness } from '../../lib/ai-readiness';
 import { AttachControl } from './AttachControl';
@@ -11,6 +11,7 @@ import { RecordingCard } from './RecordingCard';
 import { TestResponseCard } from './TestResponseCard';
 import { credentialBadges } from '../../lib/ai-secrets';
 import { useAi } from '../../lib/context/AiContext';
+import { autoHandling } from '../../lib/auto-handling';
 import { useGateway } from '../../lib/context/GatewayContext';
 import { ActionNote, Badge, Button, Card, Field, TextArea, Tile, useAction } from './ui';
 
@@ -105,35 +106,60 @@ function ReadinessCard() {
   );
 }
 
-function AttestationCard({ kind }: { kind: 'inbound' | 'outbound' }) {
+/** The gateway adds the rate a confirmation was made at, and whether it counts at the current rate (missing on older gateways). */
+type AttestationWithRate = AiSettingsView['attestations']['inbound'] & { sampleRate?: number | null; stale?: boolean; staleReason?: string | null };
+
+export function AttestationCard({ kind }: { kind: 'inbound' | 'outbound' }) {
   const { state, refresh } = useAi();
   const [note, setNote] = useState('');
+  const [reverifying, setReverifying] = useState(false);
   const [action, run] = useAction();
   if (!state) return null;
-  const view = state.settings.attestations[kind];
+  const view = state.settings.attestations[kind] as AttestationWithRate;
+  const stale = view.stale === true;
+  const hasRecord = view.confirmed || stale;
+  const showForm = !hasRecord || reverifying;
   const inbound = kind === 'inbound';
   const title = inbound ? 'Caller audio is intelligible' : 'Agent audio is audible to the caller';
   const how = inbound
     ? 'Confirm only after a real call, in passive mode, produced a live transcript in the inspector that matched what the caller actually said. Bytes arriving, or a transcript of a saved file, is not enough.'
     : 'Confirm only after a remote party on a real call clearly heard a blind test tone written to the USB audio port. A generated preview in this browser proves nothing about the phone line.';
   return (
-    <Card title={title} actions={<Badge tone={view.confirmed ? 'good' : 'warn'}>{view.confirmed ? `Confirmed (${view.source})` : 'Not confirmed'}</Badge>}>
+    <Card
+      title={title}
+      actions={<Badge tone={view.confirmed ? 'good' : 'warn'}>{view.confirmed ? `Confirmed (${view.source})` : stale ? 'Needs re-verification' : 'Not confirmed'}</Badge>}
+    >
       <p className="text-xs text-slate-400 leading-relaxed">{how}</p>
-      {view.confirmed ? (
-        <div className="space-y-2">
+      {hasRecord && (
+        <div className="space-y-2" aria-label="Saved confirmation">
           {view.note && <p className="text-xs text-slate-300 font-mono">“{view.note}”</p>}
-          {view.source === 'stored' && (
-            <Button
-              onClick={async () => {
-                await run(() => apiClient.revokeAiAttestation(kind), 'Confirmation removed');
-                await refresh();
-              }}
-            >
-              Remove confirmation
-            </Button>
+          <p className="text-[11px] text-slate-500">
+            {view.confirmedAt ? `Confirmed ${new Date(view.confirmedAt).toLocaleString()}` : 'Set in the gateway .env'}
+            {view.sampleRate ? ` at ${view.sampleRate} Hz` : ''}. Kept across reloads and restarts.
+          </p>
+          {stale && view.staleReason && (
+            <p role="status" className="text-xs text-amber-300">
+              {view.staleReason}
+            </p>
+          )}
+          {view.source === 'stored' && !reverifying && (
+            <div className="flex flex-wrap gap-2">
+              <Button variant={stale ? 'primary' : undefined} onClick={() => setReverifying(true)}>
+                Re-verify
+              </Button>
+              <Button
+                onClick={async () => {
+                  await run(() => apiClient.revokeAiAttestation(kind), 'Confirmation removed');
+                  await refresh();
+                }}
+              >
+                Remove confirmation
+              </Button>
+            </div>
           )}
         </div>
-      ) : (
+      )}
+      {showForm && (
         <div className="space-y-2">
           <Field label="What you verified (kept with the confirmation)">
             <TextArea
@@ -143,17 +169,23 @@ function AttestationCard({ kind }: { kind: 'inbound' | 'outbound' }) {
               className="min-h-[70px]"
             />
           </Field>
-          <Button
-            variant="primary"
-            disabled={note.trim().length < 10}
-            onClick={async () => {
-              const ok = await run(() => apiClient.attestAiAudio(kind, note.trim()), 'Confirmation saved');
-              if (ok) setNote('');
-              await refresh();
-            }}
-          >
-            <ShieldCheck className="w-3.5 h-3.5" /> I verified this
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="primary"
+              disabled={note.trim().length < 10}
+              onClick={async () => {
+                const ok = await run(() => apiClient.attestAiAudio(kind, note.trim()), 'Confirmation saved');
+                if (ok) {
+                  setNote('');
+                  setReverifying(false);
+                }
+                await refresh();
+              }}
+            >
+              <ShieldCheck className="w-3.5 h-3.5" /> {hasRecord ? 'Save the new confirmation' : 'I verified this'}
+            </Button>
+            {reverifying && <Button onClick={() => setReverifying(false)}>Cancel</Button>}
+          </div>
         </div>
       )}
       <ActionNote state={action} />
@@ -265,6 +297,23 @@ function ProviderHealthCard() {
   );
 }
 
+/** What the AI will do with calls and why: attached or waiting, passive or answering, and what to change. */
+export function AutoHandlingCard() {
+  const { state } = useAi();
+  const { activeCall } = useGateway();
+  if (!state) return null;
+  const view = autoHandling({ settings: state.settings, readiness: state.readiness, sessions: state.sessions, call: activeCall });
+  return (
+    <Card title="Automatic handling" actions={<Badge tone={view.tone === 'good' ? 'good' : view.tone === 'warn' ? 'warn' : 'neutral'}>{view.title}</Badge>}>
+      <ul className="space-y-1 text-xs text-slate-300 leading-relaxed" aria-label="Automatic handling">
+        {view.lines.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export function OverviewTab() {
   const { state, error } = useAi();
   if (!state) return <p className="text-xs text-slate-500">{error ?? 'Loading…'}</p>;
@@ -279,6 +328,7 @@ export function OverviewTab() {
       )}
       <ReadinessCard />
       <ModeControls />
+      <AutoHandlingCard />
       <SessionCard />
       <ConversationCard />
       <TestResponseCard />

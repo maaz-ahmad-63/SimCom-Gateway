@@ -1,5 +1,6 @@
 'use client';
 
+import { keyEnvFor } from '../../lib/ai-keys';
 import React, { useEffect, useState } from 'react';
 import { AiRecording, AiSttRecordingResult, apiClient } from '../../lib/api-client';
 import { credentialBadges } from '../../lib/ai-secrets';
@@ -8,7 +9,7 @@ import { useAi } from '../../lib/context/AiContext';
 import { formatTimeOnly } from '../../lib/utils';
 import { MeterCard } from './OverviewTab';
 import { unique } from '../../lib/ai-settings-form';
-import { ActionNote, Badge, Button, Card, Field, SaveBar, Select, Tile, TextInput, useAction } from './ui';
+import { ActionNote, Badge, Button, Card, Field, SaveBar, Select, Tile, TextInput, Toggle, useAction } from './ui';
 import { useSettingsDraft } from './useSettingsDraft';
 
 function RecordingTest() {
@@ -105,7 +106,7 @@ export function SttTab() {
   const { inspector } = useAi();
   if (!draft || !catalog || !state) return <p className="text-xs text-slate-500">Loading…</p>;
   const option = catalog.stt.find((o) => o.key === draft.stt);
-  const keyName = option?.provider === 'groq' ? 'GROQ_API_KEY' : 'DEEPGRAM_API_KEY';
+  const keyName = keyEnvFor(option);
   const key = state.credentials.find((c) => c.name === keyName);
   const badges = key ? credentialBadges(key) : null;
   const session = state.sessions[0];
@@ -138,6 +139,14 @@ export function SttTab() {
               ))}
             </Select>
           </Field>
+          <div className="md:col-span-2">
+            <Toggle
+              checked={draft.sttStreaming}
+              onChange={(v) => setDraft({ ...draft, sttStreaming: v })}
+              label="Stream caller audio to Deepgram while they speak"
+              hint="Shortens the wait for the transcript after the caller stops, because most of the audio is already recognised. Needs a Deepgram key; if the stream fails, the provider above transcribes the audio instead, so no turn is lost. Only the final text is used. Not yet verified against the live Deepgram service: check the 'streaming' field of the STT result in Call Logs after enabling it."
+            />
+          </div>
           <Field label="Request timeout (ms)">
             <TextInput
               inputMode="numeric"

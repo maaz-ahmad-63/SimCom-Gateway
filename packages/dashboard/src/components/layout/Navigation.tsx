@@ -4,9 +4,12 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
+  Activity,
   Bot,
+  Megaphone,
   History,
   LayoutDashboard,
+  MessageSquare,
   PhoneCall,
   Sliders,
   Cpu,
@@ -14,19 +17,23 @@ import {
   Volume2,
 } from 'lucide-react';
 import { useGateway } from '../../lib/context/GatewayContext';
+import { portText } from '../../lib/hardware-mode';
 
 const navItems = [
   { href: '/', label: 'Overview', icon: LayoutDashboard },
   { href: '/dialer', label: 'Dialer & Live', icon: PhoneCall, showActivePill: true },
   { href: '/ai', label: 'AI Agent', icon: Bot },
   { href: '/calls', label: 'Call History', icon: History },
+  { href: '/observability', label: 'Call Logs', icon: Activity },
+  { href: '/campaigns', label: 'Campaigns', icon: Megaphone },
+  { href: '/sms', label: 'SMS', icon: MessageSquare },
   { href: '/hardware', label: 'Hardware', icon: Wrench },
   { href: '/settings', label: 'Settings', icon: Sliders },
 ];
 
 export function Navigation() {
   const pathname = usePathname();
-  const { activeCall, health } = useGateway();
+  const { activeCall, hardware } = useGateway();
 
   const isCallActive = activeCall && activeCall.state !== 'IDLE';
 
@@ -39,7 +46,7 @@ export function Navigation() {
 
         <nav className="space-y-1">
           {navItems.map((item) => {
-            const isActive = pathname === item.href;
+            const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(`${item.href}/`));
             const Icon = item.icon;
 
             return (
@@ -81,7 +88,7 @@ export function Navigation() {
               <Cpu className="w-3 h-3 text-slate-500" /> AT Port
             </span>
             <span className="text-slate-300 font-semibold">
-              {health?.modem.atPort || 'not configured'}
+              {portText(hardware, 'at')}
             </span>
           </div>
           <div className="flex items-center justify-between text-[11px] font-mono text-slate-400">
@@ -89,7 +96,7 @@ export function Navigation() {
               <Volume2 className="w-3 h-3 text-slate-500" /> Audio Port
             </span>
             <span className="text-slate-300 font-semibold">
-              {health?.modem.audioPort || 'not configured'}
+              {portText(hardware, 'audio')}
             </span>
           </div>
         </div>

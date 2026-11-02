@@ -84,12 +84,25 @@ export function resolveLlmKey(setting: string): string | null {
 }
 
 export interface OpenAiCompatibleSpec {
-  provider: 'groq' | 'openai' | 'telnyx';
+  /** The vendor name (groq, openai, telnyx, gemini, or a vendor added in the model registry). */
+  provider: string;
   baseUrl: string;
   apiKeyEnv: string;
   model: string;
   /** Extra top-level body fields, as the source's plugin parameters. */
   body: Record<string, unknown>;
+  /**
+   * Tokens added to max_tokens for a model that reasons before it answers. Its hidden reasoning counts against max_tokens,
+   * so without this a long reasoning pass can use the whole budget and leave no reply text at all.
+   */
+  reasoningTokenAllowance?: number;
+  /**
+   * Whether the provider's chat endpoint accepts OpenAI-style function calling for this model. Only families whose
+   * documentation says so are true; anything unverified stays false, and the model is then used without tools.
+   */
+  toolCalling: boolean;
+  /** How the key is sent: Bearer (the default, left out) or Basic. */
+  authScheme?: 'bearer' | 'basic';
 }
 
 /**
@@ -108,14 +121,37 @@ export function openAiCompatibleSpec(
         apiKeyEnv: 'GROQ_API_KEY',
         model: entry.model,
         body: { temperature: 0.4, reasoning_effort: 'none' },
+        toolCalling: true,
       };
-    case 'groq-reasoning':
+    case 'groq-reasoning': {
+      // gpt-oss reasons before it answers, and the reasoning is billed against max_tokens. On call 503ec8b2 two replies came
+      // back empty after exactly the 220-token budget: the reasoning used it all. Low effort is the right size for one or two
+      // spoken sentences, and the reasoning gets its own allowance on top of the reply budget.
+      const effort = (env.AI_LLM_REASONING_EFFORT ?? 'low').trim().toLowerCase() || 'low';
+      if (!['low', 'medium', 'high'].includes(effort)) throw new Error("AI_LLM_REASONING_EFFORT must be 'low', 'medium' or 'high'");
+      const allowanceRaw = (env.AI_LLM_REASONING_TOKENS ?? '').trim();
+      const allowance = allowanceRaw === '' ? 1024 : Number(allowanceRaw);
+      if (!Number.isInteger(allowance) || allowance < 0 || allowance > 8192) throw new Error('AI_LLM_REASONING_TOKENS must be a whole number from 0 to 8192');
       return {
         provider: 'groq',
         baseUrl: 'https://api.groq.com/openai/v1',
         apiKeyEnv: 'GROQ_API_KEY',
         model: entry.model,
-        body: { temperature: 0.15, reasoning_effort: 'medium' },
+        body: { temperature: 0.15, reasoning_effort: effort },
+        reasoningTokenAllowance: allowance,
+        toolCalling: true,
+      };
+    }
+    case 'gemini':
+      // Google's OpenAI-compatible endpoint (https://ai.google.dev/gemini-api/docs/openai): base URL .../v1beta/openai/, the
+      // key as a Bearer token, streaming supported. Verified against Google's documentation; model ids are Google's own.
+      return {
+        provider: 'gemini',
+        baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+        apiKeyEnv: 'GEMINI_API_KEY',
+        model: entry.model,
+        body: {},
+        toolCalling: true,
       };
     case 'openai':
       return {
@@ -124,6 +160,7 @@ export function openAiCompatibleSpec(
         apiKeyEnv: 'OPENAI_API_KEY',
         model: entry.model,
         body: {},
+        toolCalling: true,
       };
     case 'telnyx': {
       const mode = (env.TELNYX_LLM_REGION_MODE ?? 'preferred').trim().toLowerCase() || 'preferred';
@@ -144,6 +181,8 @@ export function openAiCompatibleSpec(
         apiKeyEnv: 'TELNYX_API_KEY',
         model: entry.model,
         body: { temperature: 0.3, ...extra },
+        // Not verified for Telnyx's hosted models: left off until it is confirmed on a real call, so nothing changes for them.
+        toolCalling: false,
       };
     }
     default:
@@ -167,14 +206,24 @@ export const STT_CATALOG: Record<string, SttEntry> = {
   assemblyai: { provider: 'assemblyai', model: null, implemented: false },
   'nova-3': { provider: 'deepgram', model: 'nova-3', implemented: true },
   'nova-3-multi': { provider: 'deepgram', model: 'nova-3', implemented: true },
-  flux: { provider: 'deepgram-flux', model: 'flux-general-en', implemented: false },
+  flux: { provider: 'deepgram-flux', model: 'flux-general-en', implemented: true },
   groq_whisper: { provider: 'groq', model: 'whisper-large-v3-turbo', implemented: true },
-  soniox: { provider: 'soniox', model: 'stt-rt-v5', implemented: false },
-  'stt-rt-v5': { provider: 'soniox', model: 'stt-rt-v5', implemented: false },
-  'ink-whisper': { provider: 'cartesia', model: 'ink-whisper', implemented: false },
+  soniox: { provider: 'soniox', model: 'stt-rt-v5', implemented: true },
+  'stt-rt-v5': { provider: 'soniox', model: 'stt-rt-v5', implemented: true },
+  'ink-whisper': { provider: 'cartesia', model: 'ink-whisper', implemented: true },
 };
 
 export const DEFAULT_STT_KEY = 'nova-3';
+
+/** The credential each speech-to-text provider needs (null: no credential is stored for it, so it cannot be selected). */
+export const STT_KEY_ENV: Record<SttEntry['provider'], string | null> = {
+  deepgram: 'DEEPGRAM_API_KEY',
+  'deepgram-flux': 'DEEPGRAM_API_KEY',
+  groq: 'GROQ_API_KEY',
+  soniox: 'SONIOX_API_KEY',
+  cartesia: 'CARTESIA_API_KEY',
+  assemblyai: null,
+};
 
 /** deepgram_stt.py: AU endpoint for English, global endpoint for other languages. */
 export const DEEPGRAM_AU_LISTEN_URL = 'https://api.au.deepgram.com/v1/listen';
@@ -193,14 +242,16 @@ export interface TtsEntry {
 /** service_factory.TTS_VOICE_DEFAULTS */
 export const TTS_CATALOG: Record<string, TtsEntry> = {
   deepgram: { defaultVoice: 'flux-alexis-en', implemented: true },
-  inworld: { defaultVoice: 'Sarah', implemented: false },
-  soniox: { defaultVoice: 'Adrian', implemented: false },
-  murf_falcon_2: { defaultVoice: 'en-US-natalie', implemented: false },
+  inworld: { defaultVoice: 'Sarah', implemented: true },
+  soniox: { defaultVoice: 'Adrian', implemented: true },
+  murf_falcon_2: { defaultVoice: 'en-US-natalie', implemented: true },
+  // The source's "murf" entry is Murf's older Gen 2 synthesis. Murf's current documentation describes the Falcon streaming
+  // endpoint only, so there is no verified endpoint for Gen 2 and it stays unimplemented rather than guessed.
   murf: { defaultVoice: 'Natalie', implemented: false },
-  murf_falcon_2_hi: { defaultVoice: 'Pooja', implemented: false },
+  murf_falcon_2_hi: { defaultVoice: 'Pooja', implemented: true },
   cartesia: { defaultVoice: 'katie', implemented: true },
   sarvam: { defaultVoice: 'shubh', implemented: false },
-  elevenlabs: { defaultVoice: 'cgSgspJ2msm6clMCkdW9', implemented: false },
+  elevenlabs: { defaultVoice: 'cgSgspJ2msm6clMCkdW9', implemented: true },
 };
 
 /**
@@ -233,6 +284,64 @@ export const CARTESIA_TTS_URL = 'https://api.cartesia.ai/tts/bytes';
 export const CARTESIA_DEFAULT_VERSION = '2026-08-14';
 /** Raw sample rates the Cartesia bytes endpoint documents. */
 export const CARTESIA_RAW_SAMPLE_RATES = [8000, 16000, 22050, 24000, 44100, 48000];
+
+/**
+ * ElevenLabs text-to-speech (https://elevenlabs.io/docs/api-reference/text-to-speech/convert): POST /v1/text-to-speech/{voice_id}
+ * with the key in the xi-api-key header, { text, model_id } as the body and ?output_format=pcm_<rate> for raw signed 16-bit
+ * little-endian mono PCM (/stream returns the same audio as it is generated). Voice ids belong to the account, so the voice is
+ * entered as an id (the source project's default is kept). The model is the provider's own id, not invented here.
+ */
+export const ELEVENLABS_API_BASE = 'https://api.elevenlabs.io';
+export const ELEVENLABS_DEFAULT_MODEL = 'eleven_flash_v2_5';
+/** The raw PCM rates the output_format parameter documents (pcm_8000 ... pcm_48000). */
+export const ELEVENLABS_PCM_RATES = [8000, 16000, 22050, 24000, 44100, 48000];
+
+/**
+ * Raw PCM rates each text-to-speech provider documents. The gateway format must be one of them (a rate not listed is an
+ * error, never silently resampled); a request is only ever made at exactly the gateway rate.
+ */
+export const TTS_PCM_RATES: Record<string, number[]> = {
+  cartesia: CARTESIA_RAW_SAMPLE_RATES,
+  elevenlabs: ELEVENLABS_PCM_RATES,
+  murf_falcon_2: [8000, 16000, 24000, 44100, 48000],
+  murf_falcon_2_hi: [8000, 16000, 24000, 44100, 48000],
+  soniox: [8000, 16000, 24000, 44100, 48000],
+  // Inworld documents 8000-48000 Hz; these are the values its page names.
+  inworld: [8000, 16000, 22050, 24000, 32000, 44100, 48000],
+  deepgram: [8000, 16000, 24000, 32000, 48000],
+};
+
+/**
+ * Model ids the operator may select per text-to-speech provider, from each provider's documentation (the first is the default).
+ * Providers that choose the model by voice (Deepgram Aura) have none.
+ */
+export const TTS_MODELS: Record<string, string[]> = {
+  cartesia: ['sonic-3'],
+  elevenlabs: ['eleven_flash_v2_5', 'eleven_multilingual_v2', 'eleven_turbo_v2_5'],
+  murf_falcon_2: ['falcon-2.1'],
+  murf_falcon_2_hi: ['falcon-2.1'],
+  soniox: ['tts-rt-v2'],
+  inworld: ['inworld-tts-2'],
+};
+
+/** The credential each text-to-speech provider needs. */
+export const TTS_KEY_ENV: Record<string, string> = {
+  deepgram: 'DEEPGRAM_API_KEY',
+  cartesia: 'CARTESIA_API_KEY',
+  elevenlabs: 'ELEVENLABS_API_KEY',
+  murf_falcon_2: 'MURF_API_KEY',
+  murf_falcon_2_hi: 'MURF_API_KEY',
+  murf: 'MURF_API_KEY',
+  inworld: 'INWORLD_API_KEY',
+  soniox: 'SONIOX_API_KEY',
+};
+
+/** Names for messages. */
+export const TTS_PROVIDER_NAMES: Record<string, string> = { cartesia: 'Cartesia', elevenlabs: 'ElevenLabs', murf_falcon_2: 'Murf', murf_falcon_2_hi: 'Murf', soniox: 'Soniox', inworld: 'Inworld', deepgram: 'Deepgram' };
+
+export const MURF_API_URL = 'https://global.api.murf.ai/v1/speech/stream';
+export const INWORLD_TTS_URL = 'https://api.inworld.ai/tts/v1/voice:stream';
+export const SONIOX_TTS_URL = 'https://tts-rt.soniox.com/tts';
 
 /** deepgram_tts.py: Aura voices use the v1 client on the AU endpoint. */
 export const DEEPGRAM_AU_SPEAK_URL = 'https://api.au.deepgram.com/v1/speak';

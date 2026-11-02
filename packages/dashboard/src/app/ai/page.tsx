@@ -4,9 +4,11 @@ import React, { useState } from 'react';
 import { AiProvider, useAi } from '../../lib/context/AiContext';
 import { summarizeReadiness } from '../../lib/ai-readiness';
 import { AgentTab } from '../../components/ai/AgentTab';
+import { IntegrationsTab } from '../../components/ai/IntegrationsTab';
 import { InspectorTab } from '../../components/ai/InspectorTab';
 import { KeysTab } from '../../components/ai/KeysTab';
 import { LlmTab } from '../../components/ai/LlmTab';
+import { ModelHubTab } from '../../components/ai/ModelHubTab';
 import { OverviewTab } from '../../components/ai/OverviewTab';
 import { SttTab } from '../../components/ai/SttTab';
 import { TtsTab } from '../../components/ai/TtsTab';
@@ -20,7 +22,9 @@ const TABS = [
   { id: 'stt', label: 'Speech-to-Text', Component: SttTab },
   { id: 'llm', label: 'Language Model', Component: LlmTab },
   { id: 'tts', label: 'Text-to-Speech', Component: TtsTab },
+  { id: 'hub', label: 'Model Hub', Component: ModelHubTab },
   { id: 'agent', label: 'Agent', Component: AgentTab },
+  { id: 'integrations', label: 'Integrations', Component: IntegrationsTab },
   { id: 'keys', label: 'API Keys', Component: KeysTab },
   { id: 'usage', label: 'Usage & Logs', Component: UsageTab },
 ] as const;
