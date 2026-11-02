@@ -50,6 +50,11 @@ export function errorHandler(
     return;
   }
 
+  if (errorObj?.name === 'ModemNotFoundError') {
+    res.status(404).json({ success: false, error: errorObj.message, code: 'MODEM_NOT_FOUND' });
+    return;
+  }
+
   if (err instanceof ModemCommandError || errorObj?.name === 'ModemCommandError') {
     res.status(502).json({
       success: false,

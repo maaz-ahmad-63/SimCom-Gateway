@@ -23,6 +23,11 @@ import { createAuthMiddleware } from './api/middleware/auth.js';
 import { errorHandler } from './api/middleware/error-handler.js';
 import { createGatewayRouter } from './api/routes/gateway.js';
 import { createCallsRouter } from './api/routes/calls.js';
+import { createModemsRouter } from './api/routes/modems.js';
+import { ModemRegistry } from './modems/registry.js';
+import { createModemUnit } from './modems/unit.js';
+import { createA7672sUnit, modemBFromEnv } from './modems/a7672s-unit.js';
+import type { ModemUnit } from './modems/types.js';
 import { createMockRouter } from './api/routes/mock.js';
 import { GatewaySocketServer } from './api/socket/socket-server.js';
 import { isAutoPort, loadConfig } from './config/index.js';
@@ -77,6 +82,8 @@ export interface GatewayServerOptions {
   listSerialPorts?: PortLister;
   /** Test seam: how often the gateway looks for a modem that came back after the adapter gave up (default 15 s). */
   modemWatchMs?: number;
+  /** Additional modems beyond modem-a (tests). Production builds modem-b from MODEM_B_AT_PORT when that is set. */
+  extraModems?: Array<{ unit: ModemUnit; callBus?: GatewayEventBus }>;
   /** Complete-call recording overrides (tests). Production reads CALL_RECORDING_* from the environment. */
   recording?: Partial<RecordingConfig>;
   /** AI agent test seams. In production none of these is set: env + real providers + the SIM7600EI audio adapter. */
@@ -111,6 +118,8 @@ export interface GatewayServerInstance {
   modem: IModemAdapter;
   audio: IAudioAdapter;
   callManager: ICallSessionManager;
+  /** Every modem the gateway manages, by modemId. The modem/audio/callManager above are the default one ('modem-a'). */
+  modemRegistry: ModemRegistry;
   repository: GatewayRepository;
   eventBus: GatewayEventBus;
   aiOrchestrator: AiCallOrchestrator;
@@ -213,6 +222,62 @@ export function createGatewayServer(
       eventBus,
       enableUsbAudioDiagnostic: config.enableUsbAudioDiagnostic,
     });
+
+  // Modem registry. The modem built above is registered unchanged as 'modem-a'; the legacy routes keep acting on it.
+  const modemRegistry = new ModemRegistry();
+  modemRegistry.register(
+    createModemUnit({
+      descriptor: {
+        modemId: 'modem-a',
+        name: 'Modem A',
+        model: config.modemDriver === 'hardware' ? 'SIM7600EI' : 'MOCK',
+        atPort: config.atPort,
+        audio: config.modemDriver === 'hardware' ? { kind: 'usb-pcm', port: config.audioPort } : { kind: 'mock' },
+      },
+      modem,
+      audio,
+      callManager,
+    }),
+    { isDefault: true }
+  );
+
+  // Extra modems. Modem B (A7672S) exists only when MODEM_B_AT_PORT is set (hardware mode) or a test supplies units.
+  const extraModems: Array<{ unit: ModemUnit; callBus?: GatewayEventBus }> = [...(options.extraModems ?? [])];
+  if (!options.extraModems && config.modemDriver === 'hardware') {
+    const b = modemBFromEnv(process.env);
+    if (b) {
+      const built = createA7672sUnit({ ...b, autoReconnect: config.autoReconnect });
+      extraModems.push({ unit: built.unit, callBus: built.eventBus });
+    }
+  }
+  for (const extra of extraModems) {
+    modemRegistry.register(extra.unit);
+    // Calls on this modem are stored in the same call history. Its events stay on its own bus: nothing legacy sees them.
+    extra.callBus?.on('call:started', (session) => {
+      try {
+        repository.upsertCall(session);
+        repository.recordCallEvent(session.id, 'CALL_STARTED', { ...session.metadata, modemId: extra.unit.descriptor.modemId }, undefined, session.state);
+      } catch {
+        // never break call flow on a database write
+      }
+    });
+    extra.callBus?.on('call:state_changed', (event) => {
+      try {
+        repository.upsertCall(event.session);
+        repository.recordCallEvent(event.callId, 'STATE_CHANGED', { trigger: event.trigger ?? null, triggerLine: event.triggerLine ?? null, at: event.timestamp, modemId: extra.unit.descriptor.modemId }, event.previousState, event.currentState);
+      } catch {
+        // never break call flow
+      }
+    });
+    extra.callBus?.on('call:ended', (session) => {
+      try {
+        repository.upsertCall(session);
+        repository.recordCallEvent(session.id, 'CALL_ENDED', { durationSeconds: session.durationSeconds, outcome: session.outcome, terminationReason: session.terminationReason, modemId: extra.unit.descriptor.modemId }, session.state, 'IDLE');
+      } catch {
+        // never break call flow
+      }
+    });
+  }
 
   // AI voice agent: optional and inert unless enabled. Settings saved from the dashboard are layered over
   // .env; a bad AI setting disables the agent and is reported, it never stops the gateway.
@@ -486,6 +551,8 @@ export function createGatewayServer(
     })
   );
 
+  app.use('/api/modems', createModemsRouter({ registry: modemRegistry }));
+
   app.use(
     '/api/mock',
     createMockRouter({
@@ -509,6 +576,7 @@ export function createGatewayServer(
     atPort: config.atPort,
     audioPort: config.audioPort,
     currentPorts,
+    modemRegistry,
   });
 
   let instanceLock: InstanceLock | null = null;
@@ -565,7 +633,7 @@ export function createGatewayServer(
     logger.info(`Starting gateway server in ${config.modemDriver} mode on ${config.host}:${config.port}`);
     // Claim the serial ports before anything opens them; a second gateway fails here, naming the owner.
     if (config.modemDriver === 'hardware' && !instanceLock) {
-      instanceLock = acquireInstanceLock([config.atPort, config.audioPort], options.instanceLockDir);
+      instanceLock = acquireInstanceLock([config.atPort, config.audioPort, ...extraModems.map((m) => m.unit.descriptor.atPort)], options.instanceLockDir);
       process.once('exit', releaseInstanceLock);
       logger.info(`Serial port ownership recorded for ${config.atPort} and ${config.audioPort} (pid ${process.pid})`);
     }
@@ -593,6 +661,14 @@ export function createGatewayServer(
           throw error;
         }
       }
+    }
+
+    // Each extra modem connects on its own; one failing to start never delays or affects modem-a.
+    for (const { unit } of extraModems) {
+      if (unit.modem.getConnectionState() !== 'DISCONNECTED') continue;
+      unit.modem.initialize({ atPort: unit.descriptor.atPort }).catch((error: Error) => {
+        logger.error(`${unit.descriptor.modemId} is not ready at startup: ${redactDiagnosticText(error.message)}. The gateway is serving and will keep retrying.`);
+      });
     }
 
     await new Promise<void>((resolve) => {
@@ -631,6 +707,7 @@ export function createGatewayServer(
     if (modem.getConnectionState() !== 'DISCONNECTED') {
       await modem.close();
     }
+    for (const { unit } of extraModems) await unit.modem.close().catch(() => {});
     db.close();
     releaseInstanceLock();
     logger.info('Gateway server shutdown complete');
@@ -643,6 +720,7 @@ export function createGatewayServer(
     modem,
     audio,
     callManager,
+    modemRegistry,
     repository,
     eventBus,
     aiOrchestrator,
