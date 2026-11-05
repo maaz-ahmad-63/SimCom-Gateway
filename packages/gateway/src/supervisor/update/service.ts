@@ -126,7 +126,18 @@ export class UpdateService {
     this.state = { ...this.state, phase: 'checking', error: null };
     try {
       const url = this.cfg.updateUrl;
-      const bytes = await this.deps.fetchBytes(url, MAX_MANIFEST_BYTES);
+      let bytes: Buffer;
+      try {
+        bytes = await this.deps.fetchBytes(url, MAX_MANIFEST_BYTES);
+      } catch (e) {
+        // A release address that has no release yet (GitHub answers 404 until the first release is published) is "nothing new", not a fault.
+        if (e instanceof UpdateError && e.code === 'NOT_PUBLISHED') {
+          this.manifest = null;
+          this.state = { ...this.state, phase: 'idle', available: null, checkedAt: this.deps.now().toISOString() };
+          return this.status();
+        }
+        throw e;
+      }
       const sig = (await this.deps.fetchBytes(`${url}.sig`, 1024)).toString('utf8');
       try {
         this.manifest = verifyManifest(bytes, sig, this.cfg.publicKeyPem!, this.cfg.currentVersion, this.deps.now());

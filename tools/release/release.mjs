@@ -2,13 +2,19 @@
 // Release tool for SIZH IT Solution updates. Run by the publisher on the release machine, never by customers.
 //
 //   node tools/release/release.mjs keygen  --key <private-key-file> --public <public-key-pem>
-//   node tools/release/release.mjs publish --key <private-key-file> --app <installer/stage/app> --base-url <https://host/dir/> --out <folder>
+//   node tools/release/release.mjs publish --key <private-key-file> --app <installer/stage/app> --out <folder>
+//                                          (--github <owner/repo> | --base-url <https://host/dir/>)
 //                                          [--version x.y.z] [--notes "text"] [--minimum x.y.z] [--days 365]
+//   node tools/release/release.mjs verify  --url <https://.../latest.json> --public <public-key-pem>
 //
 // keygen   makes an Ed25519 key pair. The PRIVATE key must live outside this repository (the tool refuses a path inside it); keep it
 //          offline or in a password manager. The PUBLIC key goes in installer/update/public-key.pem and is packaged with the product.
 // publish  zips the staged program folder, then writes into --out: SIZH-IT-Solution-<version>.zip, latest.json and latest.json.sig.
-//          Upload the zip, then latest.json and latest.json.sig. The signature covers the exact bytes of latest.json.
+//          The signature covers the exact bytes of latest.json. It uploads NOTHING and creates no release.
+//          --github owner/repo points the package at that repository's release for tag v<version>
+//          (https://github.com/<owner>/<repo>/releases/download/v<version>/<zip>) and prints the exact `gh` commands for a DRAFT release.
+// verify   once a release is public: downloads latest.json, latest.json.sig and the zip from the real address (following redirects) and
+//          checks the signature, expiry, size and SHA-256 the way the product does.
 // It verifies its own output with the public key derived from the private key before it finishes.
 
 import crypto from 'node:crypto';
@@ -51,11 +57,11 @@ function keygen() {
 function publish() {
   const keyFile = opt('key');
   const app = opt('app', path.join(repo, 'installer', 'stage', 'app'));
-  const baseUrl = opt('base-url');
+  const github = opt('github');
   const out = opt('out');
-  if (!keyFile || !baseUrl || !out) die('publish needs --key, --base-url and --out');
+  if (github && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(github)) die('--github must look like owner/repo');
+  if (!keyFile || !(github || opt('base-url')) || !out) die('publish needs --key, --out and either --github owner/repo or --base-url');
   if (inside(keyFile, repo)) die('the private key is inside the repository; move it out and rotate it if it was ever committed.');
-  if (!baseUrl.startsWith('https://')) die('--base-url must be an https address');
   if (inside(out, repo)) die('write the release files outside the repository');
   const privateKey = crypto.createPrivateKey(fs.readFileSync(keyFile));
   const publicKey = crypto.createPublicKey(privateKey);
@@ -65,6 +71,8 @@ function publish() {
   const version = opt('version', staged);
   if (version !== staged) die(`--version ${version} does not match the packaged version ${staged}`);
   if (!/^\d+\.\d+\.\d+$/.test(version)) die(`not a version: ${version}`);
+  const baseUrl = github ? `https://github.com/${github}/releases/download/v${version}/` : opt('base-url');
+  if (!baseUrl.startsWith('https://')) die('--base-url must be an https address');
   for (const must of ['runtime/node.exe', 'gateway/dist/supervisor/main.js', 'dashboard/packages/dashboard/server.js']) {
     if (!fs.existsSync(path.join(app, must))) die(`the package is incomplete (${must})`);
   }
@@ -93,10 +101,43 @@ function publish() {
   fs.writeFileSync(path.join(out, 'latest.json'), manifestBytes);
   fs.writeFileSync(path.join(out, 'latest.json.sig'), signature.toString('base64'));
   console.log(`version ${version}: ${zipName} (${bytes.length} bytes, sha256 ${manifest.packageSha256.slice(0, 16)}…)`);
-  console.log(`wrote ${out}\\latest.json and latest.json.sig. Upload the zip first, then latest.json and latest.json.sig.`);
+  console.log(`wrote ${out}\\latest.json and latest.json.sig.`);
+  if (github) {
+    const q = (f) => `"${path.join(out, f)}"`;
+    console.log('\nNothing has been uploaded. To stage it as a DRAFT release (not public, not seen by customers), run:');
+    console.log(`  gh release create v${version} --repo ${github} --draft --title "SIZH IT Solution ${version}" --notes-file <notes.md> ${q(zipName)} ${q('latest.json')} ${q('latest.json.sig')}`);
+    console.log('Check the draft in the browser, then publish it ONLY when you intend customers to receive it:');
+    console.log(`  gh release edit v${version} --repo ${github} --draft=false --latest`);
+    console.log('Then confirm the public copy:');
+    console.log(`  node tools/release/release.mjs verify --url https://github.com/${github}/releases/latest/download/latest.json --public installer/update/public-key.pem`);
+  }
+}
+
+async function verify() {
+  const url = opt('url');
+  const pubFile = opt('public');
+  if (!url || !pubFile) die('verify needs --url and --public');
+  if (!url.startsWith('https://')) die('--url must be an https address');
+  const get = async (u) => {
+    const r = await fetch(u, { redirect: 'follow' });
+    if (!r.ok) die(`${u} answered ${r.status}`);
+    if (!r.url.startsWith('https://')) die(`${u} ended on a non-https address (${r.url})`);
+    return Buffer.from(await r.arrayBuffer());
+  };
+  const manifestBytes = await get(url);
+  const sig = (await get(`${url}.sig`)).toString('utf8');
+  const ok = crypto.verify(null, manifestBytes, crypto.createPublicKey(fs.readFileSync(pubFile)), Buffer.from(sig.trim(), 'base64'));
+  if (!ok) die('the signature does NOT verify with this public key');
+  const m = JSON.parse(manifestBytes.toString('utf8'));
+  if (Date.parse(m.expiresAt) <= Date.now()) die('the manifest has expired');
+  const zip = await get(m.packageUrl);
+  if (zip.length !== m.packageSize) die(`package size ${zip.length} differs from the manifest (${m.packageSize})`);
+  if (crypto.createHash('sha256').update(zip).digest('hex') !== m.packageSha256) die('the package SHA-256 differs from the manifest');
+  console.log(`OK: version ${m.version}, ${zip.length} bytes; signature, size and SHA-256 verified from ${url}`);
 }
 
 const command = process.argv[2];
 if (command === 'keygen') keygen();
 else if (command === 'publish') publish();
-else die('usage: release.mjs keygen|publish (see the comment at the top of this file)');
+else if (command === 'verify') await verify();
+else die('usage: release.mjs keygen|publish|verify (see the comment at the top of this file)');

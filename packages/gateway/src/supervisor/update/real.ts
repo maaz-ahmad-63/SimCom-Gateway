@@ -9,51 +9,74 @@ import type { UpdateDeps } from './service.js';
 
 /** The network, process and file parts of the updater, kept apart so the logic in service.ts can be tested without any of them. */
 
-/** GET with redirects followed by hand: every hop must be https, so a redirect can never downgrade the connection. */
-async function getHttps(url: string, timeoutMs: number): Promise<Response> {
-  let current = url;
-  for (let hop = 0; hop < 4; hop++) {
-    if (!isHttps(current)) throw new UpdateError('INSECURE_URL', 'The update address is not a secure (https) address.');
-    let res: Response;
-    try {
-      res = await fetch(current, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs), headers: { 'user-agent': 'SIZH-IT-Solution-Updater' } });
-    } catch {
-      throw new UpdateError('FETCH_FAILED', 'The update server could not be reached. Check the internet connection and try again.');
-    }
-    if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
-      current = new URL(res.headers.get('location')!, current).toString();
-      continue;
-    }
-    if (!res.ok) throw new UpdateError('FETCH_FAILED', `The update server answered with an error (${res.status}).`);
-    return res;
-  }
-  throw new UpdateError('FETCH_FAILED', 'The update server redirected too many times.');
-}
+/** GitHub answers a release-asset address with one or two redirects (to its asset storage), so a handful of hops is allowed. */
+const MAX_REDIRECTS = 6;
 
-export async function fetchBytes(url: string, maxBytes: number): Promise<Buffer> {
-  const res = await getHttps(url, 15_000);
-  const chunks: Buffer[] = [];
-  let total = 0;
-  for await (const chunk of Readable.fromWeb(res.body as never)) {
-    total += (chunk as Buffer).length;
-    if (total > maxBytes) throw new UpdateError('TOO_LARGE', 'The update information is larger than expected, so it was ignored.');
-    chunks.push(chunk as Buffer);
-  }
-  return Buffer.concat(chunks);
-}
-
-export async function downloadTo(url: string, file: string, maxBytes: number): Promise<void> {
-  const res = await getHttps(url, 30 * 60_000);
-  let total = 0;
-  const limited = async function* (source: AsyncIterable<Buffer>) {
-    for await (const chunk of source) {
-      total += chunk.length;
-      if (total > maxBytes) throw new UpdateError('SIZE_MISMATCH', 'The download is larger than announced, so it was stopped.');
-      yield chunk;
+/**
+ * The two network operations the updater needs, over any fetch (the real one in production, a scripted one in tests).
+ * Redirects are followed BY HAND: every hop must be https, so a redirect can never downgrade the connection, and no credential or header
+ * other than a fixed User-Agent is ever sent, so nothing is leaked to the storage host a release address redirects to.
+ */
+export function makeNetwork(doFetch: typeof fetch = fetch): Pick<UpdateDeps, 'fetchBytes' | 'downloadTo'> {
+  async function getHttps(url: string, timeoutMs: number): Promise<Response> {
+    let current = url;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      if (!isHttps(current)) throw new UpdateError('INSECURE_URL', 'The update address is not a secure (https) address.');
+      let res: Response;
+      try {
+        res = await doFetch(current, { redirect: 'manual', signal: AbortSignal.timeout(timeoutMs), headers: { 'user-agent': 'SIZH-IT-Solution-Updater' } });
+      } catch {
+        throw new UpdateError('FETCH_FAILED', 'The update server could not be reached. Check the internet connection and try again.');
+      }
+      const location = res.headers.get('location');
+      if (res.status >= 300 && res.status < 400 && location) {
+        await res.body?.cancel().catch(() => undefined);
+        current = new URL(location, current).toString();
+        continue;
+      }
+      if (res.status === 404) {
+        await res.body?.cancel().catch(() => undefined);
+        throw new UpdateError('NOT_PUBLISHED', 'No update has been published at the update address yet.');
+      }
+      if (!res.ok || !res.body) {
+        await res.body?.cancel().catch(() => undefined);
+        throw new UpdateError('FETCH_FAILED', `The update server answered with an error (${res.status}).`);
+      }
+      return res;
     }
+    throw new UpdateError('FETCH_FAILED', 'The update server redirected too many times.');
+  }
+
+  return {
+    async fetchBytes(url, maxBytes) {
+      const res = await getHttps(url, 15_000);
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for await (const chunk of Readable.fromWeb(res.body as never)) {
+        total += (chunk as Buffer).length;
+        if (total > maxBytes) throw new UpdateError('TOO_LARGE', 'The update information is larger than expected, so it was ignored.');
+        chunks.push(chunk as Buffer);
+      }
+      return Buffer.concat(chunks);
+    },
+    async downloadTo(url, file, maxBytes) {
+      const res = await getHttps(url, 30 * 60_000);
+      let total = 0;
+      const limited = async function* (source: AsyncIterable<Buffer>) {
+        for await (const chunk of source) {
+          total += chunk.length;
+          if (total > maxBytes) throw new UpdateError('SIZE_MISMATCH', 'The download is larger than announced, so it was stopped.');
+          yield chunk;
+        }
+      };
+      await pipeline(Readable.fromWeb(res.body as never) as unknown as AsyncIterable<Buffer>, limited, fs.createWriteStream(file));
+    },
   };
-  await pipeline(Readable.fromWeb(res.body as never) as unknown as AsyncIterable<Buffer>, limited, fs.createWriteStream(file));
 }
+
+const network = makeNetwork();
+export const fetchBytes = network.fetchBytes;
+export const downloadTo = network.downloadTo;
 
 /** Whether a call is in progress, asked of the gateway exactly as "Stop" does (launch.ts). Only a clear "no call" counts as idle. */
 export function callStateFrom(gatewayPort: number, apiKey: string, gatewayRunning: () => boolean): () => Promise<'idle' | 'busy' | 'unknown'> {

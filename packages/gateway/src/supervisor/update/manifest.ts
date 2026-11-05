@@ -28,7 +28,7 @@ export interface UpdateManifest {
 export type UpdateErrorCode =
   | 'NOT_CONFIGURED' | 'INSECURE_URL' | 'FETCH_FAILED' | 'TOO_LARGE' | 'BAD_SIGNATURE' | 'BAD_MANIFEST' | 'EXPIRED' | 'NOT_NEWER'
   | 'TOO_OLD' | 'HASH_MISMATCH' | 'SIZE_MISMATCH' | 'UNSAFE_PACKAGE' | 'INVALID_PACKAGE' | 'CALL_IN_PROGRESS' | 'CALL_STATE_UNKNOWN'
-  | 'NOT_WRITABLE' | 'BUSY' | 'NO_UPDATE';
+  | 'NOT_WRITABLE' | 'BUSY' | 'NO_UPDATE' | 'NOT_PUBLISHED';
 
 export class UpdateError extends Error {
   constructor(readonly code: UpdateErrorCode, message: string) {
