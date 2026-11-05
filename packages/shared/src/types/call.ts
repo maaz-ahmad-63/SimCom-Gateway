@@ -159,6 +159,11 @@ export interface ICallSessionManager {
 
   /** Explicitly controlled SIM7600 USB-audio diagnostic activation. */
   activateUsbAudioDiagnostic?(): Promise<UsbAudioActivation>;
+  /**
+   * The same registration (AT+CPCMREG=1) for the production call flow: hands-free calling activates USB audio on every call it handles,
+   * so this is never gated by the diagnostic switch, which governs only the operator's manual endpoint.
+   */
+  activateUsbAudioForCall?(): Promise<UsbAudioActivation>;
   deactivateUsbAudioDiagnostic?(): Promise<{ command: string; response: string; timestamp: string } | null>;
   isUsbAudioDiagnosticActive?(): boolean;
   /** Verify the call, AT+CPCMREG registration and audio port after a USB drop; never assumes any of them. */

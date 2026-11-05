@@ -251,10 +251,19 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
     };
   }
 
+  /** The operator's manual activation: only when the diagnostic is enabled. */
   async activateUsbAudioDiagnostic(): Promise<UsbAudioActivation> {
       if (!this.enableUsbAudioDiagnostic) {
         throw new Error('USB audio diagnostic is disabled');
       }
+      return this.activateUsbAudioForCall();
+    }
+
+    /**
+     * Registers USB audio for the active call. Used by the production call flow (hands-free calling), which needs it on every call, so it
+     * does not depend on the diagnostic switch. Same command, same checks, same bookkeeping and the same AT+CPCMREG=0 after the call.
+     */
+    async activateUsbAudioForCall(): Promise<UsbAudioActivation> {
       if (!this.activeStateMachine || this.activeStateMachine.getState() !== 'ACTIVE') {
         throw new InvalidStateTransitionError(
           this.activeStateMachine?.getState() ?? 'IDLE',

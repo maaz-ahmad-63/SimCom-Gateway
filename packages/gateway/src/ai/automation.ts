@@ -1,4 +1,4 @@
-import { AtCommandError, CallSession, CallStateChangeEvent, ICallSessionManager, UrcEvent } from '@sim-gateway/shared';
+import { AtCommandError, CallSession, CallStateChangeEvent, ICallSessionManager, UrcEvent, UsbAudioActivation } from '@sim-gateway/shared';
 import { GatewayEventBus } from '../core/event-bus.js';
 import { createLogger } from '../core/logger.js';
 import { AiConfig } from './config.js';
@@ -38,6 +38,16 @@ export interface AutomationDeps {
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * The call flow's own activation, never the operator's diagnostic one: that one is refused unless the diagnostic switch is on, which a
+ * packaged install leaves off, so every call stayed without audio. A manager without it (older test doubles) falls back to the old method.
+ */
+function activate(manager: ICallSessionManager): (() => Promise<UsbAudioActivation>) | undefined {
+  if (manager.activateUsbAudioForCall) return () => manager.activateUsbAudioForCall!();
+  if (manager.activateUsbAudioDiagnostic) return () => manager.activateUsbAudioDiagnostic!();
+  return undefined;
+}
 
 /** The module answered and said no. Anything else (timeout, disconnect) leaves the registration state unknown, so it is not retried. */
 function isRejection(error: unknown): boolean {
@@ -213,7 +223,7 @@ export class AiCallAutomation {
       if (!stillThisCall()) return false; // the call ended meanwhile: nothing to report
       if (manager.isUsbAudioDiagnosticActive?.()) return true; // registered meanwhile (for example by the operator): never double-register
       try {
-        const activation = await manager.activateUsbAudioDiagnostic!();
+        const activation = await activate(manager)!();
         const f = activation.moduleAudioFormat;
         this.deps.mark(call.id, {
           turnId: null,
@@ -259,7 +269,7 @@ export class AiCallAutomation {
     this.activated.add(call.id); // once per call
 
     const manager = this.deps.manager;
-    if (!manager.activateUsbAudioDiagnostic) {
+    if (!activate(manager)) {
       this.deps.mark(call.id, { turnId: null, stage: 'call', status: 'failed', detail: 'USB audio activation is unavailable on this gateway' });
       if (owned) this.ivrFailed(call, 'USB audio activation is unavailable on this gateway');
       return;

@@ -36,6 +36,8 @@ describe('hands-free calling workflow', () => {
       rejectActivations?: number;
       timeoutActivation?: boolean;
       recordingDir?: string;
+      /** AUDIO_USB_DIAGNOSTIC_ENABLED. A packaged install leaves it off. */
+      diagnostic?: boolean;
     } = {}
   ) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'automation-'));
@@ -60,7 +62,7 @@ describe('hands-free calling workflow', () => {
     const providers =
       options.providers ?? createMockProviders({ stt: ['first question', 'second question', 'third question'], llm: ['First answer here.', 'Second answer here.', 'Third answer here.'] });
     const server: GatewayServerInstance = createGatewayServer({
-      config: { modemDriver: 'mock', gatewayApiKey: KEY, sqliteDbPath: path.join(dir, 'g.sqlite'), audioDumpDir: path.join(dir, 'rec'), enableUsbAudioDiagnostic: true },
+      config: { modemDriver: 'mock', gatewayApiKey: KEY, sqliteDbPath: path.join(dir, 'g.sqlite'), audioDumpDir: path.join(dir, 'rec'), enableUsbAudioDiagnostic: options.diagnostic ?? true },
       modem,
       audio: new MockAudioAdapter(),
       instanceLockDir: dir,
@@ -295,6 +297,83 @@ describe('hands-free calling workflow', () => {
       await both.server.callManager.dial({ phoneNumber: '+10000000001' });
       both.urc('VOICE CALL: BEGIN', 'VOICE_CALL_BEGIN');
       await vi.waitFor(() => expect(both.count(/^AT\+CPCMREG=1$/)).toBe(1));
+    });
+  });
+
+  // ----------------------------------------------------------------------- packaged install: diagnostic switch off
+  // A packaged install never sets AUDIO_USB_DIAGNOSTIC_ENABLED. Every call must still get its USB audio, with no manual step, while the
+  // operator's manual endpoint stays refused.
+  describe('with the USB audio diagnostic disabled (as installed)', () => {
+    const OFF = { diagnostic: false } as const;
+
+    it('incoming: answers, registers USB audio by itself, waits for real bytes, and attaches', async () => {
+      const h = await harness({ ...OFF, env: AUTO });
+      h.ring();
+      h.ring();
+      await vi.waitFor(() => expect(h.server.aiOrchestrator.getSessions()).toHaveLength(1), { timeout: 4000 });
+      expect(h.count(/^AT\+CPCMREG=1$/)).toBe(1);
+      const markers = h.markers();
+      const order = ['USB audio activated automatically', 'Audio bytes are flowing', 'AI attached'].map((m) => markers.findIndex((x) => x.includes(m)));
+      expect(order.every((i) => i >= 0)).toBe(true);
+      expect(order).toEqual([...order].sort((a, b) => a - b));
+      expect(markers.join(' ')).not.toMatch(/diagnostic is disabled/);
+      expect(h.server.callManager.getUsbAudioStatus!().audio.state).toBe('flowing');
+    });
+
+    it('outgoing: registers USB audio by itself once the callee answers', async () => {
+      const h = await harness({ ...OFF, env: { ...AUTO, AI_AUTO_HANDLE: 'all' } });
+      await h.server.callManager.dial({ phoneNumber: '+10000000001' });
+      h.urc('VOICE CALL: BEGIN', 'VOICE_CALL_BEGIN');
+      await vi.waitFor(() => expect(h.markers().join(' ')).toMatch(/Audio bytes are flowing/), { timeout: 4000 });
+      expect(h.count(/^AT\+CPCMREG=1$/)).toBe(1);
+    });
+
+    it('the manual diagnostic endpoint stays disabled', async () => {
+      const h = await harness({ ...OFF, env: AUTO });
+      const res = await h.api('post', '/api/gateway/audio/usb-diagnostic').send({ action: 'activate' });
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe('USB audio diagnostic is disabled');
+      await expect(h.server.callManager.activateUsbAudioDiagnostic()).rejects.toThrow(/disabled/);
+    });
+
+    it('repeated calls: registers again on each call and stops it (AT+CPCMREG=0) after each', async () => {
+      const h = await harness({ ...OFF, env: AUTO });
+      for (let n = 1; n <= 3; n++) {
+        h.ring();
+        h.ring();
+        await vi.waitFor(() => expect(h.server.aiOrchestrator.getSessions()).toHaveLength(1), { timeout: 4000 });
+        expect(h.count(/^AT\+CPCMREG=1$/)).toBe(n);
+        h.endRemote();
+        await vi.waitFor(() => expect(h.server.callManager.getCurrentCall()).toBeNull());
+        await vi.waitFor(() => expect(h.count(/^AT\+CPCMREG=0$/)).toBe(n));
+        await vi.waitFor(() => expect(h.server.aiOrchestrator.getSessions()).toHaveLength(0));
+        await vi.waitFor(() => expect(h.server.callManager.isUsbAudioDiagnosticActive()).toBe(false));
+      }
+    });
+
+    it('a rejected activation is retried, and a call after a failed one is activated afresh', async () => {
+      const h = await harness({ ...OFF, env: AUTO, rejectActivations: 3 });
+      h.ring();
+      h.ring();
+      await vi.waitFor(() => expect(h.markers().join(' ')).toMatch(/activation failed: .*\(after 3 attempts\)/));
+      expect(h.server.aiOrchestrator.getSessions()).toHaveLength(0); // no audio: never pretends to be ready
+      h.endRemote();
+      await vi.waitFor(() => expect(h.server.callManager.getCurrentCall()).toBeNull());
+      h.ring();
+      h.ring();
+      await vi.waitFor(() => expect(h.server.aiOrchestrator.getSessions()).toHaveLength(1), { timeout: 4000 });
+      expect(h.count(/^AT\+CPCMREG=1$/)).toBe(4);
+    });
+
+    it('accepted registration without bytes is not readiness', async () => {
+      const h = await harness({ ...OFF, env: AUTO, audioWaitMs: 250 });
+      const real = h.server.callManager.getUsbAudioStatus!.bind(h.server.callManager);
+      vi.spyOn(h.server.callManager, 'getUsbAudioStatus').mockImplementation(() => ({ ...real(), audio: { state: 'stalled', msSinceLastFrame: 9000 } }));
+      h.ring();
+      h.ring();
+      await vi.waitFor(() => expect(h.markers().join(' ')).toMatch(/no audio bytes arrived/));
+      expect(h.count(/^AT\+CPCMREG=1$/)).toBe(1);
+      expect(h.server.aiOrchestrator.getSessions()).toHaveLength(0);
     });
   });
 
