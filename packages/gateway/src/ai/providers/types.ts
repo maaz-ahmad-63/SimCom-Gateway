@@ -83,6 +83,10 @@ export interface LlmUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Prompt tokens the provider says it served from its prompt cache. Absent when the provider does not report it (which is not the same as 0). */
+  cachedPromptTokens?: number;
+  /** Prompt tokens the provider says it wrote to its cache on this request, where it reports that. Absent when not reported. */
+  cacheWriteTokens?: number;
 }
 
 /** A function the model may call: a name, a description and a JSON Schema for its arguments (the OpenAI "tools" shape). */
@@ -118,6 +122,11 @@ export interface LlmChunk {
 export interface LlmRequest {
   system: string;
   messages: LlmMessage[];
+  /**
+   * Names the shared beginning of this request (a campaign version's prompt) so a provider that can use it routes requests with the same
+   * prefix together. Sent only to providers documented to accept it; ignored by every other.
+   */
+  cacheKey?: string;
   /** Functions the model may call. Ignored by a provider that does not support them (check `supportsTools`). */
   tools?: LlmToolSpec[];
 }

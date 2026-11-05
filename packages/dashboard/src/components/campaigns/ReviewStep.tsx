@@ -5,7 +5,8 @@ import { apiClient } from '../../lib/api-client';
 import { Campaign, Review, startBlockers } from '../../lib/campaigns';
 import { ActionNote, Badge, Button, Card, TextInput, Tile, useAction } from '../ai/ui';
 
-export function ReviewStep({ campaign, contactsVersion, onStarted }: { campaign: Campaign; contactsVersion: number; onStarted: () => void }) {
+/** `restart`: the campaign has finished (completed or stopped) and is run again on its current contact list. Same checks, same confirmation. */
+export function ReviewStep({ campaign, contactsVersion, onStarted, restart = false }: { campaign: Campaign; contactsVersion: number; onStarted: () => void; restart?: boolean }) {
   const [review, setReview] = useState<Review | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -28,7 +29,7 @@ export function ReviewStep({ campaign, contactsVersion, onStarted }: { campaign:
   const blockers = review ? startBlockers({ campaignName: campaign.name, typedName: typed, acknowledgements: acks, review }) : ['Loading…'];
 
   const start = async () => {
-    const started = await run(() => apiClient.startCampaign(campaign.id, typed.trim()), 'Campaign started');
+    const started = await run(() => (restart ? apiClient.restartCampaign(campaign.id, typed.trim()) : apiClient.startCampaign(campaign.id, typed.trim())), restart ? 'Campaign running again' : 'Campaign started');
     if (started) {
       setConfirming(false);
       onStarted();
@@ -36,7 +37,10 @@ export function ReviewStep({ campaign, contactsVersion, onStarted }: { campaign:
   };
 
   return (
-    <Card title="3. Review and start" subtitle="Check what will happen. Nothing is called until you confirm below.">
+    <Card
+      title={restart ? 'Run this campaign again' : '3. Review and start'}
+      subtitle={restart ? 'Runs the campaign again on its current contact list (for example after uploading a new CSV above). Only contacts still waiting are called; contacts already called are not called again unless they are queued for a retry. Earlier calls, recordings and results are kept. Nothing is called until you confirm below.' : 'Check what will happen. Nothing is called until you confirm below.'}
+    >
       {error && <p className="text-xs text-rose-300" role="alert">{error}</p>}
       {!error && !review && <p className="text-xs text-slate-400">Loading the review…</p>}
       {review && (
@@ -75,11 +79,16 @@ export function ReviewStep({ campaign, contactsVersion, onStarted }: { campaign:
               </ul>
             </div>
           )}
+          {restart && review.willCall <= 0 && (
+            <p className="text-xs text-amber-300" data-testid="nothing-waiting">
+              No contacts are waiting to be called. Upload a new contact list in the “Contact list” card below, then come back here.
+            </p>
+          )}
           {review.anotherRunning && <p className="text-xs text-amber-300">Another campaign (“{review.anotherRunning.name}”) is running. Only one can run at a time.</p>}
 
           {!confirming ? (
             <Button variant="primary" onClick={() => setConfirming(true)} disabled={review.willCall <= 0 || review.blockers.length > 0 || !!review.anotherRunning}>
-              Start campaign…
+              {restart ? 'Run again…' : 'Start campaign…'}
             </Button>
           ) : (
             <div className="rounded-lg border border-amber-800/70 bg-amber-950/20 p-4 space-y-3" role="dialog" aria-label="Confirm campaign start" data-testid="confirm-start">

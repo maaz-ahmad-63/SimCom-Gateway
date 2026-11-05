@@ -1,5 +1,6 @@
 import { createLogger } from '../core/logger.js';
 import { redactSecrets } from '../ai/providers/http.js';
+import { snapshotForCall } from './campaign-agent.js';
 import { CallContextRegistry } from './call-context.js';
 import { CampaignDialer, CallEnd } from './dialer.js';
 import { AMBIGUOUS_END_NOTE, classifyEnd } from './outcome.js';
@@ -212,7 +213,19 @@ export class CampaignRunner {
     const settings = campaign.settings;
     const details: ContactDetails = { name: contact.name, designation: contact.designation, company: contact.company, context: contact.context, extra: contact.extra };
     // Registered before the dial: the call carries the contact id in its metadata, and the AI looks the context up from there.
-    contexts.register({ contactId: contact.id, campaignId, contextBlock: buildCallContext(details, settings), greeting: renderGreeting(settings.greetingTemplate, details) });
+    // Everything this call will be told is fixed here, from the configuration in force at this moment, and held for this call alone.
+    const snapshot = snapshotForCall(campaign, details);
+    contexts.register({
+      contactId: contact.id,
+      campaignId,
+      contextBlock: snapshot.contactBlock ?? buildCallContext(details, settings),
+      greeting: renderGreeting(settings.greetingTemplate, details),
+      llmKey: snapshot.llmKey,
+      configVersion: snapshot.configVersion,
+      promptSha: snapshot.promptSha,
+      ...(snapshot.systemPrompt ? { systemPrompt: snapshot.systemPrompt, promptCacheKey: snapshot.promptCacheKey } : {}),
+    });
+    store.setAttemptSnapshot(contact.id, { configVersion: snapshot.configVersion, promptSha: snapshot.promptSha, llmKey: snapshot.llmKey });
     this.inFlight = { contactId: contact.id, callId: null };
 
     let end: CallEnd | null = null;

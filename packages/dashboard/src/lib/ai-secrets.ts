@@ -19,16 +19,26 @@ export interface CredentialBadge {
   check: { label: string; tone: Tone };
 }
 
-/** Missing, invalid and unreachable are three different problems and are never merged into one badge. */
+/** A key was saved but cannot be read back (its encryption key is missing or was replaced). The gateway says so in its detail text. */
+export function isUnreadable(c: Pick<AiCredentialStatus, 'source' | 'lastCheckDetail'>): boolean {
+    return c.source === 'missing' && /cannot be decrypted/i.test(c.lastCheckDetail ?? '');
+}
+
+/**
+ * Configured or Not configured, and nothing about the key itself: a saved key is never shown again, not even its last characters.
+ * Missing, invalid and unreachable are three different problems and are never merged into one badge.
+ */
 export function credentialBadges(c: AiCredentialStatus): CredentialBadge {
   const presence =
     c.source === 'stored'
-      ? { label: `Stored ${c.masked ?? ''}`.trim(), tone: 'good' as const }
+      ? { label: 'Configured', tone: 'good' as const }
       : c.source === 'env'
-        ? { label: 'Set in .env', tone: 'good' as const }
-        : { label: 'Missing', tone: c.requiredBySelection ? ('bad' as const) : ('neutral' as const) };
+        ? { label: 'Configured (from .env)', tone: 'good' as const }
+        : isUnreadable(c)
+          ? { label: 'Saved key unreadable', tone: 'bad' as const }
+          : { label: 'Not configured', tone: c.requiredBySelection ? ('bad' as const) : ('neutral' as const) };
   let check: CredentialBadge['check'];
-  if (c.source === 'missing') check = { label: 'Nothing to check', tone: 'neutral' };
+  if (c.source === 'missing') check = { label: isUnreadable(c) ? 'Enter the key again' : 'Nothing to check', tone: isUnreadable(c) ? 'warn' : 'neutral' };
   else if (c.lastCheck === 'ok') check = { label: 'Provider accepted it', tone: 'good' };
   else if (c.lastCheck === 'invalid') check = { label: 'Provider rejected it', tone: 'bad' };
   else if (c.lastCheck === 'unreachable') check = { label: 'Could not reach provider', tone: 'warn' };

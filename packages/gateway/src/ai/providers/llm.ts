@@ -13,16 +13,38 @@ export interface LlmOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-function usageFrom(payload: any): LlmUsage | undefined {
+/** A count from a usage field, or undefined when the field is absent or not a non-negative number. Never 0 for "not reported". */
+function count(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value) : undefined;
+}
+
+export function usageFrom(payload: any): LlmUsage | undefined {
   const usage = payload?.usage ?? payload?.x_groq?.usage;
   if (!usage || typeof usage !== 'object') return undefined;
   const prompt = Number(usage.prompt_tokens ?? 0);
   const completion = Number(usage.completion_tokens ?? 0);
+  // Where each provider puts what was served from / written to its cache: OpenAI and Groq in prompt_tokens_details.cached_tokens,
+  // DeepSeek-style hosts as prompt_cache_hit_tokens, Anthropic-style replies as cache_read/creation_input_tokens. Only a number that
+  // is really there is recorded; no field means "not reported".
+  const details = usage.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object' ? usage.prompt_tokens_details : {};
+  const cached = count(details.cached_tokens) ?? count(usage.prompt_cache_hit_tokens) ?? count(usage.cache_read_input_tokens);
+  const written = count(usage.cache_creation_input_tokens) ?? count(details.cache_write_tokens) ?? count(details.cache_creation_tokens);
   return {
     promptTokens: prompt,
     completionTokens: completion,
     totalTokens: Number(usage.total_tokens ?? prompt + completion),
+    ...(cached !== undefined ? { cachedPromptTokens: cached } : {}),
+    ...(written !== undefined ? { cacheWriteTokens: written } : {}),
   };
+}
+
+/** Parameters only OpenAI's own API is documented to take; they are never sent to another host. */
+function isOpenAiHost(baseUrl: string): boolean {
+  try {
+    return new URL(baseUrl).hostname === 'api.openai.com';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -96,6 +118,12 @@ export class OpenAiCompatibleLlm implements LlmProvider {
       body.tool_choice = 'auto';
     }
     if (o.maxTokens !== null) body.max_tokens = o.maxTokens + (o.spec.reasoningTokenAllowance ?? 0);
+    if (isOpenAiHost(o.spec.baseUrl)) {
+      // OpenAI only reports usage in a stream when asked, and it can route requests that share a prompt prefix together when told
+      // what the prefix is. Nothing is added to any other provider's request.
+      if (body.stream_options === undefined) body.stream_options = { include_usage: true };
+      if (request.cacheKey && body.prompt_cache_key === undefined) body.prompt_cache_key = request.cacheKey;
+    }
 
     let response: Response;
     try {

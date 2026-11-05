@@ -42,7 +42,17 @@ export class AiNotReadyError extends Error {
 
 export interface OrchestratorDeps {
   /** Per-call details (a campaign contact) and an optional greeting for that call only; null for an ordinary call. */
-  callContext?: (call: CallSession) => { contextBlock: string; greeting?: string | null; campaignId: string; contactId: number } | null;
+  callContext?: (call: CallSession) => {
+    contextBlock: string;
+    greeting?: string | null;
+    campaignId: string;
+    contactId: number;
+    /** A campaign's own prompt: when present it is this call's whole system prompt (see campaigns/campaign-agent.ts). */
+    systemPrompt?: string;
+    /** A Model Hub model for this call, or null/absent for the gateway's selected one. */
+    llmKey?: string | null;
+    promptCacheKey?: string;
+  } | null;
   /** The person on a campaign call clearly asked not to be called again. Must not throw. */
   onOptOut?: (call: CallSession) => void;
   /** Functions the model may call, and the rule that stops anything being recorded for a call's person. Absent: no tools. */
@@ -51,7 +61,7 @@ export interface OrchestratorDeps {
   manager: ICallSessionManager;
   audio: IAudioAdapter;
   /** Built when a call is attached, so provider keys are read then and a bad key fails only that call. */
-  createProviders: () => ProviderSet;
+  createProviders: (options?: { llmKey?: string }) => ProviderSet;
   /** Fresh readiness at attach time. */
   readiness: () => AiReadiness;
   eventBus?: GatewayEventBus;
@@ -59,6 +69,11 @@ export interface OrchestratorDeps {
   transports?: (call: CallSession, format: AudioFormat) => { source: CallerAudioSource; sink: AgentAudioSink };
   /** True while something else (PCM verification) is writing to the audio port. */
   audioPortBusy?: () => boolean;
+  /**
+   * True while the IVR owns this call: the AI must not attach to it (nor be armed on it) until the IVR hands it over. Absent, or
+   * false for every call, leaves attaching exactly as it was.
+   */
+  callHeld?: (call: CallSession) => boolean;
   /** Runtime mode: 'passive' only transcribes; 'active' also replies. Read at every decision, so it can change mid-call. */
   mode?: () => AiMode;
   /** Inspector feed. */
@@ -72,7 +87,7 @@ export interface OrchestratorDeps {
   /** Optional operator-enabled diagnostic recording of each captured utterance. */
   onUtteranceAudio?: (callId: string, index: number, pcm: Buffer, format: AudioFormat) => void;
   /** Providers for all three stages, built when the operator switches conversation on for a call. */
-  createFullProviders?: () => ProviderSet;
+  createFullProviders?: (options?: { llmKey?: string }) => ProviderSet;
   /** Test seam: shorter idle waits. */
   idleWaitsMs?: readonly [number, number, number];
   /** Test seam: the per-call AI time limit in ms (production uses AI_MAX_CALL_SECONDS). */
@@ -85,6 +100,8 @@ export interface OrchestratorDeps {
 
 interface Attached {
   callId: string;
+  /** The model a campaign chose for this call (null: the gateway's selected model). Fixed when the call was attached. */
+  llmKey: string | null;
   /** The operator switched conversation on for this call (per call, never inherited). */
   conversationEnabled: boolean;
   deaf: boolean;
@@ -341,6 +358,8 @@ export class AiCallOrchestrator extends EventEmitter {
     if (!call || call.id !== callId) {
       throw new Error('Only the current call can be armed');
     }
+    // Arming is also what the IVR itself uses to hand a call over, and it releases the call first; anyone else is refused.
+    if (this.deps.callHeld?.(call)) throw new AiNotReadyError(['the IVR is handling this call; the AI can take it once the IVR hands it over']);
     const readiness = this.deps.readiness();
     if (!this.readyFor(readiness)) throw new AiNotReadyError(this.blockersFor(readiness));
     this.armed.add(callId);
@@ -413,7 +432,7 @@ export class AiCallOrchestrator extends EventEmitter {
   setConversation(callId: string, enabled: boolean): void {
     const entry = this.attached.get(callId);
     if (!entry) throw new Error('The AI is not attached to this call');
-    if (enabled && this.deps.createFullProviders) entry.session.upgradeProviders(this.deps.createFullProviders());
+    if (enabled && this.deps.createFullProviders) entry.session.upgradeProviders(this.deps.createFullProviders(entry.llmKey ? { llmKey: entry.llmKey } : undefined));
     entry.conversationEnabled = enabled;
     entry.session.setPassive(!enabled && this.mode !== 'active');
     if (enabled) {
@@ -443,8 +462,10 @@ export class AiCallOrchestrator extends EventEmitter {
         sttSeconds: sttSubmitted ? m.utteranceMs / 1000 : 0,
         llmPromptTokens: m.usage?.promptTokens ?? null,
         llmCompletionTokens: m.usage?.completionTokens ?? null,
+        llmCachedTokens: m.usage?.cachedPromptTokens ?? null,
+        llmCacheWriteTokens: m.usage?.cacheWriteTokens ?? null,
         ttsChars: m.ttsChars,
-        selection: { stt: this.config.stt.key, llm: this.config.llm.key, tts: this.config.tts.key },
+        selection: { stt: this.config.stt.key, llm: entry?.llmKey ?? this.config.llm.key, tts: this.config.tts.key },
         mock: this.deps.providersAreMock === true,
         // Text only exists on the result while the operator enabled transcripts.
         transcript: result.transcript ?? null,
@@ -519,6 +540,7 @@ export class AiCallOrchestrator extends EventEmitter {
   private handleStateChanged(event: CallStateChangeEvent): void {
     if (event.currentState !== 'ACTIVE') return;
     const call = event.session;
+    if (this.deps.callHeld?.(call)) return; // the IVR owns this call: no attach, and no alert about it
     if (!this.eligible(call) || this.limited.has(call.id)) return;
     if (!this.canRun) {
       // Switched off on purpose is silent; an invalid configuration is not, or a call would just never get an agent.
@@ -538,6 +560,10 @@ export class AiCallOrchestrator extends EventEmitter {
    * whenever they change, never every poll.
    */
   private tryAttach(call: CallSession): void {
+    if (this.deps.callHeld?.(call)) {
+      this.stopWaiting(call.id); // also ends a retry loop that was already running when the IVR took the call
+      return;
+    }
     const readiness = this.deps.readiness();
     if (this.readyFor(readiness)) {
       this.stopWaiting(call.id);
@@ -597,10 +623,12 @@ export class AiCallOrchestrator extends EventEmitter {
       return;
     }
 
+    // What a campaign fixed for THIS call when it was placed (null for any other call), looked up once, before anything is built.
+    const callContext = this.deps.callContext?.(call) ?? null;
     let providers: ProviderSet;
     try {
       assertEnginePcm(format);
-      providers = this.deps.createProviders();
+      providers = this.deps.createProviders(callContext?.llmKey ? { llmKey: callContext.llmKey } : undefined);
     } catch (error) {
       this.alert('error', `AI agent not attached: ${(error as Error).message}`);
       return;
@@ -620,9 +648,12 @@ export class AiCallOrchestrator extends EventEmitter {
           }),
         };
 
-    const callContext = this.deps.callContext?.(call) ?? null;
-    // One voice engine, two configurations: the call's direction picks the instructions and the greeting.
-    const agent = agentFor(this.config, call.direction);
+    // One voice engine, two configurations: the call's direction picks the instructions and the greeting. A campaign with its own prompt
+    // replaces BOTH for its calls: the prompt is the only source of instructions (no outbound or shared instructions are added, and the
+    // gateway's global greeting is not spoken); a campaign without one, and every other call, is exactly as before.
+    const agent: { systemPrompt: string; greeting: string | null; source: { instructions: string; greeting: string } } = callContext?.systemPrompt
+      ? { systemPrompt: callContext.systemPrompt, greeting: null, source: { instructions: 'campaign', greeting: callContext.greeting ? 'campaign' : 'none' } }
+      : agentFor(this.config, call.direction);
     const toolsDeps = this.deps.tools;
     const tools: ConversationTools | null = toolsDeps
       ? { registry: toolsDeps.registry, mode: call.direction, campaignId: callContext?.campaignId ?? null, contactId: callContext?.contactId ?? null, restriction: () => toolsDeps.restriction(call) }
@@ -638,12 +669,14 @@ export class AiCallOrchestrator extends EventEmitter {
       knowledge: this.knowledgeProvider(),
       loopLag: (this.loopLag ??= createLoopLag()),
       callContext: callContext?.contextBlock ?? null,
+      promptCacheKey: callContext?.promptCacheKey ?? null,
       emit: (event) => this.handleConversationEvent(call.id, event),
       trace: (event) => this.publish(call.id, event),
     });
 
     const entry: Attached = {
       callId: call.id,
+      llmKey: callContext?.llmKey ?? null,
       conversationEnabled: false,
       deaf: false,
       ignoredBytes: 0,

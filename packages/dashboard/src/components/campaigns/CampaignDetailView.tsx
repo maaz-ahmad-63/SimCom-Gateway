@@ -6,10 +6,13 @@ import { useRouter } from 'next/navigation';
 import { apiClient } from '../../lib/api-client';
 import { Campaign, Counts, RunnerStatus, statusTone } from '../../lib/campaigns';
 import { Badge, Button, Card, useAction, ActionNote } from '../ai/ui';
+import { AgentConfigCard } from './AgentConfigCard';
+import { CampaignCallsSection } from './CampaignCallsSection';
 import { ContactsStep } from './ContactsStep';
 import { ReviewStep } from './ReviewStep';
 import { RunPanel } from './RunPanel';
 import { SettingsStep } from './SettingsStep';
+import { UsageCard } from './UsageCard';
 
 interface Loaded {
   campaign: Campaign;
@@ -104,13 +107,31 @@ export function CampaignDetailView({ id }: { id: string }) {
               void load();
             }}
           />
+          <AgentConfigCard campaign={campaign} onSaved={() => void load()} />
           <SettingsStep campaign={campaign} onSaved={() => void load()} />
           <ReviewStep campaign={campaign} contactsVersion={contactsVersion} onStarted={() => void load()} />
         </>
       ) : (
         <>
           <RunPanel campaign={campaign} counts={counts} runner={runner} onChanged={() => void load()} />
+          {(campaign.status === 'completed' || campaign.status === 'stopped') && (
+            <div id="run-again">
+              <ReviewStep campaign={campaign} contactsVersion={contactsVersion} restart onStarted={() => void load()} />
+            </div>
+          )}
+          <CampaignCallsSection campaignId={campaign.id} refreshKey={counts.completed + counts.failed + counts.calling} />
+          {/* A started campaign can be edited in any state (a completed one too). Edits only affect calls placed afterwards. */}
+          <AgentConfigCard campaign={campaign} onSaved={() => void load()} />
+          <ContactsStep
+            campaign={campaign}
+            existing={counts.total}
+            onImported={() => {
+              setContactsVersion((v) => v + 1);
+              void load();
+            }}
+          />
           <SettingsStep campaign={campaign} onSaved={() => void load()} />
+          <UsageCard campaignId={campaign.id} />
         </>
       )}
     </div>

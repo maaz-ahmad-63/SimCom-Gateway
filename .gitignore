@@ -48,3 +48,13 @@ call-recordings/
 
 # Incoming-call audio captures (real voices)
 packages/gateway/diagnostics/captures/
+
+# Customer package build output
+installer/stage/
+installer/out/
+packages/dashboard/.next-package/
+
+# Update signing: the private key never belongs in the repository; release output is built elsewhere
+*.key
+update-signing*
+release-out/

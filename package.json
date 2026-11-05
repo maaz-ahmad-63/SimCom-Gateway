@@ -1,6 +1,6 @@
 {
   "name": "sim7600ei-cellular-gateway",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "description": "Standalone SIM7600EI Cellular Gateway with Mock Modem, Audio Diagnostics, and AI Voice Bridge",
   "workspaces": [

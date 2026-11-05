@@ -18,7 +18,7 @@ import {
   UsbAudioStatus,
   SerialPortDisconnectedError,
 } from '@sim-gateway/shared';
-import { AtParser } from '../adapters/modem/at-parser.js';
+import { AtParser, isDtmfUrc } from '../adapters/modem/at-parser.js';
 import { CallStateMachine } from './call-state-machine.js';
 import { GatewayBusyError, InvalidStateTransitionError } from './errors.js';
 import { GatewayEventBus } from './event-bus.js';
@@ -644,7 +644,8 @@ export class CallSessionManager extends EventEmitter implements ICallSessionMana
     this.logger.info(
       `Call URC ${urc.type} received: ${redactDiagnosticText(urc.raw)}`
     );
-    this.eventBus?.emit('modem:urc', urc);
+    // The event bus is broadcast to every dashboard client: a key the caller pressed (a possible PIN) never travels on it.
+    this.eventBus?.emit('modem:urc', isDtmfUrc(urc) ? { ...urc, payload: { kind: 'dtmf' } } : urc);
 
     if (urc.type === 'CLIP') {
       const clip = urc as ClipUrcEvent;

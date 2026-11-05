@@ -43,15 +43,18 @@ describe('the API Keys page', () => {
     }
   });
 
-  it('offers Replace, Check and Remove once a key is stored, and keeps the saved key masked', async () => {
+  it('offers Update, Check and Remove once a key is stored, shows Configured, and never shows the saved key again (not even its last characters)', async () => {
     const html = await render([status('MURF_API_KEY', 'stored', 'mur…cabc'), status('SONIOX_API_KEY', 'stored', 'son…ab12')]);
     for (const name of ['MURF_API_KEY', 'SONIOX_API_KEY']) {
       const row = rowOf(html, name);
-      expect(row).toContain('Replace key');
+      expect(row).toContain('Update key');
       expect(row).toContain('Check with provider');
-      expect(row).toContain('>Remove<');
+      expect(row).toContain('>Remove key<');
+      expect(row).toContain('Configured');
     }
-    expect(html).toContain('mur…cabc');
+    expect(html).not.toContain('mur…cabc');
+    expect(html).not.toContain('son…ab12');
+    expect(html).not.toMatch(/••••/);
   });
 
   it('shows only what the gateway lists: an older gateway without the new providers shows no invented rows', async () => {

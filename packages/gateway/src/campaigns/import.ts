@@ -1,5 +1,6 @@
 import { ColumnMapping, ParsedCsv } from './csv.js';
-import { cleanField, isReservedFieldKey } from './personalization.js';
+import { isUsableName } from './detect.js';
+import { cleanField } from './personalization.js';
 import { normalizePhone } from './phone.js';
 import { CampaignSettings, parseConsent, parseOptOut } from './policy.js';
 import { ImportRow } from './store.js';
@@ -11,6 +12,8 @@ export interface AnalysisResult {
     callable: number;
     invalidNumber: number;
     duplicate: number;
+    /** Rows with no usable contact name (empty, or a placeholder such as "N/A"). */
+    missingName: number;
     optedOut: number;
     doNotCall: number;
     consentDeclined: number;
@@ -19,12 +22,15 @@ export interface AnalysisResult {
   };
   /** The first problems, for the preview screen (never the full list of a 5000-row file). */
   problems: Array<{ rowNumber: number; reason: string }>;
+  /** The columns kept as each contact's custom fields: everything that is not the name, the phone or another mapped field. */
+  customColumns: string[];
 }
 
 export function validateMapping(headers: string[], mapping: ColumnMapping): string[] {
   const errors: string[] = [];
   const known = new Set(headers);
   if (!mapping.phone) errors.push('choose the column that holds the phone number');
+  if (!mapping.name) errors.push('choose the column that holds the contact name');
   const named: Array<[string, string | undefined]> = [
     ['phone', mapping.phone],
     ['name', mapping.name],
@@ -37,7 +43,6 @@ export function validateMapping(headers: string[], mapping: ColumnMapping): stri
   for (const [label, column] of named) if (column && !known.has(column)) errors.push(`the ${label} column "${column}" is not in the file`);
   for (const column of mapping.extra ?? []) {
     if (!known.has(column)) errors.push(`the extra column "${column}" is not in the file`);
-    else if (isReservedFieldKey(column)) errors.push(`the extra column "${column}" uses a name reserved for the agent's own context fields or instructions: rename the column in the file`);
   }
   const chosen = named.map(([, c]) => c).filter((c): c is string => !!c);
   if (new Set(chosen).size !== chosen.length) errors.push('each column can only be used for one field');
@@ -51,7 +56,11 @@ export function validateMapping(headers: string[], mapping: ColumnMapping): stri
 export function analyzeRows(csv: ParsedCsv, mapping: ColumnMapping, settings: Pick<CampaignSettings, 'defaultCountryCode' | 'consentMode'>, isDoNotCall: (e164: string) => boolean): AnalysisResult {
   const index = new Map(csv.headers.map((h, i) => [h, i]));
   const cell = (row: string[], column: string | undefined): string => (column ? (row[index.get(column) ?? -1] ?? '') : '');
-  const summary = { total: csv.rows.length, callable: 0, invalidNumber: 0, duplicate: 0, optedOut: 0, doNotCall: 0, consentDeclined: 0, consentUnknown: 0 };
+  const summary = { total: csv.rows.length, callable: 0, invalidNumber: 0, duplicate: 0, missingName: 0, optedOut: 0, doNotCall: 0, consentDeclined: 0, consentUnknown: 0 };
+  // Every column that is not a mapped field is kept as a custom field, so nothing in the customer's file is thrown away. An explicit
+  // `extra` list (older clients) limits that to those columns.
+  const mapped = new Set([mapping.phone, mapping.name, mapping.designation, mapping.company, mapping.context, mapping.consent, mapping.optOut].filter((c): c is string => !!c));
+  const customColumns = (mapping.extra !== undefined ? mapping.extra : csv.headers).filter((h) => !mapped.has(h) && index.has(h));
   const problems: AnalysisResult['problems'] = [];
   const seen = new Map<string, number>();
   const rows: ImportRow[] = [];
@@ -64,13 +73,13 @@ export function analyzeRows(csv: ParsedCsv, mapping: ColumnMapping, settings: Pi
     const phoneRaw = cell(row, mapping.phone);
     const phone = normalizePhone(phoneRaw, settings.defaultCountryCode);
     const extra: Record<string, string> = {};
-    for (const column of mapping.extra ?? []) {
-      const value = cleanField(cell(row, column), 200);
+    for (const column of customColumns) {
+      const value = cleanField(cell(row, column), 1000);
       if (value) extra[column] = value;
     }
     const base = {
       rowNumber,
-      name: cleanField(cell(row, mapping.name), 80),
+      name: cleanField(cell(row, mapping.name), 120),
       phoneRaw: phoneRaw.slice(0, 40),
       designation: cleanField(cell(row, mapping.designation), 80),
       company: cleanField(cell(row, mapping.company), 120),
@@ -86,6 +95,8 @@ export function analyzeRows(csv: ParsedCsv, mapping: ColumnMapping, settings: Pi
     };
 
     if (!phone.ok) return skip(phone.reason, null, 'invalidNumber');
+    // A row with no usable name is set aside before it can claim its number, so it never makes a later good row look like a duplicate.
+    if (!isUsableName(base.name)) return skip('missing contact name', phone.e164, 'missingName');
     const firstRow = seen.get(phone.e164);
     if (firstRow !== undefined) return skip(`duplicate of row ${firstRow}`, null, 'duplicate'); // a second copy is never queued
     seen.set(phone.e164, rowNumber);
@@ -96,5 +107,5 @@ export function analyzeRows(csv: ParsedCsv, mapping: ColumnMapping, settings: Pi
     summary.callable++;
     rows.push({ ...base, phoneE164: phone.e164, status: 'queued', skipReason: null });
   });
-  return { rows, summary, problems };
+  return { rows, summary, problems, customColumns };
 }

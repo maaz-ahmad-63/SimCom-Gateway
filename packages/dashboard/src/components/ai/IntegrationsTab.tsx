@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { apiClient } from '../../lib/api-client';
 import { keyFileProblem, modelToolsNote, sheetsPatch, SheetsConfig, SheetsStatus, SheetsTestResult, spreadsheetIdFrom, validateSheetsDraft } from '../../lib/integrations';
 import { formatDate } from '../../lib/utils';
+import { StorageNotice } from './StorageNotice';
 import { ActionNote, Badge, Button, Card, Field, SaveBar, TextArea, TextInput, Toggle, useAction } from './ui';
 
 export function CredentialCard({ status, onChange }: { status: SheetsStatus; onChange: (s: SheetsStatus) => void }) {
@@ -32,11 +33,7 @@ export function CredentialCard({ status, onChange }: { status: SheetsStatus; onC
       subtitle="Create a service account in Google Cloud, enable the Google Sheets API for its project, download its JSON key, and share your spreadsheet with the account's email as an Editor. The key is stored encrypted on the gateway, never shown here again, never logged."
       actions={<Badge tone={status.credential.undecryptable ? 'bad' : stored ? 'good' : 'neutral'}>{status.credential.undecryptable ? 'cannot be decrypted' : stored ? 'stored' : 'not set'}</Badge>}
     >
-      {!status.secretStorageAvailable && (
-        <p className="text-xs text-amber-300" role="alert">
-          Key storage is not enabled: set AI_SECRETS_MASTER_KEY (16 or more random characters) in the gateway .env and restart the gateway. Until then a key cannot be stored.
-        </p>
-      )}
+      <StorageNotice storageAvailable={status.secretStorageAvailable} />
       {stored && status.credential.serviceAccountEmail && (
         <div className="text-xs text-slate-300 space-y-1">
           <p>
@@ -44,7 +41,7 @@ export function CredentialCard({ status, onChange }: { status: SheetsStatus; onC
           </p>
         </div>
       )}
-      {status.credential.undecryptable && <p className="text-xs text-rose-300">A key is stored but cannot be decrypted (AI_SECRETS_MASTER_KEY missing or changed). Paste the key file again.</p>}
+      {status.credential.undecryptable && <p className="text-xs text-rose-300">A key is stored but cannot be decrypted (its encryption key is missing or was replaced). Paste the key file again.</p>}
 
       {editing || !stored ? (
         <form

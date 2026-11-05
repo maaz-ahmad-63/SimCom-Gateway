@@ -14,6 +14,9 @@ export interface TurnRecord {
   sttSeconds: number;
   llmPromptTokens: number | null;
   llmCompletionTokens: number | null;
+  /** What the provider reported as served from / written to its prompt cache; null when it reported nothing (not the same as 0). */
+  llmCachedTokens?: number | null;
+  llmCacheWriteTokens?: number | null;
   ttsChars: number;
   selection: { stt: string; llm: string; tts: string };
   /** Offline mock providers: logged, but never counted as usage or cost. */
@@ -83,8 +86,9 @@ export class AiUsageStore {
         `INSERT INTO ai_turns (call_id, at, status, reason, stt_ms, llm_first_token_ms, tts_first_ms, total_ms, utterance_ms,
            stt_seconds, llm_prompt_tokens, llm_completion_tokens, tts_chars, stt_key, llm_key, tts_key, mock, transcript, reply,
            first_audio_ms, perceived_first_audio_ms, endpoint_ms, stt_waited_ms, speculative_stt, late_frames, risk_frames, knowledge_hits,
-           turn_ref, llm_total_ms, tts_total_ms, play_ms, tft_available, stt_mode, max_late_ms, loop_lag_max_ms, cancel_source)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           turn_ref, llm_total_ms, tts_total_ms, play_ms, tft_available, stt_mode, max_late_ms, loop_lag_max_ms, cancel_source,
+           llm_cached_tokens, llm_cache_write_tokens)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         turn.callId,
@@ -122,7 +126,9 @@ export class AiUsageStore {
         turn.sttMode ?? null,
         turn.maxLateMs ?? null,
         turn.loopLagMaxMs ?? null,
-        turn.cancelSource ?? null
+        turn.cancelSource ?? null,
+        turn.llmCachedTokens ?? null,
+        turn.llmCacheWriteTokens ?? null
       );
   }
 

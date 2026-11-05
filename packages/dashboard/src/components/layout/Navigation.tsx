@@ -11,10 +11,13 @@ import {
   LayoutDashboard,
   MessageSquare,
   PhoneCall,
+  PhoneForwarded,
   Sliders,
   Cpu,
   Wrench,
   Volume2,
+  HeartPulse,
+  ListChecks,
 } from 'lucide-react';
 import { useGateway } from '../../lib/context/GatewayContext';
 import { portText } from '../../lib/hardware-mode';
@@ -23,10 +26,13 @@ const navItems = [
   { href: '/', label: 'Overview', icon: LayoutDashboard },
   { href: '/dialer', label: 'Dialer & Live', icon: PhoneCall, showActivePill: true },
   { href: '/ai', label: 'AI Agent', icon: Bot },
+  { href: '/ivr', label: 'IVR Menu', icon: PhoneForwarded },
   { href: '/calls', label: 'Call History', icon: History },
   { href: '/observability', label: 'Call Logs', icon: Activity },
   { href: '/campaigns', label: 'Campaigns', icon: Megaphone },
   { href: '/sms', label: 'SMS', icon: MessageSquare },
+  { href: '/setup', label: 'Setup', icon: ListChecks },
+  { href: '/health', label: 'System health', icon: HeartPulse },
   { href: '/hardware', label: 'Hardware', icon: Wrench },
   { href: '/settings', label: 'Settings', icon: Sliders },
 ];
@@ -41,7 +47,7 @@ export function Navigation() {
     <aside className="w-56 border-r border-slate-800 bg-[#090d16] flex flex-col justify-between shrink-0 hidden md:flex">
       <div className="p-3 space-y-1">
         <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 font-mono">
-          Gateway Control
+          SIZH IT Solution
         </div>
 
         <nav className="space-y-1">

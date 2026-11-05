@@ -13,13 +13,13 @@ export function RecordingPanel({
 }: {
   data: RecordingsResponse | null;
   error: string | null;
-  onDownload: (callId: string, track: 'caller' | 'agent') => void;
+  onDownload: (callId: string) => void;
 }) {
   const state = recorderState(data?.status ?? null);
   return (
     <Card
       title="Call recordings"
-      subtitle="Complete-call recordings (caller and agent tracks as WAV), separate from the diagnostic captures. Recording needs CALL_RECORDING_ENABLED and an acknowledgement that you have handled notice and consent."
+      subtitle="One WAV per call with what the caller said and what the agent said, on one timeline, separate from the diagnostic captures. Play a call from Call History. Recording needs CALL_RECORDING_ENABLED and an acknowledgement that you have handled notice and consent."
       actions={<Badge tone={state.tone}>{state.label}</Badge>}
     >
       <p className="text-xs text-slate-300">{state.detail}</p>
@@ -35,21 +35,20 @@ export function RecordingPanel({
             <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-slate-200">
               <span>{new Date(r.startedAt).toLocaleString()}</span>
               <span>
-                {r.direction} · caller {formatDuration(r.tracks.caller.durationMs)} · agent {formatDuration(r.tracks.agent.durationMs)}
+                {r.direction} · {formatDuration(r.durationMs)}
               </span>
             </div>
             <p className="text-slate-400">{recordingSummary(r)}</p>
             <div className="flex gap-2">
-              {(['caller', 'agent'] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => onDownload(r.callId, t)}
-                  className="rounded bg-slate-800 px-2 py-1 text-[11px] text-white hover:bg-slate-700"
-                >
-                  Download {t}.wav
-                </button>
-              ))}
+              <button
+                type="button"
+                onClick={() => onDownload(r.callId)}
+                disabled={!r.available}
+                title={r.available ? 'Download the recording of this call' : 'This recording is not ready to download'}
+                className="rounded bg-slate-800 px-2 py-1 text-[11px] text-white hover:bg-slate-700 disabled:opacity-50"
+              >
+                Download recording.wav
+              </button>
             </div>
           </li>
         ))}
@@ -77,13 +76,13 @@ export function RecordingCard() {
     return () => clearInterval(t);
   }, [refresh]);
 
-  const download = async (callId: string, track: 'caller' | 'agent') => {
+  const download = async (callId: string) => {
     try {
-      const blob = await apiClient.downloadRecording(callId, track);
+      const blob = await apiClient.downloadRecording(callId);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${callId}-${track}.wav`;
+      a.download = `${callId}.wav`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {

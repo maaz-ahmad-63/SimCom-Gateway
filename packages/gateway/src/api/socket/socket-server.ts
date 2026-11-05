@@ -18,7 +18,6 @@ import os from 'node:os';
 import { verifyApiKey } from '../middleware/auth.js';
 import { GatewayEventBus } from '../../core/event-bus.js';
 import { MockModemAdapter } from '../../adapters/modem/mock-modem.js';
-import { ModemRegistry } from '../../modems/registry.js';
 
 export interface SocketServerOptions {
   httpServer: HttpServer;
@@ -32,8 +31,6 @@ export interface SocketServerOptions {
   audioPort: string;
   /** The ports in use now (discovered or configured). */
   currentPorts?: () => { at: string; audio: string };
-  /** When given, every modem-scoped event is also published to clients as 'modem:event' (carries modemId, and callId for calls). */
-  modemRegistry?: ModemRegistry;
 }
 
 export class GatewaySocketServer {
@@ -149,11 +146,6 @@ export class GatewaySocketServer {
   }
 
   private bindGatewayEvents(): void {
-    // Modem-scoped events (one stream for all modems; each event names its modemId). The typed legacy events are untouched.
-    this.options.modemRegistry?.onModemEvent((event) => {
-      (this.io as unknown as Server).emit('modem:event', event);
-    });
-
     // Call state change
     this.options.eventBus.on('call:state_changed', (event: CallStateChangeEvent) => {
       this.io.emit('call:state_changed', event);

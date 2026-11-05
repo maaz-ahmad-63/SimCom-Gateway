@@ -75,3 +75,23 @@ export function clearGatewayClientConfig(): void {
 
   window.dispatchEvent(new CustomEvent('gateway-config-changed'));
 }
+
+/**
+ * First run of the packaged product: pick up the gateway address and key from the dashboard server, once, if this browser has none
+ * saved. Only works for a dashboard opened on the computer that runs it (the server refuses anything else) and only when the
+ * packaged product turned the route on. Returns true when a key was saved.
+ */
+export async function bootstrapLocalConfig(): Promise<boolean> {
+  if (typeof window === 'undefined') return false;
+  try {
+    if (localStorage.getItem(STORAGE_KEY_API_KEY)) return false;
+    const res = await fetch('/api/local-config', { headers: { 'x-dashboard-sms': '1' }, cache: 'no-store' });
+    if (!res.ok) return false;
+    const body = (await res.json()) as { gatewayUrl?: string; apiKey?: string };
+    if (!body.apiKey) return false;
+    saveGatewayClientConfig(body.gatewayUrl || defaultGatewayUrl(window.location.hostname), body.apiKey);
+    return true;
+  } catch {
+    return false;
+  }
+}

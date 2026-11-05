@@ -386,10 +386,11 @@ describe('hands-free calling workflow', () => {
       expect(h.count(/^AT\+CPCMREG=1$/)).toBe(1); // never re-activated during or after the call
       expect(h.count(/^AT\+CPCMREG=0$/)).toBeLessThanOrEqual(1); // only the single stop after the call ended
 
+      await h.server.callRecorder.whenIdle(); // the one combined file is built when the call ends
       const meta = h.server.callRecorder.list()[0];
-      expect(meta).toMatchObject({ callId, complete: true, direction: 'inbound' });
-      expect(meta.tracks.caller.hasAudio).toBe(true);
-      const wav = fs.readFileSync(h.server.callRecorder.trackFile(callId, 'caller')!);
+      expect(meta).toMatchObject({ callId, complete: true, direction: 'inbound', available: true });
+      expect(meta.hasCallerAudio).toBe(true);
+      const wav = fs.readFileSync(h.server.callRecorder.combinedFile(callId)!);
       expect(wav.toString('ascii', 0, 4)).toBe('RIFF');
       expect(wav.readUInt32LE(40)).toBe(wav.length - 44); // header matches the samples, so it plays
       let energy = 0;

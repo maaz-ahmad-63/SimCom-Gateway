@@ -12,21 +12,22 @@ const settings = {
   callingHours: { start: '09:00', end: '20:00', days: [1, 2, 3, 4, 5, 6], timeZone: 'Asia/Kolkata' }, consentMode: 'column' as const, defaultCountryCode: '91',
   skipRecentlyCalledHours: 24, maxConsecutiveFailures: 3, greetingTemplate: null, contextNote: '',
 };
-const campaign = (over: Partial<Campaign> = {}): Campaign => ({ id: 'c1', name: 'Spring outreach', status: 'running', pauseReason: null, settings, mapping: null, acknowledgements: null, createdAt: '2026-10-28T10:00:00Z', updatedAt: '2026-10-28T10:00:00Z', confirmedAt: null, startedAt: '2026-10-28T10:05:00Z', finishedAt: null, ...over });
+const campaign = (over: Partial<Campaign> = {}): Campaign => ({ id: 'c1', name: 'Spring outreach', status: 'running', pauseReason: null, settings, mapping: null, acknowledgements: null, createdAt: '2026-10-28T10:00:00Z', updatedAt: '2026-10-28T10:00:00Z', confirmedAt: null, startedAt: '2026-10-28T10:05:00Z', finishedAt: null, config: { version: 0, prompt: '', promptSha: '', promptChars: 0, llmKey: null, createdAt: null }, listVersion: 1, ...over });
 const counts = { total: 10, queued: 4, calling: 1, completed: 3, failed: 1, skipped: 1 };
 
 describe('column mapping', () => {
   const headers = ['Name', 'Mobile', 'Title', 'Org'];
-  it('keeps only real columns and requires the phone column', () => {
+  it('keeps only real columns and requires the name and phone columns', () => {
     expect(cleanMapping({ phone: 'Mobile', name: 'Name', company: 'Nope', extra: ['Org', 'Ghost'] }, headers)).toEqual({ phone: 'Mobile', name: 'Name', extra: ['Org'] });
     expect(cleanMapping({ name: 'Name' }, headers)).toBeNull();
+    expect(cleanMapping({ phone: 'Mobile' }, headers)).toBeNull();
     expect(cleanMapping({ phone: 'Missing' }, headers)).toBeNull();
   });
 
   it('explains what to fix before importing', () => {
-    expect(mappingProblems({}, headers)).toEqual(['Choose the column that holds the phone number.']);
+    expect(mappingProblems({}, headers)).toEqual(['Choose the column that holds the phone number.', 'Choose the column that holds the contact name.']);
     expect(mappingProblems({ phone: 'Mobile', name: 'Mobile' }, headers)).toContain('Each column can only be used for one field.');
-    expect(mappingProblems({ phone: 'Mobile', extra: ['Name'] }, headers)).toEqual([]);
+    expect(mappingProblems({ phone: 'Mobile', name: 'Title', extra: ['Name'] }, headers)).toEqual([]);
     expect(mappingProblems({ phone: 'Gone' }, headers)).toContain('The column "Gone" is not in the file.');
   });
 });
@@ -132,8 +133,8 @@ describe('what the pages show', () => {
   });
 
   it('summarises an import in tiles', () => {
-    const html = renderToStaticMarkup(React.createElement(SummaryTiles, { summary: { total: 8, callable: 3, invalidNumber: 1, duplicate: 1, optedOut: 1, doNotCall: 1, consentDeclined: 1, consentUnknown: 2 } }));
-    for (const label of ['Rows in the file', 'Will be called', 'Invalid number', 'Duplicate number', 'Opted out in file', 'Do-not-call list', 'Consent declined', 'No consent value']) expect(html).toContain(label);
+    const html = renderToStaticMarkup(React.createElement(SummaryTiles, { summary: { total: 8, callable: 3, invalidNumber: 1, duplicate: 1, missingName: 1, optedOut: 1, doNotCall: 1, consentDeclined: 1, consentUnknown: 2 } }));
+    for (const label of ['Rows in the file', 'Will be called', 'Invalid number', 'Missing name', 'Duplicate number', 'Opted out in file', 'Do-not-call list', 'Consent declined', 'No consent value']) expect(html).toContain(label);
   });
 });
 
@@ -143,8 +144,9 @@ describe('imported columns that would collide with the agent\'s own fields', () 
       expect(isReservedColumn(name), JSON.stringify(name)).toBe(true);
     }
     for (const fine of ['plan', 'Account type', 'region', 'last_order']) expect(isReservedColumn(fine), fine).toBe(false);
-    expect(mappingProblems({ phone: 'Phone', extra: ['contact_name'] }, ['Phone', 'contact_name']).join(' ')).toMatch(/reserved for the agent/);
-    expect(mappingProblems({ phone: 'Phone', extra: ['plan'] }, ['Phone', 'plan'])).toEqual([]);
+    // such a column is still kept as a custom field; the gateway just never hands it to the agent
+    expect(mappingProblems({ phone: 'Phone', name: 'N', extra: ['contact_name'] }, ['Phone', 'N', 'contact_name'])).toEqual([]);
+    expect(mappingProblems({ phone: 'Phone', name: 'N', extra: ['plan'] }, ['Phone', 'N', 'plan'])).toEqual([]);
   });
 
   it('keeps its reserved list identical to the gateway\'s (so the screen never disagrees with the server)', () => {

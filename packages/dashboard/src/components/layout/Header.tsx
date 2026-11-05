@@ -20,10 +20,10 @@ export function Header() {
       <div className="flex items-center gap-3">
         <Link href="/" className="flex items-center gap-2 text-slate-100 hover:text-white transition">
           <div className="h-6 w-6 rounded bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center font-mono font-bold text-xs text-white shadow-sm">
-            SIM
+            SIZH
           </div>
           <span className="font-semibold text-sm tracking-tight hidden sm:inline">
-            SIM7600EI Gateway
+            SIZH IT Solution
           </span>
         </Link>
 

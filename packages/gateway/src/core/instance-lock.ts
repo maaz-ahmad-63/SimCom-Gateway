@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,13 +32,33 @@ export function defaultInstanceLockDir(): string {
   return path.join(os.tmpdir(), 'sim-gateway-locks');
 }
 
-function isProcessAlive(pid: number): boolean {
+/** The program name of the process with this id, or null when there is no such process. May throw when it cannot tell. */
+export type ProcessImageProbe = (pid: number) => string | null;
+
+/** Windows: ask the task list, which answers for every process id whatever its owner, and which Node's own check does not. */
+function windowsImageName(pid: number): string | null {
+  const out = execFileSync('tasklist', ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+  const row = /^"([^"]+)","(\d+)"/m.exec(out);
+  return row && Number(row[2]) === pid ? row[1] : null;
+}
+
+function isProcessAlive(pid: number, imageOf: ProcessImageProbe = windowsImageName): boolean {
   try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    // EPERM means the process exists but belongs to someone we cannot signal.
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
+    if ((error as NodeJS.ErrnoException).code !== 'EPERM') return false;
+    // EPERM means "exists but belongs to someone we cannot signal"... except on Windows, where Node also answers EPERM for an id that no
+    // longer exists (an owner killed by a reboot or a crash). Taken at its word that is a lock nobody can ever clear, and the gateway
+    // refuses to start. So on Windows the task list decides, and only a running node process can be another gateway; an id that now
+    // belongs to some other program, or to nothing, is a stale lock. If the task list cannot be read, stay on the safe side.
+    if (process.platform !== 'win32') return true;
+    try {
+      const image = imageOf(pid);
+      return image !== null && /^node(\.exe)?$/i.test(image);
+    } catch {
+      return true;
+    }
   }
 }
 
@@ -89,7 +110,9 @@ function releaseFiles(files: string[]): void {
  */
 export function acquireInstanceLock(
   resources: string[],
-  dir: string = defaultInstanceLockDir()
+  dir: string = defaultInstanceLockDir(),
+  /** Test seam for the Windows process lookup. */
+  imageOf?: ProcessImageProbe
 ): InstanceLock {
   fs.mkdirSync(dir, { recursive: true });
   const acquired: string[] = [];
@@ -101,7 +124,7 @@ export function acquireInstanceLock(
 
       if (!tryCreate(file)) {
         const owner = readRecord(file);
-        if (owner && owner.pid !== process.pid && isProcessAlive(owner.pid)) {
+        if (owner && owner.pid !== process.pid && isProcessAlive(owner.pid, imageOf)) {
           throw new InstanceLockError(
             `Another SIM7600 gateway process (pid ${owner.pid}, started ${owner.startedAt || 'unknown'}) already owns ${resource}. ` +
               `Stop it first (lock file: ${file}).`

@@ -11,7 +11,7 @@ import {
 } from '@sim-gateway/shared';
 
 import { createDatabaseConnection } from './db/connection.js';
-import { runMigrations } from './db/migrations.js';
+import { runMigrations, SCHEMA_VERSION } from './db/migrations.js';
 import { GatewayRepository } from './db/repository.js';
 import { GatewayEventBus } from './core/event-bus.js';
 import { CallSessionManager } from './core/call-session-manager.js';
@@ -20,20 +20,25 @@ import { Sim7600HardwareAdapter } from './adapters/modem/hardware-modem.js';
 import { MockAudioAdapter } from './adapters/audio/mock-audio.js';
 import { Sim7600HardwareAudioAdapter } from './adapters/audio/hardware-audio.js';
 import { createAuthMiddleware } from './api/middleware/auth.js';
+import { AuthFailureLimiter, limitAuthFailures, securityHeaders } from './api/middleware/security.js';
+import { createOpsRouter } from './api/routes/ops.js';
+import { RotatingFileLog } from './core/log-file.js';
+import { AlertStore } from './ops/alerts.js';
+import { applyPendingRestore, BackupService } from './ops/backup.js';
+import { CallDiagnosticsStore, recordCallEnd } from './ops/call-diagnostics.js';
+import { backgroundCheck, databaseCheck, gatewayCheck, HealthMonitor, modemCheck, networkCheck, providersCheck, storageCheck } from './ops/health.js';
+import { NetworkDiagnostics } from './ops/network.js';
+import { buildSupportBundle, safeConfig } from './ops/support-bundle.js';
+import { API_VERSION, appVersion } from './ops/version.js';
 import { errorHandler } from './api/middleware/error-handler.js';
 import { createGatewayRouter } from './api/routes/gateway.js';
 import { createCallsRouter } from './api/routes/calls.js';
-import { createModemsRouter } from './api/routes/modems.js';
-import { ModemRegistry } from './modems/registry.js';
-import { createModemUnit } from './modems/unit.js';
-import { createA7672sUnit, modemBFromEnv } from './modems/a7672s-unit.js';
-import type { ModemUnit } from './modems/types.js';
 import { createMockRouter } from './api/routes/mock.js';
 import { GatewaySocketServer } from './api/socket/socket-server.js';
 import { isAutoPort, loadConfig } from './config/index.js';
 import { PortDiscovery, PortLister } from './hardware/port-discovery.js';
 import { SerialPort } from 'serialport';
-import { createLogger, redactDiagnosticText } from './core/logger.js';
+import { createLogger, redactDiagnosticText, setLogSink } from './core/logger.js';
 import { UsbPcmVerifier } from './diagnostics/usb-pcm-verification.js';
 import { InboundCaptureTap } from './diagnostics/inbound-capture.js';
 import { acquireInstanceLock, InstanceLock } from './core/instance-lock.js';
@@ -53,6 +58,8 @@ import { createObservabilityRouter } from './api/routes/observability.js';
 import { createCampaignsRouter } from './api/routes/campaigns.js';
 import { CallContextRegistry } from './campaigns/call-context.js';
 import { managerDialer } from './campaigns/dialer.js';
+import { CallAnalysisStore } from './campaigns/call-analysis.js';
+import { CallAnalysisService, CampaignCallRecords } from './campaigns/call-records.js';
 import { CampaignRunner } from './campaigns/runner.js';
 import { recordSpokenOptOut } from './campaigns/spoken-opt-out.js';
 import { createIntegrationsRouter } from './api/routes/integrations.js';
@@ -65,6 +72,13 @@ import { SheetsService } from './integrations/google-sheets/service.js';
 import { SheetsConfigStore } from './integrations/google-sheets/store.js';
 import { callRestriction, createToolRegistry, outcomeRecorder } from './integrations/google-sheets/wiring.js';
 import { CampaignStore } from './campaigns/store.js';
+import { IvrAssetStore } from './ivr/assets.js';
+import { IvrStore } from './ivr/store.js';
+import { IvrCallOwnership } from './ivr/ownership.js';
+import type { IvrController } from './ivr/controller.js';
+import { createIvrController } from './ivr/wiring.js';
+import { createIvrRouter } from './api/routes/ivr.js';
+import { TtsGenerator } from './ivr/tts-generate.js';
 import { FetchLike, ProviderSet } from './ai/providers/index.js';
 import { AgentAudioSink, AudioFormat, CallerAudioSource } from './ai/audio.js';
 
@@ -82,14 +96,16 @@ export interface GatewayServerOptions {
   listSerialPorts?: PortLister;
   /** Test seam: how often the gateway looks for a modem that came back after the adapter gave up (default 15 s). */
   modemWatchMs?: number;
-  /** Additional modems beyond modem-a (tests). Production builds modem-b from MODEM_B_AT_PORT when that is set. */
-  extraModems?: Array<{ unit: ModemUnit; callBus?: GatewayEventBus }>;
   /** Complete-call recording overrides (tests). Production reads CALL_RECORDING_* from the environment. */
   recording?: Partial<RecordingConfig>;
+  /** Where the IVR's audio files live. null keeps them in memory. Default: an `ivr` folder beside the database (in memory when a database is injected). */
+  ivr?: { dir?: string | null };
   /** AI agent test seams. In production none of these is set: env + real providers + the SIM7600EI audio adapter. */
   ai?: {
     env?: Record<string, string | undefined>;
     providers?: ProviderSet;
+    /** Test seam: the providers used for a call whose campaign chose its own language model. */
+    providersForLlm?: (llmKey: string) => ProviderSet;
     fetchImpl?: FetchLike;
     /** Test seam: let a mock modem/audio satisfy the AI hardware check. Never set in production. */
     allowSimulatedHardware?: boolean;
@@ -118,14 +134,16 @@ export interface GatewayServerInstance {
   modem: IModemAdapter;
   audio: IAudioAdapter;
   callManager: ICallSessionManager;
-  /** Every modem the gateway manages, by modemId. The modem/audio/callManager above are the default one ('modem-a'). */
-  modemRegistry: ModemRegistry;
   repository: GatewayRepository;
   eventBus: GatewayEventBus;
   aiOrchestrator: AiCallOrchestrator;
   aiRuntime: AiRuntime;
   campaignStore: CampaignStore;
   campaignRunner: CampaignRunner;
+  ivrStore: IvrStore;
+  ivrAssets: IvrAssetStore;
+  ivrOwnership: IvrCallOwnership;
+  ivrController: IvrController;
   callRecorder: CallRecorder;
   smsService: SmsService;
   smsInbox: SmsInbox;
@@ -151,6 +169,19 @@ export function createGatewayServer(
   options: GatewayServerOptions = {}
 ): GatewayServerInstance {
   const config = loadConfig(options.config);
+
+  // 0. Customer data lives in one data folder. A restore the customer staged is applied here, BEFORE the database is opened.
+  const dataDir = path.dirname(path.resolve(config.sqliteDbPath));
+  if (!options.db) applyPendingRestore(config.sqliteDbPath, SCHEMA_VERSION, createLogger('Restore'));
+  // Structured log file with rotation (not for tests, which have no data folder of their own).
+  const fileLog = options.db || process.env.VITEST ? null : new RotatingFileLog({
+    dir: process.env.LOG_DIR?.trim() || path.join(dataDir, 'logs'),
+    maxBytes: Math.max(1, Number(process.env.LOG_MAX_MB) || 10) * 1024 * 1024,
+    maxFiles: Math.max(1, Number(process.env.LOG_MAX_FILES) || 10),
+    retentionDays: Math.max(1, Number(process.env.LOG_RETAIN_DAYS) || 14),
+    onError: (m) => console.warn(m),
+  });
+  if (fileLog) setLogSink((r) => fileLog.write(r));
 
   // 1. Database & Persistence
   const db =
@@ -223,62 +254,6 @@ export function createGatewayServer(
       enableUsbAudioDiagnostic: config.enableUsbAudioDiagnostic,
     });
 
-  // Modem registry. The modem built above is registered unchanged as 'modem-a'; the legacy routes keep acting on it.
-  const modemRegistry = new ModemRegistry();
-  modemRegistry.register(
-    createModemUnit({
-      descriptor: {
-        modemId: 'modem-a',
-        name: 'Modem A',
-        model: config.modemDriver === 'hardware' ? 'SIM7600EI' : 'MOCK',
-        atPort: config.atPort,
-        audio: config.modemDriver === 'hardware' ? { kind: 'usb-pcm', port: config.audioPort } : { kind: 'mock' },
-      },
-      modem,
-      audio,
-      callManager,
-    }),
-    { isDefault: true }
-  );
-
-  // Extra modems. Modem B (A7672S) exists only when MODEM_B_AT_PORT is set (hardware mode) or a test supplies units.
-  const extraModems: Array<{ unit: ModemUnit; callBus?: GatewayEventBus }> = [...(options.extraModems ?? [])];
-  if (!options.extraModems && config.modemDriver === 'hardware') {
-    const b = modemBFromEnv(process.env);
-    if (b) {
-      const built = createA7672sUnit({ ...b, autoReconnect: config.autoReconnect });
-      extraModems.push({ unit: built.unit, callBus: built.eventBus });
-    }
-  }
-  for (const extra of extraModems) {
-    modemRegistry.register(extra.unit);
-    // Calls on this modem are stored in the same call history. Its events stay on its own bus: nothing legacy sees them.
-    extra.callBus?.on('call:started', (session) => {
-      try {
-        repository.upsertCall(session);
-        repository.recordCallEvent(session.id, 'CALL_STARTED', { ...session.metadata, modemId: extra.unit.descriptor.modemId }, undefined, session.state);
-      } catch {
-        // never break call flow on a database write
-      }
-    });
-    extra.callBus?.on('call:state_changed', (event) => {
-      try {
-        repository.upsertCall(event.session);
-        repository.recordCallEvent(event.callId, 'STATE_CHANGED', { trigger: event.trigger ?? null, triggerLine: event.triggerLine ?? null, at: event.timestamp, modemId: extra.unit.descriptor.modemId }, event.previousState, event.currentState);
-      } catch {
-        // never break call flow
-      }
-    });
-    extra.callBus?.on('call:ended', (session) => {
-      try {
-        repository.upsertCall(session);
-        repository.recordCallEvent(session.id, 'CALL_ENDED', { durationSeconds: session.durationSeconds, outcome: session.outcome, terminationReason: session.terminationReason, modemId: extra.unit.descriptor.modemId }, session.state, 'IDLE');
-      } catch {
-        // never break call flow
-      }
-    });
-  }
-
   // AI voice agent: optional and inert unless enabled. Settings saved from the dashboard are layered over
   // .env; a bad AI setting disables the agent and is reported, it never stops the gateway.
   const aiEnv = options.ai?.env ?? process.env;
@@ -332,6 +307,25 @@ export function createGatewayServer(
         ? null
         : aiEnv.AI_REGISTRY_DIR?.trim() || path.join(path.dirname(path.resolve(config.sqliteDbPath)), 'registry');
   const aiRuntimeRef: { current?: AiRuntime } = {};
+
+  // IVR: settings in the same table as the AI settings, audio files in an `ivr` folder beside the database, and call OWNERSHIP (who
+  // may attach to an incoming call). Built before the AI runtime because the runtime is told which calls the IVR holds. There is no
+  // IVR controller yet, so no handler is registered and no call is ever held: every call behaves exactly as it did without the IVR.
+  const ivrDir =
+    options.ivr && 'dir' in options.ivr ? (options.ivr.dir ?? null) : options.db ? null : path.join(path.dirname(path.resolve(config.sqliteDbPath)), 'ivr');
+  const ivrAssets = new IvrAssetStore({ dir: ivrDir, sampleRate: () => aiRuntimeRef.current?.config.config.audio.format?.sampleRate ?? config.audioSampleRate });
+  const ivrStore = new IvrStore({ backend: repository, assets: ivrAssets });
+  const ivrOwnership = new IvrCallOwnership({
+    store: ivrStore,
+    manager: callManager,
+    eventBus,
+    aiCanAnswer: () => aiRuntimeRef.current?.mode === 'active',
+    armAi: (callId) => {
+      const runtime = aiRuntimeRef.current;
+      return runtime ? runtime.orchestrator.arm(callId) : Promise.reject(new Error('the AI runtime is not running'));
+    },
+    mark: (callId, event) => void aiRuntimeRef.current?.hub.publish(callId, event),
+  });
   const currentSelection = () => {
     const c = aiRuntimeRef.current?.config.config;
     return c ? { llm: c.llm.key, stt: c.stt.key, tts: c.tts.key, voice: c.tts.voice } : null;
@@ -360,6 +354,7 @@ export function createGatewayServer(
     eventBus,
     recordingsDir: config.audioDumpDir,
     providers: options.ai?.providers,
+    providersForLlm: options.ai?.providersForLlm,
     fetchImpl: options.ai?.fetchImpl,
     transports: options.ai?.transports,
     allowSimulatedHardware: options.ai?.allowSimulatedHardware,
@@ -370,8 +365,13 @@ export function createGatewayServer(
     automationPollMs: options.ai?.automationPollMs,
     automationActivation: options.ai?.automationActivation,
     audioPortBusy: () => usbPcmVerifierRef.current?.isBusy === true,
+    ivr: ivrOwnership,
   });
   aiRuntimeRef.current = aiRuntime;
+  // The IVR controller runs the menu for calls the IVR owns. Registering it changes nothing while the IVR is switched off (the default):
+  // until a configuration is published AND switched on, no call is ever IVR-owned.
+  const ivrController = createIvrController({ modem, audio, manager: callManager, eventBus, runtime: () => aiRuntimeRef.current });
+  ivrOwnership.registerHandler(ivrController);
   const pricingUpdater = new PricingUpdater({ registry: modelRegistry, pricing: pricingStore, dir: registryDir, fetchImpl: options.ai?.fetchImpl });
   const modelRegistryService = new ModelRegistryService({
     registry: modelRegistry,
@@ -492,11 +492,25 @@ export function createGatewayServer(
     })
   );
 
+  app.use(securityHeaders());
+
+  // Liveness for a supervisor or the dashboard: no key, and nothing in it but "the process is answering".
+  const startedAt = new Date();
+  app.get('/health', (_req, res) => {
+    res.json({ status: 'ok', version: appVersion(), apiVersion: API_VERSION, uptimeSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000) });
+  });
+
   // Payload body size limit
   app.use(express.json({ limit: '1mb' }));
 
   // API Key Authentication Middleware on all /api routes
-  const authMiddleware = createAuthMiddleware(config.gatewayApiKey);
+  let lastBlockedLog = 0;
+  const authMiddleware = limitAuthFailures(createAuthMiddleware(config.gatewayApiKey), new AuthFailureLimiter(), () => {
+    if (Date.now() - lastBlockedLog > 60_000) {
+      lastBlockedLog = Date.now();
+      logger.warn('Too many failed API-key attempts: a client is being refused for a minute');
+    }
+  });
   app.use('/api', authMiddleware);
 
   // Routes
@@ -531,6 +545,18 @@ export function createGatewayServer(
 
   app.use('/api/observability', createObservabilityRouter({ store: observability, retention }));
 
+  // Call records and the post-call analysis. The analysis is one extra model request made after a campaign call has ended, only for a real
+  // conversation; with test providers injected it is off, so it can never consume a scripted reply.
+  const callAnalysisStore = new CallAnalysisStore(db);
+  const callRecords = new CampaignCallRecords(db, callAnalysisStore);
+  const callAnalysis = new CallAnalysisService({
+    db,
+    records: callRecords,
+    store: callAnalysisStore,
+    complete: options.ai?.providers ? undefined : (request) => aiRuntime.completeText(request),
+    logger,
+  });
+  const recordOutcome = outcomeRecorder(sheets, campaignStore);
   const campaignRunner = new CampaignRunner({
     store: campaignStore,
     dialer: managerDialer(callManager),
@@ -538,10 +564,101 @@ export function createGatewayServer(
     blockers: () => aiRuntime.campaignBlockers(),
     agent: { attached: (callId) => aiRuntime.orchestrator.isAttached(callId) },
     alert: (level, message) => eventBus.emit('gateway:alert', { level, message, timestamp: new Date().toISOString() }),
-    onAttemptFinished: outcomeRecorder(sheets, campaignStore),
+    onAttemptFinished: async (info) => {
+      callAnalysis.scheduleAfterAttempt(info.campaignId, info.contactId, info.callId);
+      await recordOutcome(info);
+    },
   });
   app.use('/api/integrations', createIntegrationsRouter({ sheets, runtime: aiRuntime }));
-  app.use('/api/campaigns', createCampaignsRouter({ store: campaignStore, runner: campaignRunner, blockers: () => aiRuntime.campaignBlockers() }));
+  app.use('/api/campaigns', createCampaignsRouter({ store: campaignStore, runner: campaignRunner, blockers: () => aiRuntime.campaignBlockers(), llm: { problem: (key) => aiRuntime.llmProblem(key), choices: () => aiRuntime.llmChoices() }, calls: { records: callRecords, analysis: callAnalysis, store: callAnalysisStore } }));
+
+  // ---- operations: alerts, health, network diagnostics, per-call diagnoses, backups ------------------------------------------------
+  const alertStore = new AlertStore(db, undefined, (type, a) => {
+    const level = type === 'resolved' ? 'info' : a.severity === 'warning' ? 'warn' : a.severity === 'info' ? 'info' : 'error';
+    logger[level === 'warn' ? 'warn' : level === 'error' ? 'error' : 'info'](`Alert ${type}: ${a.title}`, { component: a.component, key: a.key, severity: a.severity });
+    eventBus.emit('gateway:alert', { level, message: type === 'resolved' ? `Resolved: ${a.title}` : `${a.title}. ${a.message}`, timestamp: new Date().toISOString() });
+  });
+  const callDiagnostics = new CallDiagnosticsStore(db);
+  const gatewayBusy = () => callManager.getCurrentCall() !== null;
+  const networkDiagnostics = new NetworkDiagnostics({
+    modem,
+    isBusy: gatewayBusy,
+    logger,
+    onSnapshot: (reading, previous) => {
+      if (!previous || previous.verdict.code !== reading.verdict.code) logger.info(`SIM and network status: ${reading.verdict.code}`, { sim: reading.sim.state, rssi: reading.signal.rssi, cs: reading.registration.cs.stat, eps: reading.registration.eps.stat });
+    },
+  });
+  const backupService = new BackupService({ db, dbPath: config.sqliteDbPath, expectedSchema: SCHEMA_VERSION, logger });
+  const healthMonitor = new HealthMonitor({
+    alerts: alertStore,
+    logger,
+    checks: [
+      gatewayCheck({ version: appVersion(), startedAt }),
+      modemCheck({ state: () => modem.getConnectionState(), simulated: modem.isSimulated }),
+      networkCheck({ snapshot: () => networkDiagnostics.snapshot(), modemReady: () => modem.getConnectionState() === 'READY', simulated: modem.isSimulated }),
+      providersCheck({ db }),
+      databaseCheck({ db, expectedSchema: SCHEMA_VERSION }),
+      storageCheck({ dataDir, recorderError: () => callRecorder.getStatus().lastError }),
+      backgroundCheck({
+        db,
+        campaignPaused: () => (db.prepare("SELECT pause_reason FROM campaigns WHERE status = 'paused' AND pause_reason IS NOT NULL AND pause_reason != 'paused by the operator' LIMIT 1").get() as { pause_reason: string } | undefined)?.pause_reason ?? null,
+      }),
+    ],
+  });
+  // After a call ends and its cleanup is done, save why it ended. This only reads (and asks the modem for AT+CEER, through its own queue,
+  // only when no call exists); a failure here never reaches the call.
+  eventBus.on('call:ended', (session) => {
+    logger.info('Call ended', { callId: session.id, outcome: session.outcome, direction: session.direction, durationSeconds: session.durationSeconds });
+    setTimeout(() => {
+      void recordCallEnd(
+        {
+          store: callDiagnostics,
+          network: () => networkDiagnostics.snapshot(),
+          readCeer: async () => (modem.isSimulated || modem.getConnectionState() !== 'READY' || gatewayBusy() ? null : modem.executeCommand('AT+CEER', 3000)),
+          logger,
+        },
+        session
+      );
+    }, 1500).unref?.();
+  });
+  eventBus.on('call:started', (session) => logger.info('Call started', { callId: session.id, direction: session.direction }));
+  eventBus.on('modem:connection_state', (state) => logger.info('Modem connection state changed', { state }));
+  app.use(
+    '/api/ops',
+    createOpsRouter({
+      alerts: alertStore,
+      health: healthMonitor,
+      network: networkDiagnostics,
+      diagnostics: callDiagnostics,
+      backups: backupService,
+      version: () => ({ app: appVersion(), schema: SCHEMA_VERSION, node: process.version, apiVersion: API_VERSION, startedAt: startedAt.toISOString() }),
+      bundle: () =>
+        buildSupportBundle({
+          version: { app: appVersion(), schema: SCHEMA_VERSION, node: process.version },
+          startedAt: startedAt.toISOString(),
+          db,
+          dbPath: config.sqliteDbPath,
+          health: healthMonitor.snapshot(),
+          alerts: { active: alertStore.active(), recent: alertStore.history(1, 100).items },
+          network: networkDiagnostics.snapshot(),
+          diagnostics: callDiagnostics,
+          config: safeConfig(config as unknown as Record<string, unknown>),
+          keysPresent: { gatewayApiKey: Boolean(config.gatewayApiKey) },
+          fileLogs: () => fileLog?.tail(1500) ?? [],
+        }),
+    })
+  );
+  app.use('/api/ivr', createIvrRouter({
+      store: ivrStore,
+      assets: ivrAssets,
+      tts: new TtsGenerator({
+        config: () => aiRuntime.config.config,
+        env: () => aiSettings.effectiveEnv(),
+        fetchImpl: options.ai?.fetchImpl,
+        sampleRate: () => ivrAssets.expectedSampleRate,
+      }),
+      runtime: () => ({ controllerRegistered: ivrOwnership.hasHandler, activeCalls: ivrController.activeCalls, aiCanAnswer: Boolean(aiRuntimeRef.current?.config.config.enabled && aiRuntimeRef.current.config.config.automation.autoReplies) }),
+    }));
 
   app.use(
     '/api/calls',
@@ -550,8 +667,6 @@ export function createGatewayServer(
       repository,
     })
   );
-
-  app.use('/api/modems', createModemsRouter({ registry: modemRegistry }));
 
   app.use(
     '/api/mock',
@@ -576,7 +691,6 @@ export function createGatewayServer(
     atPort: config.atPort,
     audioPort: config.audioPort,
     currentPorts,
-    modemRegistry,
   });
 
   let instanceLock: InstanceLock | null = null;
@@ -633,7 +747,7 @@ export function createGatewayServer(
     logger.info(`Starting gateway server in ${config.modemDriver} mode on ${config.host}:${config.port}`);
     // Claim the serial ports before anything opens them; a second gateway fails here, naming the owner.
     if (config.modemDriver === 'hardware' && !instanceLock) {
-      instanceLock = acquireInstanceLock([config.atPort, config.audioPort, ...extraModems.map((m) => m.unit.descriptor.atPort)], options.instanceLockDir);
+      instanceLock = acquireInstanceLock([config.atPort, config.audioPort], options.instanceLockDir);
       process.once('exit', releaseInstanceLock);
       logger.info(`Serial port ownership recorded for ${config.atPort} and ${config.audioPort} (pid ${process.pid})`);
     }
@@ -663,14 +777,6 @@ export function createGatewayServer(
       }
     }
 
-    // Each extra modem connects on its own; one failing to start never delays or affects modem-a.
-    for (const { unit } of extraModems) {
-      if (unit.modem.getConnectionState() !== 'DISCONNECTED') continue;
-      unit.modem.initialize({ atPort: unit.descriptor.atPort }).catch((error: Error) => {
-        logger.error(`${unit.descriptor.modemId} is not ready at startup: ${redactDiagnosticText(error.message)}. The gateway is serving and will keep retrying.`);
-      });
-    }
-
     await new Promise<void>((resolve) => {
       httpServer.listen(config.port, config.host, () => {
         logger.info(`HTTP and Socket.IO server listening on http://${config.host}:${config.port}`);
@@ -684,6 +790,10 @@ export function createGatewayServer(
         if (process.env.SMS_INBOX_ENABLED?.trim().toLowerCase() !== 'false') smsInbox.start();
         startModemWatch();
         startRetention();
+        networkDiagnostics.start();
+        healthMonitor.start();
+        backupService.start(() => !gatewayBusy());
+        logger.info('Gateway started', { version: appVersion(), schema: SCHEMA_VERSION, driver: config.modemDriver, pid: process.pid });
         resolve();
       });
     });
@@ -695,7 +805,12 @@ export function createGatewayServer(
     modemWatch = null;
     if (pruneTimer) clearInterval(pruneTimer);
     cleanupFirstPrune?.();
+    networkDiagnostics.stop();
+    healthMonitor.stop();
+    backupService.stop();
     smsInbox.stop();
+    ivrController.stop();
+    ivrOwnership.stop();
     await aiRuntime.stop();
     campaignRunner.stop(); // no new campaign call starts; one already ringing is not hung up
     callRecorder.stop(); // finalizes any recording in progress
@@ -707,10 +822,11 @@ export function createGatewayServer(
     if (modem.getConnectionState() !== 'DISCONNECTED') {
       await modem.close();
     }
-    for (const { unit } of extraModems) await unit.modem.close().catch(() => {});
     db.close();
     releaseInstanceLock();
     logger.info('Gateway server shutdown complete');
+    setLogSink(null);
+    await fileLog?.close();
   };
 
   return {
@@ -720,13 +836,16 @@ export function createGatewayServer(
     modem,
     audio,
     callManager,
-    modemRegistry,
     repository,
     eventBus,
     aiOrchestrator,
     aiRuntime,
     campaignStore,
     campaignRunner,
+    ivrStore,
+    ivrAssets,
+    ivrOwnership,
+    ivrController,
     callRecorder,
     smsService,
     smsInbox,

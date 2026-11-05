@@ -3,9 +3,10 @@
 import React, { useState } from 'react';
 import type { AiCredentialStatus } from '@sim-gateway/shared';
 import { apiClient } from '../../lib/api-client';
-import { credentialBadges, validateKeyInput } from '../../lib/ai-secrets';
+import { credentialBadges, isUnreadable, validateKeyInput } from '../../lib/ai-secrets';
 import { useAi } from '../../lib/context/AiContext';
 import { formatDate } from '../../lib/utils';
+import { StorageNotice } from './StorageNotice';
 import { ActionNote, Badge, Button, Card, TextInput, useAction } from './ui';
 
 function KeyRow({ credential, canStore }: { credential: AiCredentialStatus; canStore: boolean }) {
@@ -81,8 +82,8 @@ function KeyRow({ credential, canStore }: { credential: AiCredentialStatus; canS
         </form>
       ) : (
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => setEditing(true)} disabled={!canStore} title={canStore ? undefined : 'Enable key storage first'}>
-            {credential.source === 'stored' ? 'Replace key' : credential.source === 'env' ? 'Override .env key' : 'Add key'}
+          <Button onClick={() => setEditing(true)} disabled={!canStore} title={canStore ? undefined : 'Saving keys is not available yet: see the message above'}>
+            {credential.source === 'stored' ? 'Update key' : credential.source === 'env' ? 'Override .env key' : isUnreadable(credential) ? 'Enter key again' : 'Add key'}
           </Button>
           <Button
             disabled={credential.source === 'missing'}
@@ -94,14 +95,14 @@ function KeyRow({ credential, canStore }: { credential: AiCredentialStatus; canS
           >
             Check with provider
           </Button>
-          {credential.source === 'stored' &&
+          {(credential.source === 'stored' || isUnreadable(credential)) &&
             (confirmRemove ? (
               <>
                 <Button
                   variant="danger"
                   onClick={async () => {
                     setConfirmRemove(false);
-                    await run(() => apiClient.removeAiCredential(credential.name), 'Stored key removed');
+                    await run(() => apiClient.removeAiCredential(credential.name), 'Key removed');
                     await refresh();
                   }}
                 >
@@ -110,11 +111,11 @@ function KeyRow({ credential, canStore }: { credential: AiCredentialStatus; canS
                 <Button onClick={() => setConfirmRemove(false)}>Keep</Button>
               </>
             ) : (
-              <Button onClick={() => setConfirmRemove(true)}>Remove</Button>
+              <Button onClick={() => setConfirmRemove(true)}>Remove key</Button>
             ))}
         </div>
       )}
-      {credential.source === 'env' && !editing && <p className="text-[11px] text-slate-500">This key comes from the gateway’s .env file. Saving one here takes precedence over it; removing the saved one falls back to .env.</p>}
+      {credential.source === 'env' && !editing && <p className="text-[11px] text-slate-500">This key comes from the gateway’s .env file (a development setup). Saving one here takes precedence over it; removing the saved one falls back to .env.</p>}
       <ActionNote state={action} />
     </li>
   );
@@ -128,24 +129,16 @@ export function KeysTab() {
     <div className="space-y-6">
       <Card
         title="Provider API keys"
-        subtitle="Keys are sent to the gateway once, stored encrypted on the gateway machine, and never sent back to this page. The gateway’s own API key (Settings page) is separate."
+        subtitle="Add, update or remove the keys for the AI services you use. Each key is sent once, stored encrypted on this computer, and never shown again, not even in part. You never need to edit a file. The gateway’s own API key (Settings page) is separate."
       >
-        {!canStore && (
-          <div className="text-xs rounded-md border border-amber-800/70 bg-amber-950/50 text-amber-200 px-3 py-2 space-y-1">
-            <p>
-              <strong>Key storage is off.</strong> To store keys from this page, add a line to the gateway’s <span className="font-mono">.env</span> and restart the gateway:
-            </p>
-            <p className="font-mono">AI_SECRETS_MASTER_KEY=&lt;16 or more random characters&gt;</p>
-            <p>Keys already in .env keep working and show as “Set in .env”.</p>
-          </div>
-        )}
+        <StorageNotice storageAvailable={canStore} />
         <ul className="space-y-3">
           {state.credentials.map((c) => (
             <KeyRow key={c.name} credential={c} canStore={canStore} />
           ))}
         </ul>
         <ul className="text-[11px] text-slate-500 list-disc pl-4 space-y-0.5">
-          <li>“Missing” means no key exists. “Provider rejected it” means a key exists but the provider said it is not valid. “Could not reach provider” means the check failed on the network or at the provider, so the key could not be judged.</li>
+          <li>“Not configured” means no key has been added. “Provider rejected it” means a key exists but the provider said it is not valid. “Could not reach provider” means the check failed on the network or at the provider, so the key could not be judged.</li>
           <li>“Check with provider” makes one read-only request to the provider’s own account/model listing endpoint; it does not run speech, text or voice generation.</li>
           <li>The gateway never switches provider on its own: if a key is missing or rejected, that stage fails and says so.</li>
         </ul>

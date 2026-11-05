@@ -23,7 +23,16 @@ import { getGatewayClientConfig } from './config';
 import type { HardwarePorts, HardwareStatus } from './hardware-ops';
 import type { RecordingsResponse } from './recordings';
 import type { Attempt, Campaign, ColumnMapping, Contact, ContactStatus, Counts, CsvPreview, ImportResult, Review, RunnerStatus } from './campaigns';
+import type { CampaignUsage, LlmChoice } from './campaign-config';
+import type { BackupInfo, NetworkReading, OpsAlert, OpsHealth } from './ops';
+
+/** The gateway API version this dashboard was built for. A gateway on another version says so on the System health page. */
+export const DASHBOARD_API_VERSION = 1;
+import { callQueryString } from './campaign-calls';
+import type { CallAnalytics, CallList, CallQuery, CampaignCallDetail } from './campaign-calls';
 import type { SheetsConfig, SheetsStatus, SheetsTestResult } from './integrations';
+import type { IvrAssetMeta, IvrAudioRules, IvrConfig, IvrOverview, IvrPublished, IvrStatus, IvrValidation } from './ivr';
+import type { GenerateRequest, GenerateResponse, TtsOptions } from './ivr-generate';
 import type { EntryKind, HubView, ProposalDetail, SourceCheck, Stage, TestResult, ValidationIssue } from './model-hub';
 import { buildQuery } from './observability';
 import type { CallDetail, CallFilters, CallRow, Overview, Paged, TraceEvent } from './observability';
@@ -200,23 +209,32 @@ export class GatewayApiClient {
     return this.request<GatewayHealthStatus>('/api/gateway/health');
   }
 
-  /** GET /api/gateway/recordings — complete-call recordings (not diagnostic captures). */
-  async getRecordings(): Promise<RecordingsResponse> {
-    return this.request<RecordingsResponse>('/api/gateway/recordings');
+  /**
+   * GET /api/gateway/recordings — complete-call recordings (not diagnostic captures). With `callIds` it answers for exactly those calls
+   * (the call history asks about the page it is showing), and each one says whether it can be played.
+   */
+  async getRecordings(callIds?: string[]): Promise<RecordingsResponse> {
+    const query = callIds && callIds.length > 0 ? `?ids=${callIds.map(encodeURIComponent).join(',')}` : '';
+    return this.request<RecordingsResponse>(`/api/gateway/recordings${query}`);
   }
 
-  /** GET /api/gateway/recordings/:callId/:track.wav — authenticated download. */
-  async downloadRecording(callId: string, track: 'caller' | 'agent'): Promise<Blob> {
+  /**
+   * GET /api/gateway/recordings/:callId/audio.wav: the ONE combined recording of a call, fetched with the API key (an <audio> tag cannot
+   * send it, so the file is fetched here and played from the browser's own copy).
+   */
+  async downloadRecording(callId: string): Promise<Blob> {
     const { gatewayUrl, apiKey } = this.getConfig();
     let response: Response;
     try {
-      response = await fetch(`${gatewayUrl.replace(/\/+$/, '')}/api/gateway/recordings/${encodeURIComponent(callId)}/${track}.wav`, {
+      response = await fetch(`${gatewayUrl.replace(/\/+$/, '')}/api/gateway/recordings/${encodeURIComponent(callId)}/audio.wav`, {
         headers: { 'x-api-key': apiKey },
       });
     } catch {
       throw new GatewayApiError(`Network error: Failed to connect to Gateway at ${gatewayUrl}.`, 0, 'NETWORK_ERROR');
     }
-    if (!response.ok) throw new GatewayApiError(`Could not download the recording (HTTP ${response.status})`, response.status);
+    if (response.status === 404) throw new GatewayApiError('No recording exists for this call.', 404, 'RECORDING_NOT_FOUND');
+    if (response.status === 401) throw new GatewayApiError('The gateway did not accept the API key, so the recording was not sent.', 401);
+    if (!response.ok) throw new GatewayApiError(`Could not load the recording (HTTP ${response.status})`, response.status);
     return response.blob();
   }
 
@@ -476,14 +494,112 @@ export class GatewayApiClient {
   getCampaign(id: string): Promise<{ campaign: Campaign; counts: Counts; runner: RunnerStatus | null }> {
     return this.request(`/api/campaigns/${encodeURIComponent(id)}`);
   }
-  updateCampaign(id: string, patch: { name?: string; settings?: Record<string, unknown> }): Promise<{ campaign: Campaign; counts: Counts; runner: RunnerStatus | null }> {
+  updateCampaign(id: string, patch: { name?: string; settings?: Record<string, unknown>; config?: { prompt?: string; llmKey?: string | null } }): Promise<{ campaign: Campaign; counts: Counts; runner: RunnerStatus | null }> {
     return this.request(`/api/campaigns/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) });
   }
   deleteCampaign(id: string): Promise<{ success: boolean }> {
     return this.request(`/api/campaigns/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
-  previewCampaignCsv(csv: string): Promise<CsvPreview> {
-    return this.request('/api/campaigns/preview-csv', { method: 'POST', body: JSON.stringify({ csv }) });
+  /** With a mapping (and optionally the campaign whose country code and consent rule apply) the answer also previews what an import would do. Nothing is stored. */
+  previewCampaignCsv(csv: string, options: { mapping?: ColumnMapping; campaignId?: string } = {}): Promise<CsvPreview> {
+    return this.request('/api/campaigns/preview-csv', { method: 'POST', body: JSON.stringify({ csv, ...options }) });
+  }
+  /** The language models a campaign can choose, whether each can be used now, and what is known about its prompt caching. */
+  getCampaignLlmOptions(): Promise<{ models: LlmChoice[] }> {
+    return this.request('/api/campaigns/llm-options');
+  }
+  /** What the campaign's calls used, as the providers reported it. */
+  getCampaignUsage(id: string): Promise<CampaignUsage> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/usage`);
+  }
+  // ---- operations: health, alerts, network, backups ----------------------------------------------------------------------------------
+  getOpsHealth(refresh = false): Promise<OpsHealth> {
+    return this.request(`/api/ops/health${refresh ? '?refresh=1' : ''}`);
+  }
+  getOpsAlerts(): Promise<{ alerts: OpsAlert[] }> {
+    return this.request('/api/ops/alerts');
+  }
+  getOpsAlertHistory(page = 1): Promise<{ page: number; pageSize: number; total: number; items: OpsAlert[] }> {
+    return this.request(`/api/ops/alerts/history?page=${page}&pageSize=25`);
+  }
+  acknowledgeOpsAlert(id: number): Promise<{ alert: OpsAlert }> {
+    return this.request(`/api/ops/alerts/${id}/acknowledge`, { method: 'POST', body: '{}' });
+  }
+  dismissOpsAlert(id: number): Promise<{ alert: OpsAlert }> {
+    return this.request(`/api/ops/alerts/${id}/dismiss`, { method: 'POST', body: '{}' });
+  }
+  /** Re-reads the state behind an alert. It never reconnects hardware, restarts anything or places a call. */
+  recheckOpsAlert(id: number): Promise<{ alert: OpsAlert; health: OpsHealth }> {
+    return this.request(`/api/ops/alerts/${id}/recheck`, { method: 'POST', body: '{}' });
+  }
+  getOpsAlertDiagnostics(id: number): Promise<{ alert: OpsAlert; details: unknown }> {
+    return this.request(`/api/ops/alerts/${id}/diagnostics`);
+  }
+  getOpsNetwork(): Promise<{ reading: NetworkReading | null }> {
+    return this.request('/api/ops/network');
+  }
+  refreshOpsNetwork(): Promise<{ reading: NetworkReading }> {
+    return this.request('/api/ops/network/refresh', { method: 'POST', body: '{}' });
+  }
+  getOpsBackups(): Promise<{ backups: BackupInfo[]; pendingRestore: { name: string; stagedAt: string } | null }> {
+    return this.request('/api/ops/backups');
+  }
+  createOpsBackup(): Promise<{ backup: BackupInfo }> {
+    return this.request('/api/ops/backups', { method: 'POST', body: '{}' });
+  }
+  stageOpsRestore(name: string): Promise<{ staged: string; requiresRestart: boolean; message: string }> {
+    return this.request('/api/ops/backups/restore', { method: 'POST', body: JSON.stringify({ name, confirm: true }) });
+  }
+  cancelOpsRestore(): Promise<{ cancelled: boolean }> {
+    return this.request('/api/ops/backups/restore', { method: 'DELETE' });
+  }
+  getOpsVersion(): Promise<{ app: string; schema: number; node: string; apiVersion: number; startedAt: string; compatible: boolean; message: string }> {
+    return this.request(`/api/ops/version?dashboardApi=${DASHBOARD_API_VERSION}`);
+  }
+  /** The support bundle, fetched with the API key (a plain link cannot send it). It holds no keys, passwords, phone numbers or transcripts. */
+  async downloadSupportBundle(): Promise<Blob> {
+    const { gatewayUrl, apiKey } = this.getConfig();
+    let response: Response;
+    try {
+      response = await fetch(`${gatewayUrl.replace(/\/+$/, '')}/api/ops/support-bundle`, { headers: { 'x-api-key': apiKey } });
+    } catch {
+      throw new GatewayApiError(`Network error: Failed to connect to Gateway at ${gatewayUrl}.`, 0, 'NETWORK_ERROR');
+    }
+    if (!response.ok) throw new GatewayApiError(`Could not create the support bundle (HTTP ${response.status})`, response.status);
+    return response.blob();
+  }
+
+  /** One campaign's call records (the table), filtered, searched, sorted and paged by the gateway. */
+  listCampaignCalls(id: string, query: CallQuery = {}): Promise<CallList> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/calls${callQueryString(query)}`);
+  }
+  getCampaignCall(id: string, attemptId: number): Promise<{ call: CampaignCallDetail }> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/calls/${attemptId}`);
+  }
+  getCampaignAnalytics(id: string): Promise<CallAnalytics> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/analytics`);
+  }
+  /** Asks the model to read this call again. The earlier result is kept. */
+  analyzeCampaignCall(id: string, attemptId: number): Promise<{ result: { status: string; reason?: string }; call: CampaignCallDetail }> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/calls/${attemptId}/analyze`, { method: 'POST', body: '{}' });
+  }
+  correctCampaignCall(id: string, attemptId: number, patch: NonNullable<ReturnType<typeof import('./campaign-calls').correctionPatch>>): Promise<{ call: CampaignCallDetail }> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/calls/${attemptId}/classification`, { method: 'PUT', body: JSON.stringify(patch) });
+  }
+  clearCampaignCallCorrection(id: string, attemptId: number): Promise<{ removed: boolean; call: CampaignCallDetail }> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/calls/${attemptId}/classification`, { method: 'DELETE' });
+  }
+  /** The filtered records as a CSV file, fetched with the API key (a plain link cannot send it). */
+  async downloadCampaignCallsCsv(id: string, query: CallQuery = {}): Promise<Blob> {
+    const { gatewayUrl, apiKey } = this.getConfig();
+    let response: Response;
+    try {
+      response = await fetch(`${gatewayUrl.replace(/\/+$/, '')}/api/campaigns/${encodeURIComponent(id)}/calls/export.csv${callQueryString({ ...query, page: undefined, pageSize: undefined })}`, { headers: { 'x-api-key': apiKey } });
+    } catch {
+      throw new GatewayApiError(`Network error: Failed to connect to Gateway at ${gatewayUrl}.`, 0, 'NETWORK_ERROR');
+    }
+    if (!response.ok) throw new GatewayApiError(`Could not export the calls (HTTP ${response.status})`, response.status);
+    return response.blob();
   }
   importCampaignContacts(id: string, csv: string, mapping: ColumnMapping): Promise<ImportResult> {
     return this.request(`/api/campaigns/${encodeURIComponent(id)}/import`, { method: 'POST', body: JSON.stringify({ csv, mapping }) });
@@ -502,6 +618,13 @@ export class GatewayApiClient {
   }
   getCampaignReview(id: string): Promise<Review> {
     return this.request(`/api/campaigns/${encodeURIComponent(id)}/review`);
+  }
+  /** Runs a completed or stopped campaign again on its current contact list. The same confirmation as a first start. */
+  restartCampaign(id: string, confirmName: string): Promise<{ skippedAtStart: number; campaign: Campaign; counts: Counts }> {
+    return this.request(`/api/campaigns/${encodeURIComponent(id)}/restart`, {
+      method: 'POST',
+      body: JSON.stringify({ confirm: true, confirmName, acknowledgements: { realCalls: true, regulations: true, consent: true } }),
+    });
   }
   startCampaign(id: string, confirmName: string): Promise<{ skippedAtStart: number; campaign: Campaign; counts: Counts }> {
     return this.request(`/api/campaigns/${encodeURIComponent(id)}/start`, {
@@ -540,6 +663,61 @@ export class GatewayApiClient {
   }
   listObservabilityErrors(filters: CallFilters, page: { page: number; pageSize: number }): Promise<Paged<TraceEvent> & { success: boolean }> {
     return this.request(`/api/observability/errors${buildQuery(filters, page)}`);
+  }
+
+  // ---- IVR (the gateway's /api/ivr) -----------------------------------------------------------------------------------------------
+
+  /** GET /api/ivr: status, draft, published configuration, validation, audio library, limits and whether the controller is running. */
+  getIvr(): Promise<IvrOverview> {
+    return this.request('/api/ivr');
+  }
+  /** PUT /api/ivr/draft: the draft must match the model but may be incomplete. */
+  saveIvrDraft(config: IvrConfig): Promise<{ success: boolean; draft: IvrConfig; validation: IvrValidation; status: IvrStatus }> {
+    return this.request('/api/ivr/draft', { method: 'PUT', body: JSON.stringify(config) });
+  }
+  /** DELETE /api/ivr/draft: back to the published configuration (or an empty one). */
+  discardIvrDraft(): Promise<{ success: boolean; draft: IvrConfig; validation: IvrValidation; status: IvrStatus }> {
+    return this.request('/api/ivr/draft', { method: 'DELETE' });
+  }
+  /** POST /api/ivr/validate: checks the given configuration, or the saved draft when none is given. Changes nothing. */
+  validateIvr(config?: IvrConfig): Promise<{ success: boolean; validation: IvrValidation }> {
+    return this.request('/api/ivr/validate', { method: 'POST', body: JSON.stringify(config ?? {}) });
+  }
+  /** POST /api/ivr/publish: refused (422, with details) unless the saved draft is complete. */
+  publishIvr(): Promise<{ success: boolean; published: IvrPublished; status: IvrStatus }> {
+    return this.request('/api/ivr/publish', { method: 'POST' });
+  }
+  /** PUT /api/ivr/enabled: off by default; refused (409) until something is published. */
+  setIvrEnabled(enabled: boolean): Promise<{ success: boolean; enabled: boolean; status: IvrStatus }> {
+    return this.request('/api/ivr/enabled', { method: 'PUT', body: JSON.stringify({ enabled }) });
+  }
+  /** POST /api/ivr/assets?name=...: the WAV file itself is the request body, stored exactly as sent. */
+  uploadIvrAsset(file: Blob, name: string): Promise<{ success: boolean; asset: IvrAssetMeta; duplicate: boolean; assets: IvrAssetMeta[]; audio: IvrAudioRules }> {
+    return this.request(`/api/ivr/assets?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: file });
+  }
+  /** GET /api/ivr/generate/options: the Model Hub's voice models and whether each can be used now. Calls no provider. */
+  async getIvrTtsOptions(): Promise<TtsOptions> {
+    return this.request('/api/ivr/generate/options');
+  }
+  /** POST /api/ivr/generate: speech from text, as a base64 WAV already in the IVR format. Stores nothing; add it with uploadIvrAsset. */
+  generateIvrAudio(input: GenerateRequest): Promise<GenerateResponse> {
+    return this.request('/api/ivr/generate', { method: 'POST', body: JSON.stringify(input) });
+  }
+  /** DELETE /api/ivr/assets/:id: refused (409) while the draft or the published configuration uses the file. */
+  deleteIvrAsset(id: string): Promise<{ success: boolean; removed: boolean; assets: IvrAssetMeta[]; audio: IvrAudioRules }> {
+    return this.request(`/api/ivr/assets/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+  /** GET /api/ivr/assets/:id/audio: the stored WAV, authenticated, for the preview player. */
+  async downloadIvrAsset(id: string): Promise<Blob> {
+    const { gatewayUrl, apiKey } = this.getConfig();
+    let response: Response;
+    try {
+      response = await fetch(`${gatewayUrl.replace(/\/+$/, '')}/api/ivr/assets/${encodeURIComponent(id)}/audio`, { headers: { 'x-api-key': apiKey } });
+    } catch {
+      throw new GatewayApiError(`Network error: Failed to connect to Gateway at ${gatewayUrl}.`, 0, 'NETWORK_ERROR');
+    }
+    if (!response.ok) throw new GatewayApiError(`Could not load the audio file (HTTP ${response.status})`, response.status);
+    return response.blob();
   }
 
   /** POST /api/mock/trigger-inbound */

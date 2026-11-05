@@ -99,10 +99,10 @@ describe('credential display and input', () => {
   });
 
   it('keeps missing, rejected and unreachable apart', () => {
-    expect(credentialBadges(cred({})).presence).toEqual({ label: 'Missing', tone: 'bad' });
+    expect(credentialBadges(cred({})).presence).toEqual({ label: 'Not configured', tone: 'bad' });
     expect(credentialBadges(cred({ requiredBySelection: false })).presence.tone).toBe('neutral');
     const stored = credentialBadges(cred({ source: 'stored', masked: '••••WXYZ', lastCheck: 'invalid' }));
-    expect(stored.presence).toEqual({ label: 'Stored ••••WXYZ', tone: 'good' });
+    expect(stored.presence).toEqual({ label: 'Configured', tone: 'good' }); // never any character of the key
     expect(stored.check).toEqual({ label: 'Provider rejected it', tone: 'bad' });
     expect(credentialBadges(cred({ source: 'env', lastCheck: 'unreachable' })).check.label).toBe('Could not reach provider');
     expect(credentialBadges(cred({ source: 'env', lastCheck: 'ok' })).check.tone).toBe('good');

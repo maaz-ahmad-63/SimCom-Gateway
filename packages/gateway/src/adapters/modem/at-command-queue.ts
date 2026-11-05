@@ -7,8 +7,21 @@ import {
   UrcEvent,
 } from '@sim-gateway/shared';
 import { describeClose, ISerialTransport, SerialCloseInfo } from './serial-transport.js';
-import { AtParser } from './at-parser.js';
+import { AtParser, isDtmfUrc } from './at-parser.js';
 import { createLogger, Logger, redactDiagnosticText } from '../../core/logger.js';
+
+/** Most distinct line shapes the unrecognized-line diagnostic remembers (and so can announce). */
+const MAX_UNRECOGNIZED_SHAPES = 64;
+/** After its first announcement a shape is announced again every this many occurrences. */
+const UNRECOGNIZED_REPEAT_EVERY = 50;
+
+export interface UnrecognizedLineStat {
+  /** The line with digits and quoted text masked: what it looks like, never what it said. */
+  shape: string;
+  count: number;
+  /** 'idle': nothing was in flight and the line was dropped. 'during-command': it was dropped as a mismatched response prefix. */
+  where: 'idle' | 'during-command';
+}
 
 interface QueuedCommand {
   command: string;
@@ -66,6 +79,9 @@ export class AtCommandQueue extends EventEmitter {
    * message body whatever it says; 'body' = inside a body (more lines belong to it until the final result).
    */
   private smsReadState: 'idle' | 'header' | 'body' = 'idle';
+  /** Diagnostics only: lines the queue dropped as unrecognized, by shape. Bounded; never read by any decision. */
+  private readonly unrecognized = new Map<string, UnrecognizedLineStat>();
+  private unrecognizedOverflowAnnounced = false;
 
   constructor(transport: ISerialTransport, options: AtCommandQueueOptions = {}) {
     super();
@@ -269,7 +285,8 @@ export class AtCommandQueue extends EventEmitter {
   private processSmsReadLine(line: string): boolean {
     // A new-message indication that arrives in the middle of a listing is a modem event, not message text: only a line
     // that is exactly `+CMTI: "XX",n` is treated so, and it must not be lost (it triggers the next read).
-    if (AtParser.parseCmti(line)) return false;
+    // The same goes for a key the caller pressed (`+RXDTMF: 5`, exactly): it is an event, never message text.
+    if (AtParser.parseCmti(line) || AtParser.parseDtmf(line) !== null) return false;
     if (line.startsWith('+CMGL:') || line.startsWith('+CMGR:')) {
       this.responseBuffer.push(line);
       this.smsReadState = 'header';
@@ -399,7 +416,8 @@ export class AtCommandQueue extends EventEmitter {
     if (!isCallProgressTerminal && !isExpectedCommandResponse && AtParser.isUrc(line)) {
       const urc = AtParser.parseUrc(line);
       if (urc) {
-        this.logger.info(`URC received [${urc.type}]: ${line}`);
+        // A pressed key is never written to a log; every other URC is logged exactly as before.
+        this.logger.info(`URC received [${urc.type}]: ${isDtmfUrc(urc) ? urc.raw : line}`);
         this.emit('urc', urc);
         return;
       }
@@ -421,6 +439,7 @@ export class AtCommandQueue extends EventEmitter {
         const expectedPrefix = this.getExpectedResponsePrefix(this.activeCommand.command);
         if (expectedPrefix && foundPrefix !== expectedPrefix) {
           this.logger.debug(`Discarding mismatched AT prefix '${foundPrefix}' while executing '${this.activeCommand.command}'`);
+          this.noteUnrecognized(line, 'during-command');
           return;
         }
       }
@@ -431,10 +450,51 @@ export class AtCommandQueue extends EventEmitter {
       // Line received with no command in-flight and not caught as URC
       const urc = AtParser.parseUrc(line);
       if (urc) {
-        this.logger.info(`URC received (unsolicited) [${urc.type}]: ${line}`);
+        this.logger.info(`URC received (unsolicited) [${urc.type}]: ${isDtmfUrc(urc) ? urc.raw : line}`);
         this.emit('urc', urc);
+      } else {
+        this.noteUnrecognized(line, 'idle');
       }
     }
+  }
+
+  /** What the queue has dropped as unrecognized, by shape and count. Read-only; sends nothing to the modem. */
+  getUnrecognizedLineStats(): UnrecognizedLineStat[] {
+    return [...this.unrecognized.values()].map((s) => ({ ...s }));
+  }
+
+  /**
+   * Diagnostics only. A line the queue cannot place used to vanish without a trace, which is how an unexpected modem event (for
+   * example a key pressed by the caller in a format nobody had seen) could be lost with nothing to show for it. Each distinct
+   * SHAPE is announced once at info level, then every 50th time; the rest are counted. A shape is the line with its digits and
+   * quoted text masked and its length capped, so a phone number, a pressed key or a message fragment is never written out, and at
+   * most 64 shapes are kept.
+   */
+  private noteUnrecognized(line: string, where: UnrecognizedLineStat['where']): void {
+    const shape = redactDiagnosticText(line)
+      .replace(/"[^"]*"/g, '"…"')
+      .replace(/\d+/g, '#')
+      .trim()
+      .slice(0, 80);
+    if (!shape) return;
+    const key = `${where}|${shape}`;
+    const known = this.unrecognized.get(key);
+    if (known) {
+      known.count++;
+      if (known.count % UNRECOGNIZED_REPEAT_EVERY === 0) {
+        this.logger.info(`Unrecognized modem line (${where}) seen ${known.count} times: "${shape}"`);
+      }
+      return;
+    }
+    if (this.unrecognized.size >= MAX_UNRECOGNIZED_SHAPES) {
+      if (!this.unrecognizedOverflowAnnounced) {
+        this.unrecognizedOverflowAnnounced = true;
+        this.logger.info(`Unrecognized modem lines: more than ${MAX_UNRECOGNIZED_SHAPES} different shapes seen; further new shapes are not recorded`);
+      }
+      return;
+    }
+    this.unrecognized.set(key, { shape, count: 1, where });
+    this.logger.info(`Unrecognized modem line (${where}, ${line.length} chars): "${shape}"`);
   }
 
   /**

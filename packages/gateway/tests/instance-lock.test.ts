@@ -74,6 +74,66 @@ describe('serial port instance lock', () => {
     expect(() => acquireInstanceLock(['COM22'], dir)).not.toThrow();
   });
 
+  describe('on Windows, where Node answers EPERM even for a process id that no longer exists', () => {
+    // A gateway killed by a reboot or crash leaves its lock behind; the id may then answer EPERM to process.kill(pid, 0). Taken at its
+    // word that locked the gateway out for good ("another gateway owns COM20" with nothing running), so the task list decides.
+    const asWindowsWhereEveryIdAnswersEperm = () => {
+      vi.spyOn(process, 'kill').mockImplementation(() => {
+        throw Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+      });
+      const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+      Object.defineProperty(process, 'platform', { value: 'win32' });
+      return () => Object.defineProperty(process, 'platform', platform);
+    };
+    let restore: () => void;
+    beforeEach(() => void (restore = asWindowsWhereEveryIdAnswersEperm()));
+    afterEach(() => {
+      restore();
+      vi.restoreAllMocks();
+    });
+
+    it('takes over a lock whose owner is not in the task list (a ghost id left by a reboot)', () => {
+      writeLock('COM20', 8508);
+      const lock = acquireInstanceLock(['COM20'], dir, () => null);
+      expect(JSON.parse(fs.readFileSync(path.join(dir, 'COM20.lock'), 'utf8')).pid).toBe(process.pid);
+      lock.release();
+    });
+
+    it('takes over a lock whose id now belongs to a program that is not a gateway', () => {
+      writeLock('COM20', 8508);
+      expect(() => acquireInstanceLock(['COM20'], dir, () => 'chrome.exe')).not.toThrow();
+    });
+
+    it('still refuses while a real node process owns the port, naming it', () => {
+      writeLock('COM20', 8508);
+      expect(() => acquireInstanceLock(['COM20'], dir, () => 'node.exe')).toThrow(/pid 8508/);
+    });
+
+    it('stays on the safe side when the task list cannot be read', () => {
+      writeLock('COM20', 8508);
+      expect(() =>
+        acquireInstanceLock(['COM20'], dir, () => {
+          throw new Error('tasklist unavailable');
+        })
+      ).toThrow(InstanceLockError);
+    });
+
+    it('is only used on Windows: elsewhere EPERM still means a live process owned by someone else', () => {
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      writeLock('COM20', 8508);
+      const probe = vi.fn(() => null);
+      expect(() => acquireInstanceLock(['COM20'], dir, probe)).toThrow(InstanceLockError);
+      expect(probe).not.toHaveBeenCalled();
+    });
+  });
+
+  it('the real Windows task-list lookup answers "no such process" for an id that does not exist', () => {
+    if (process.platform !== 'win32') return;
+    const file = path.join(dir, 'COM20.lock');
+    fs.writeFileSync(file, JSON.stringify({ pid: 4_000_001, startedAt: '2026-11-03T00:00:00.000Z' }));
+    expect(() => acquireInstanceLock(['COM20'], dir)).not.toThrow();
+  });
+
   it('never deletes a lock that another process has since taken over', () => {
     const lock = acquireInstanceLock(['COM22'], dir);
     const file = writeLock('COM22', liveForeignPid());

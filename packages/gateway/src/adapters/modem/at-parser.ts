@@ -9,6 +9,20 @@ import {
   UrcEvent,
 } from '@sim-gateway/shared';
 
+/**
+ * A key the remote caller pressed, as reported by the module: `+RXDTMF: <key>`. It uses the existing CUSTOM URC type with a
+ * `payload.kind` (the same pattern as the SMS indication), so the shared UrcEvent type is untouched. The key is a possible PIN or
+ * card digit, so it lives only in `payload.digit`: `raw` is already redacted, which keeps it out of logs and anything that prints a URC.
+ */
+export interface DtmfUrcEvent extends UrcEvent {
+  type: 'CUSTOM';
+  payload: { kind: 'dtmf'; digit: string };
+}
+
+export function isDtmfUrc(urc: UrcEvent): urc is DtmfUrcEvent {
+  return urc.type === 'CUSTOM' && urc.payload?.kind === 'dtmf' && typeof urc.payload.digit === 'string';
+}
+
 export interface TerminalStatus {
   isTerminal: boolean;
   isSuccess: boolean;
@@ -92,12 +106,23 @@ export class AtParser {
   }
 
   /**
+   * `+RXDTMF: <key>` with one key: 0-9, A-D, * or #. The format is from public reports of SIM7500/7600 behavior, not from a manual
+   * or a captured call on this hardware, so anything else (quoted, several keys, another prefix) is deliberately not accepted here: it
+   * is reported by the unrecognized-line diagnostic instead, which is how a different real format would be found.
+   */
+  static parseDtmf(line: string): string | null {
+    const match = line.trim().match(/^\+RXDTMF:\s*([0-9A-D*#])$/i);
+    return match ? match[1].toUpperCase() : null;
+  }
+
+  /**
    * Identifies whether an incoming line is an Unsolicited Result Code (URC).
    */
   static isUrc(line: string): boolean {
     const trimmed = line.trim();
     if (trimmed === 'RING' || trimmed.startsWith('+CRING:')) return true;
     if (trimmed.startsWith('+CLIP:')) return true;
+    if (AtParser.parseDtmf(trimmed) !== null) return true;
     if (trimmed === 'VOICE CALL: BEGIN') return true;
     if (trimmed === 'CONNECT') return true;
     if (trimmed.startsWith('VOICE CALL: END')) return true;
@@ -223,6 +248,18 @@ export class AtParser {
         raw: trimmed,
         type: 'CUSTOM',
         payload: { status: 'alerting' },
+        timestamp: new Date().toISOString(),
+        isSimulated: false,
+      };
+    }
+
+    // 9a. A key pressed by the remote caller: +RXDTMF: 5. Only this exact form is recognized (see parseDtmf); the key is kept out of `raw`.
+    const dtmf = AtParser.parseDtmf(trimmed);
+    if (dtmf !== null) {
+      return {
+        raw: '+RXDTMF: [REDACTED]',
+        type: 'CUSTOM',
+        payload: { kind: 'dtmf', digit: dtmf },
         timestamp: new Date().toISOString(),
         isSimulated: false,
       };

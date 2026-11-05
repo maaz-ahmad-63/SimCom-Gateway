@@ -1,5 +1,7 @@
 /** Types and pure helpers for the Campaigns pages. The gateway validates and decides everything; this only shapes what is sent and shown. */
 
+import type { CampaignConfig, ColumnDetection, CsvAnalysis } from './campaign-config';
+
 export type CampaignStatus = 'draft' | 'running' | 'paused' | 'stopped' | 'completed';
 export type ContactStatus = 'queued' | 'calling' | 'completed' | 'failed' | 'skipped';
 
@@ -50,6 +52,10 @@ export interface Campaign {
   acknowledgements: { realCalls: true; regulations: true; consent: true; consentMode: 'column' | 'attested'; willCall: number; at: string } | null;
   startedAt: string | null;
   finishedAt: string | null;
+  /** The campaign's own AI configuration in force (prompt and model); version 0 means none has been saved. */
+  config: CampaignConfig;
+  /** Which contact list is live: each replacement after the campaign started adds one, keeping the earlier list as history. */
+  listVersion: number;
 }
 
 export interface ColumnMapping {
@@ -91,6 +97,9 @@ export interface Contact {
   callId: string | null;
   lastOutcome: string | null;
   lastError: string | null;
+  /** True for a contact of an earlier list, kept as history. */
+  archived?: boolean;
+  listVersion?: number;
 }
 
 export interface Attempt {
@@ -109,6 +118,13 @@ export interface CsvPreview {
   sample: string[][];
   warnings: string[];
   suggestedMapping: Partial<ColumnMapping>;
+  /** Which columns look like the name and the phone number, and whether the person must choose. */
+  detection?: { name: ColumnDetection; phone: ColumnDetection };
+  ambiguous?: boolean;
+  /** Present when a mapping was sent and it is not usable. */
+  mappingErrors?: string[];
+  /** Present when a usable mapping was sent: what an import would do, with nothing stored. */
+  analysis?: CsvAnalysis;
 }
 
 export interface ImportSummary {
@@ -116,6 +132,7 @@ export interface ImportSummary {
   callable: number;
   invalidNumber: number;
   duplicate: number;
+  missingName: number;
   optedOut: number;
   doNotCall: number;
   consentDeclined: number;
@@ -127,6 +144,12 @@ export interface ImportResult {
   summary: ImportSummary;
   problems: Array<{ rowNumber: number; reason: string }>;
   warnings: string[];
+  /** The columns kept as each contact's custom fields. */
+  customColumns?: string[];
+  /** True when the campaign had already started: the earlier list is kept as history, this one is the live list. */
+  replacedEarlierList?: boolean;
+  listVersion?: number;
+  status?: CampaignStatus;
 }
 
 export interface Review {
@@ -189,7 +212,7 @@ export const outcomeLabel = (outcome: string | null): string => (outcome ? (OUTC
 
 export const CONTACT_FIELDS: Array<{ key: Exclude<keyof ColumnMapping, 'extra'>; label: string; required?: boolean; hint?: string }> = [
   { key: 'phone', label: 'Phone number', required: true, hint: 'International format (+919876543210), or set a default country code in Settings.' },
-  { key: 'name', label: 'Name' },
+  { key: 'name', label: 'Contact name', required: true, hint: 'A row without a usable name is set aside, not called.' },
   { key: 'designation', label: 'Designation' },
   { key: 'company', label: 'Company' },
   { key: 'context', label: 'Custom context', hint: 'Anything the agent should know about this person.' },
@@ -215,6 +238,7 @@ export function progressPercent(c: Counts): number {
 /** Mapping with unset fields left out, and the extra columns kept only if they are real columns. */
 export function cleanMapping(m: Partial<ColumnMapping>, headers: string[]): ColumnMapping | null {
   if (!m.phone || !headers.includes(m.phone)) return null;
+  if (!m.name || !headers.includes(m.name)) return null;
   const out: ColumnMapping = { phone: m.phone };
   for (const f of CONTACT_FIELDS) {
     if (f.key === 'phone') continue;
@@ -230,15 +254,14 @@ export function cleanMapping(m: Partial<ColumnMapping>, headers: string[]): Colu
 export function mappingProblems(m: Partial<ColumnMapping>, headers: string[]): string[] {
   const problems: string[] = [];
   if (!m.phone) problems.push('Choose the column that holds the phone number.');
+  if (!m.name) problems.push('Choose the column that holds the contact name.');
   const used: string[] = [];
   for (const f of CONTACT_FIELDS) {
     const value = m[f.key];
     if (value) used.push(value);
   }
-  for (const c of m.extra ?? []) {
-    used.push(c);
-    if (isReservedColumn(c)) problems.push(`The column "${c}" uses a name reserved for the agent's own fields or instructions: rename it in the file to use it as an extra.`);
-  }
+  // Every other column is kept as a custom field automatically; a column named like an instruction is kept too, but not given to the agent.
+  for (const c of m.extra ?? []) used.push(c);
   if (new Set(used).size !== used.length) problems.push('Each column can only be used for one field.');
   for (const c of used) if (!headers.includes(c)) problems.push(`The column "${c}" is not in the file.`);
   return problems;

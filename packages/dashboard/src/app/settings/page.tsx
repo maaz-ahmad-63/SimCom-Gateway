@@ -7,6 +7,7 @@ import {
   clearGatewayClientConfig,
   DEFAULT_GATEWAY_URL,
 } from '../../lib/config';
+import { UpdatesCard } from '../../components/updates/UpdatesCard';
 import { apiClient, GatewayApiClient, GatewayApiError } from '../../lib/api-client';
 import { useGateway } from '../../lib/context/GatewayContext';
 import { portText } from '../../lib/hardware-mode';
@@ -212,6 +213,8 @@ export default function SettingsPage() {
         )}
       </form>
 
+      <UpdatesCard />
+
       {/* Host Settings Info Card */}
       <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-4">
         <h2 className="text-sm font-semibold text-white uppercase tracking-wider font-mono flex items-center gap-2">
@@ -261,7 +264,7 @@ export default function SettingsPage() {
         </h2>
 
         <p className="text-xs text-slate-400 leading-relaxed">
-          To operate this dashboard on your Mac while the SIM7600EI gateway runs on the Windows PC:
+          To operate this dashboard on your Mac while SIZH IT Solution runs on the Windows PC:
         </p>
 
         <ol className="list-decimal list-inside text-xs text-slate-300 space-y-2 leading-relaxed">

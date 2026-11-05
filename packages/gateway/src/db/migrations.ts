@@ -1,4 +1,5 @@
 import { Database as DatabaseType } from 'better-sqlite3';
+import { OPS_SCHEMA_SQL } from '../ops/schema.js';
 
 export interface Migration {
   version: number;
@@ -303,7 +304,116 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    version: 9,
+    name: '009_campaign_config_versions_list_archive_and_cached_tokens',
+    up: (db: DatabaseType) => {
+      // Additive. Nothing here deletes or rewrites a call, a turn, an attempt or a contact.
+      //  campaign_config_versions  the editable AI configuration of a campaign (prompt, model), one immutable row per saved version;
+      //                            campaigns.config_version names the one in force, 0 meaning "none yet" (the campaign keeps its old behaviour)
+      //  campaign_contacts.archived / list_version   replacing a contact list keeps the old rows (and every attempt that points at them)
+      //                            as history instead of deleting them; only archived = 0 rows are the live list
+      //  campaign_attempts.config_version / prompt_sha / llm_key   the exact configuration each call was created with
+      //  campaign_imports          the CSV text exactly as uploaded, per import, for auditing
+      //  ai_turns.llm_cached_tokens / llm_cache_write_tokens   what the provider reported as served from / written to its prompt cache
+      //                            (NULL = the provider did not report it, which is different from 0)
+      const columns = (table: string) => new Set((db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name));
+      const add = (table: string, name: string, ddl: string) => {
+        if (!columns(table).has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${ddl}`);
+      };
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS campaign_config_versions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          campaign_id TEXT NOT NULL,
+          version INTEGER NOT NULL,
+          prompt TEXT NOT NULL DEFAULT '',
+          prompt_sha TEXT NOT NULL DEFAULT '',
+          llm_key TEXT,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_ccv_campaign_version ON campaign_config_versions(campaign_id, version);
+
+        CREATE TABLE IF NOT EXISTS campaign_imports (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          campaign_id TEXT NOT NULL,
+          list_version INTEGER NOT NULL,
+          csv TEXT NOT NULL,
+          mapping TEXT,
+          summary TEXT,
+          row_count INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY (campaign_id) REFERENCES campaigns(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_ci_campaign ON campaign_imports(campaign_id, id);
+      `);
+      add('campaigns', 'config_version', 'INTEGER NOT NULL DEFAULT 0');
+      add('campaigns', 'list_version', 'INTEGER NOT NULL DEFAULT 1');
+      add('campaign_contacts', 'archived', 'INTEGER NOT NULL DEFAULT 0');
+      add('campaign_contacts', 'list_version', 'INTEGER NOT NULL DEFAULT 1');
+      add('campaign_attempts', 'config_version', 'INTEGER');
+      add('campaign_attempts', 'prompt_sha', 'TEXT');
+      add('campaign_attempts', 'llm_key', 'TEXT');
+      add('ai_turns', 'llm_cached_tokens', 'INTEGER');
+      add('ai_turns', 'llm_cache_write_tokens', 'INTEGER');
+      // One live row per number per campaign: archived rows (an earlier list) no longer count against it.
+      db.exec(`
+        DROP INDEX IF EXISTS idx_cc_unique_phone;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_cc_unique_phone ON campaign_contacts(campaign_id, phone_e164) WHERE phone_e164 IS NOT NULL AND archived = 0;
+        CREATE INDEX IF NOT EXISTS idx_cc_live ON campaign_contacts(campaign_id, archived, status, row_number);
+      `);
+    },
+  },
+  {
+    version: 10,
+    name: '010_campaign_call_analysis',
+    up: (db: DatabaseType) => {
+      // Additive: two new tables. call_analyses is append-only (every model run is kept as it was returned); a manual correction is a
+      // separate row laid over it when read, so the original AI result is never changed or deleted. Nothing here touches calls or ai_turns.
+      db.exec(`
+CREATE TABLE IF NOT EXISTS call_analyses (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  attempt_id INTEGER NOT NULL,
+  campaign_id TEXT NOT NULL,
+  call_id TEXT,
+  status TEXT NOT NULL,
+  result TEXT,
+  error TEXT,
+  llm_key TEXT,
+  prompt_tokens INTEGER,
+  completion_tokens INTEGER,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (attempt_id) REFERENCES campaign_attempts(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_cana_attempt ON call_analyses(attempt_id, id);
+CREATE INDEX IF NOT EXISTS idx_cana_campaign ON call_analyses(campaign_id, id);
+CREATE TABLE IF NOT EXISTS call_analysis_overrides (
+  attempt_id INTEGER PRIMARY KEY,
+  campaign_id TEXT NOT NULL,
+  outcome TEXT,
+  interest TEXT,
+  summary TEXT,
+  next_action TEXT,
+  note TEXT,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (attempt_id) REFERENCES campaign_attempts(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_canao_campaign ON call_analysis_overrides(campaign_id);
+      `);
+    },
+  },
+  {
+    version: 11,
+    name: '011_ops_alerts_and_call_diagnostics',
+    up: (db: DatabaseType) => {
+      // Additive: two new tables (alerts with their history, and one diagnosis per call). Nothing existing is changed.
+      db.exec(OPS_SCHEMA_SQL);
+    },
+  },
 ];
+
+/** The newest schema version this application knows. A database that is behind is migrated at start; one that is ahead is refused for restore. */
+export const SCHEMA_VERSION = migrations[migrations.length - 1].version;
 
 export function runMigrations(db: DatabaseType): void {
   // Ensure schema migrations tracker table exists

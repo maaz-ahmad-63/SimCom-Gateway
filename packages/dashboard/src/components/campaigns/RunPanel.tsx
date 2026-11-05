@@ -4,6 +4,7 @@ import React, { Fragment, useCallback, useEffect, useRef, useState } from 'react
 import Link from 'next/link';
 import { apiClient } from '../../lib/api-client';
 import { callLogHref, RequestGate } from '../../lib/call-logs';
+import { contactFields } from '../../lib/campaign-config';
 import { Attempt, Campaign, Contact, ContactStatus, Counts, nextRetryText, outcomeLabel, progressPercent, RunnerStatus, statusTone } from '../../lib/campaigns';
 import { formatDate } from '../../lib/utils';
 import { ActionNote, Badge, Button, Card, Select, Tile, TextInput, useAction } from '../ai/ui';
@@ -67,6 +68,16 @@ function ContactRow({ campaignId, contact, onOptOut }: { campaignId: string; con
       {open && (
         <tr className="border-b border-slate-800/60 bg-slate-950/40">
           <td colSpan={7} className="p-3 text-[11px] font-mono text-slate-400 space-y-1" data-testid="attempts">
+            {contactFields(contact).length > 0 && (
+              <div data-testid="custom-fields" className="pb-2 mb-1 border-b border-slate-800/60">
+                <p className="text-[10px] uppercase text-slate-500">Information from the file (given to the agent for this contact's call only)</p>
+                {contactFields(contact).map(([label, value]) => (
+                  <p key={label} className="break-words">
+                    <span className="text-slate-500">{label}:</span> <span className="text-slate-300">{value}</span>
+                  </p>
+                ))}
+              </div>
+            )}
             {attempts === null && <p>Loading attempts…</p>}
             {attempts?.length === 0 && <p>No call has been placed for this contact.</p>}
             {attempts?.map((a) => (
@@ -182,6 +193,14 @@ export function RunPanel({ campaign, counts, runner, onChanged }: { campaign: Ca
                 <Button onClick={() => setConfirmStop(false)}>Keep going</Button>
               </span>
             )}
+          </div>
+        )}
+        {(campaign.status === 'completed' || campaign.status === 'stopped') && (
+          <div className="flex flex-wrap items-center gap-3" data-testid="run-again-hint">
+            <Button variant="primary" onClick={() => typeof document !== 'undefined' && document.getElementById('run-again')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })}>
+              Run this campaign again…
+            </Button>
+            <span className="text-[11px] text-slate-500">This campaign has finished. Upload a new contact list if you like, then run it again.</span>
           </div>
         )}
         <ActionNote state={action} />

@@ -20,7 +20,8 @@ export function SettingsStep({ campaign, onSaved, readOnly }: { campaign: Campai
     setDirty(true);
   };
   const problems = settingsProblems(form);
-  const locked = readOnly || (campaign.status !== 'draft' && campaign.status !== 'paused');
+  // Everything except a running campaign can be edited (a finished one too). It only affects calls placed afterwards.
+  const locked = readOnly || campaign.status === 'running';
   const toggle = <T,>(list: T[], item: T): T[] => (list.includes(item) ? list.filter((x) => x !== item) : [...list, item]);
 
   const save = async () => {
@@ -107,10 +108,10 @@ export function SettingsStep({ campaign, onSaved, readOnly }: { campaign: Campai
           </Field>
         </div>
 
-        <Field label="Why this campaign is calling (given to the agent on every call)" hint="Added to the agent's context for each call. It never replaces the agent's own prompt.">
+        <Field label="Why this campaign is calling (older campaigns without their own prompt)" hint="Used only when the campaign has no prompt of its own (see “Campaign AI agent”). A campaign with its own prompt ignores this field.">
           <TextArea value={form.contextNote} onChange={(e) => set('contextNote', e.target.value)} maxLength={600} rows={3} />
         </Field>
-        <Field label="Greeting for this campaign (optional)" hint="Use {name}, {designation}, {company}. Leave empty to use the agent's normal greeting. Applies to this campaign's calls only.">
+        <Field label="Greeting for this campaign (optional)" hint="Use {name}, {designation}, {company}. Leave empty to use the agent's normal greeting (a campaign with its own prompt then starts by listening). Applies to this campaign's calls only.">
           <TextInput value={form.greetingTemplate} onChange={(e) => set('greetingTemplate', e.target.value)} maxLength={300} placeholder="Hello {name}, this is Sarah calling from…" />
         </Field>
       </fieldset>
@@ -130,7 +131,7 @@ export function SettingsStep({ campaign, onSaved, readOnly }: { campaign: Campai
           <ActionNote state={action} />
         </div>
       )}
-      {locked && <p className="text-[11px] text-slate-500">Settings can be changed while the campaign is a draft or paused.</p>}
+      {locked && <p className="text-[11px] text-slate-500">Pause the campaign to change its settings. Edits only affect calls placed afterwards.</p>}
     </Card>
   );
 }

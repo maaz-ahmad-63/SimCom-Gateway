@@ -195,6 +195,8 @@ export interface ConversationDeps {
   loopLag?: LoopLag;
   /** Structured details about the person on this call (a campaign contact), added to this call's system prompt only. */
   callContext?: string | null;
+  /** Names the campaign version's shared prompt prefix on every model request of this call (see LlmRequest.cacheKey). */
+  promptCacheKey?: string | null;
   /**
    * Functions the model may call on this call. Offered only when the selected model supports them and the registry has a tool for
    * this call's mode; otherwise the conversation is exactly what it was without tools.
@@ -415,6 +417,7 @@ export class ConversationSession {
     this.knowledge = deps.knowledge ?? null;
     this.loopLag = deps.loopLag ?? null;
     this.callContext = deps.callContext ?? null;
+    this.promptCacheKey = deps.promptCacheKey ?? null;
     this.tools = deps.tools ?? null;
     this.notes = new CallNotes({ enabled: deps.config.memory.callNotes });
     this.contact = new ContactDetails(deps.config.memory.contactDetails !== false);
@@ -422,6 +425,7 @@ export class ConversationSession {
 
   private readonly knowledge: KnowledgeProvider | null;
   private readonly callContext: string | null;
+  private readonly promptCacheKey: string | null;
   private readonly tools: ConversationTools | null;
   /** The caller asked, on this call, not to be contacted again. Tools refuse to record anything once this is set. */
   private optedOut = false;
@@ -1477,7 +1481,7 @@ export class ConversationSession {
           const calls: LlmToolCall[] = [];
           let roundText = '';
           for await (const chunk of this.providers.llm.stream(
-            { system: built.system, messages: [...this.history.map((m) => ({ ...m })), ...exchange], ...(offerTools ? { tools: toolSpecs } : {}) },
+            { system: built.system, messages: [...this.history.map((m) => ({ ...m })), ...exchange], ...(offerTools ? { tools: toolSpecs } : {}), ...(this.promptCacheKey ? { cacheKey: this.promptCacheKey } : {}) },
             llmSignal
           )) {
             if (chunk.usage) {

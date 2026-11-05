@@ -19,7 +19,8 @@ import { createLogger } from '../core/logger.js';
 import { buildWav } from '../diagnostics/pcm-tools.js';
 import { AgentAudioSink, AudioFormat, CallerAudioSource, checkPcmBuffer, describeFormat } from './audio.js';
 import { buildCatalog } from './catalog-view.js';
-import { AiConfigResult } from './config.js';
+import { AiConfig, AiConfigResult, readProviderKey } from './config.js';
+import { describeLlmCaching } from './llm-caching.js';
 import { assessUtterance } from './endpointer.js';
 import { AiCallAutomation } from './automation.js';
 import { AiCallOrchestrator, OrchestratorDeps } from './orchestrator.js';
@@ -27,6 +28,7 @@ import { estimateCostUsd } from './pricing.js';
 import { createProviders, FetchLike, ProviderSet } from './providers/index.js';
 import { checkAiReadiness } from './readiness.js';
 import { activeRegistry } from './registry/active.js';
+import { buildLlmSpec } from './registry/registry.js';
 import { probeForProvider } from './registry/service.js';
 import { AiSettingsService, credentialProviders, SettingsError } from './settings.js';
 import { extractEndCall, hasSpeechContent, ProtocolTextFilter } from './text.js';
@@ -34,6 +36,7 @@ import { TraceHub } from './trace.js';
 import type { ObservabilityStore } from './observability-store.js';
 import { AiUsageStore } from './usage-store.js';
 import { CallSession } from '@sim-gateway/shared';
+import type { IvrCallHooks } from '../ivr/ownership.js';
 
 const MAX_TEST_AUDIO_SECONDS = 60;
 const MAX_DIAGNOSTIC_FILES = 50;
@@ -55,6 +58,8 @@ export interface AiRuntimeOptions {
   recordingsDir: string;
   /** Offline providers (tests, ai:loop). When set no network request is ever made for STT/LLM/TTS. */
   providers?: ProviderSet;
+  /** Test seam: the providers for a call whose campaign chose its own model. Production builds them from the Model Hub entry. */
+  providersForLlm?: (llmKey: string) => ProviderSet;
   fetchImpl?: FetchLike;
   /** Persistent call telemetry: every inspector event is also written here. Absent means nothing is persisted. */
   observability?: ObservabilityStore;
@@ -67,6 +72,8 @@ export interface AiRuntimeOptions {
   /** Test seam: let mock hardware satisfy the hardware check. */
   allowSimulatedHardware?: boolean;
   audioPortBusy?: () => boolean;
+  /** IVR call ownership: which calls the IVR holds (so the AI does not attach) and what automation does for them. Absent: no IVR. */
+  ivr?: IvrCallHooks;
   /** Test seam: shorter idle waits for follow-up prompts. */
   idleWaitsMs?: readonly [number, number, number];
   callLimitMs?: number;
@@ -149,10 +156,11 @@ export class AiRuntime {
       audio: options.audio,
       eventBus: options.eventBus,
       readiness: () => this.readinessRaw(),
-      createProviders: () => this.buildProviders(this.mode === 'active' ? undefined : 'stt'),
-      createFullProviders: () => this.buildProviders(),
+      createProviders: (opts) => this.buildProviders(this.mode === 'active' ? undefined : 'stt', opts?.llmKey),
+      createFullProviders: (opts) => this.buildProviders(undefined, opts?.llmKey),
       transports: options.transports,
       audioPortBusy: options.audioPortBusy,
+      callHeld: options.ivr ? (call) => options.ivr!.decide(call) === 'ivr' : undefined,
       mode: () => this.mode,
       callContext: options.callContext,
       onOptOut: options.onOptOut,
@@ -185,6 +193,7 @@ export class AiRuntime {
       activationSettleMs: options.automationActivation?.settleMs,
       activationRetryMs: options.automationActivation?.retryMs,
       activationAttempts: options.automationActivation?.attempts,
+      ivr: options.ivr,
     });
     options.eventBus.on('call:ended', this.onCallEnded);
     try {
@@ -344,9 +353,78 @@ export class AiRuntime {
 
   // ---- providers --------------------------------------------------------------------------------
 
-  private buildProviders(only?: 'stt' | 'llm' | 'tts'): ProviderSet {
+  /**
+   * The providers for a call. `llmKey` is a campaign's own model choice for that call: the language model is built from that Model Hub
+   * entry (its endpoint, credential and request settings), and everything else (speech-to-text, text-to-speech, timeouts, limits) is the
+   * gateway's, unchanged. Without it, exactly the gateway's selected providers, as before.
+   */
+  private buildProviders(only?: 'stt' | 'llm' | 'tts', llmKey?: string): ProviderSet {
+    if (llmKey && this.options.providersForLlm) return this.options.providersForLlm(llmKey);
     if (this.options.providers) return this.options.providers;
-    return createProviders(this.configResult.config, { env: this.env, fetchImpl: this.options.fetchImpl, only });
+    const config = llmKey && only !== 'stt' && only !== 'tts' ? this.configWithLlm(llmKey) : this.configResult.config;
+    return createProviders(config, { env: this.env, fetchImpl: this.options.fetchImpl, only });
+  }
+
+  /** The gateway's configuration with the language model replaced by a Model Hub entry. Throws, naming the reason, if it cannot be used. */
+  private configWithLlm(llmKey: string): AiConfig {
+    const problem = this.llmProblem(llmKey);
+    if (problem) throw new Error(problem);
+    const resolved = activeRegistry().llm(llmKey)!;
+    return { ...this.configResult.config, llm: { key: resolved.key, spec: buildLlmSpec(resolved, this.env) } };
+  }
+
+  /** Why a campaign cannot use this model for its calls right now, in a sentence; null when it can (or when none is chosen). */
+  llmProblem(llmKey: string | null | undefined): string | null {
+    if (!llmKey) return null;
+    const r = activeRegistry().llm(llmKey);
+    if (!r) return `The model '${llmKey}' is not in the Model Hub`;
+    if (!r.implemented) return `${r.label} cannot be used: ${r.unavailableReason ?? 'it is not supported by the gateway yet'}`;
+    if (r.disabled) return `${r.label} is switched off in the Model Hub`;
+    if (!buildLlmSpec(r, this.env)) return `${r.label} cannot be used for calls (it is not an OpenAI-compatible chat model)`;
+    if (!r.keyEnv || !readProviderKey(this.env, r.keyEnv)) return `${r.label} needs the ${r.provider.name} API key (${r.keyEnv ?? 'no credential named'}), which is not set`;
+    return null;
+  }
+
+  /** One plain text request to a language model (the campaign's, or the gateway's selected one). Used to analyse a finished call; never during one. */
+  async completeText(request: { llmKey: string | null; system: string; user: string }): Promise<{ text: string; promptTokens: number | null; completionTokens: number | null; llmKey: string }> {
+    const key = request.llmKey ?? this.configResult.config.llm.key;
+    const providers = this.buildProviders('llm', request.llmKey ?? undefined);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60_000);
+    try {
+      let text = '';
+      let usage: { promptTokens: number; completionTokens: number } | null = null;
+      for await (const chunk of providers.llm.stream({ system: request.system, messages: [{ role: 'user', content: request.user }] }, controller.signal)) {
+        if (chunk.usage) usage = chunk.usage;
+        if (chunk.delta) text += chunk.delta;
+        if (text.length > 20_000) break;
+      }
+      return { text, promptTokens: usage?.promptTokens ?? null, completionTokens: usage?.completionTokens ?? null, llmKey: key };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** The language models a campaign can choose, with whether each can be used now and what is known about its prompt caching. */
+  llmChoices() {
+    const registry = activeRegistry();
+    const current = this.configResult.config.llm.key;
+    return registry.llmKeys().map((key) => {
+      const r = registry.llm(key)!;
+      const problem = this.llmProblem(key);
+      return {
+        key,
+        label: r.label,
+        provider: r.provider.name,
+        vendor: r.vendor,
+        model: r.model,
+        tools: r.tools,
+        available: problem === null,
+        unavailableReason: problem,
+        current: key === current,
+        caching: describeLlmCaching(r.vendor),
+      };
+    });
   }
 
   catalog() {

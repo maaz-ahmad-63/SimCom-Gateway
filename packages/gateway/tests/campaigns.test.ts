@@ -85,7 +85,7 @@ describe('row validation', () => {
 
   it('classifies every row with the file row number and a reason', () => {
     const result = analyzeRows(parseCsv(csv), mapping, settings, (e164) => e164 === '+919855555555');
-    expect(result.summary).toEqual({ total: 8, callable: 3, invalidNumber: 1, duplicate: 1, optedOut: 1, doNotCall: 1, consentDeclined: 1, consentUnknown: 2 });
+    expect(result.summary).toEqual({ total: 8, callable: 3, invalidNumber: 1, duplicate: 1, missingName: 0, optedOut: 1, doNotCall: 1, consentDeclined: 1, consentUnknown: 2 });
     const byRow = Object.fromEntries(result.rows.map((r) => [r.rowNumber, r]));
     expect(byRow[2]).toMatchObject({ status: 'queued', phoneE164: '+919876543210', name: 'Asha', designation: 'CTO', company: 'Acme', extra: { Plan: 'Gold' } });
     expect(byRow[3]).toMatchObject({ status: 'skipped', phoneE164: null });
@@ -368,7 +368,8 @@ describe('retries, failures and safety rules', () => {
   it('does not call a number that another campaign called recently, but still retries within its own', async () => {
     const h = harness({ csv: ['Name,Phone,Consent', 'A,+919876543210,yes'].join('\n'), settings: { maxAttempts: 2, retryDelayMinutes: 1 } });
     const other = h.store.create('Earlier campaign', { callingHours: h.campaign.settings.callingHours });
-    h.store.importContacts(other.id, analyzeRows(parseCsv('Phone,Consent\n+919876543210,yes'), { phone: 'Phone', consent: 'Consent' }, other.settings, () => false).rows, { phone: 'Phone', consent: 'Consent' });
+    const earlierMapping = { phone: 'Phone', name: 'Name', consent: 'Consent' };
+    h.store.importContacts(other.id, analyzeRows(parseCsv('Name,Phone,Consent\nZed,+919876543210,yes'), earlierMapping, other.settings, () => false).rows, earlierMapping);
     const earlier = h.store.listContacts(other.id).items[0];
     h.store.claim(earlier.id); // that campaign called the number a moment ago
     h.store.start(h.campaign.id);
@@ -456,8 +457,9 @@ describe('pause, resume and stop', () => {
     expect(() => h.store.stop(h.campaign.id)).toThrow(/running or paused/);
     h.store.start(h.campaign.id);
     expect(() => h.store.start(h.campaign.id)).toThrow(/Only a draft/);
-    expect(() => h.store.importContacts(h.campaign.id, [], MAP)).toThrow(/draft/);
-    expect(() => h.store.updateSettings(h.campaign.id, { maxAttempts: 3 })).toThrow(/draft or paused/);
+    // While it is running the list and the settings stay fixed (pause first); once it is not running they can be edited.
+    expect(() => h.store.importContacts(h.campaign.id, [], MAP)).toThrow(/Pause or stop the campaign/);
+    expect(() => h.store.updateSettings(h.campaign.id, { maxAttempts: 3 })).toThrow(/Pause the campaign/);
     expect(() => h.store.remove(h.campaign.id)).toThrow(/Stop the campaign/);
   });
 });

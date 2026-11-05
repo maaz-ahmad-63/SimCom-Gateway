@@ -4,6 +4,7 @@ import React from 'react';
 import { INSPECTOR_STAGES, STAGE_LABELS } from '../../lib/ai-inspector';
 import { unique } from '../../lib/ai-settings-form';
 import { AutomationCard } from './AutomationCard';
+import { DirectionPrompt } from './DirectionPrompt';
 import { Badge, Card, Field, SaveBar, Select, TextArea, TextInput, Toggle } from './ui';
 import { useSettingsDraft } from './useSettingsDraft';
 
@@ -43,7 +44,7 @@ export function AgentTab() {
         </div>
         <Field
           label={`Shared instructions (${agent.instructions.length}/8000)`}
-          hint="Placed before the gateway’s built-in phone-call rules (short replies, one question at a time, no symbols). Used by every call that has no instructions of its own below. Do not put secrets here: this text is sent to the language model provider on every turn."
+          hint="Placed before the gateway’s built-in phone-call rules (short replies, one question at a time, no symbols). Used by every call direction that has no prompt of its own below; if this is empty too, the built-in default for that direction is used. Do not put secrets here: this text is sent to the language model provider on every turn."
         >
           <TextArea value={agent.instructions} maxLength={8000} onChange={(e) => setAgent({ instructions: e.target.value })} className="min-h-[200px]" />
         </Field>
@@ -62,30 +63,9 @@ export function AgentTab() {
         <SaveBar dirty={dirty} problems={problems} action={action} onSave={save} onCancel={cancel} />
       </Card>
 
-      <Card
-        title="Inbound calls"
-        subtitle="Used when someone rings in. Leave a field empty to use the shared one above. Everything else (speech recognition, the model, the voice, the call rules) is the same engine for every call."
-      >
-        <Field label={`Inbound instructions (${(agent.inboundInstructions ?? '').length}/8000)`} hint="For example: you are the receptionist for Acme; answer questions about opening hours; take a message.">
-          <TextArea value={agent.inboundInstructions ?? ''} maxLength={8000} onChange={(e) => setAgent({ inboundInstructions: e.target.value })} className="min-h-[140px]" aria-label="Inbound instructions" />
-        </Field>
-        <Field label="Inbound greeting" hint="Spoken when an incoming call is answered.">
-          <TextInput value={agent.inboundGreeting ?? ''} maxLength={500} onChange={(e) => setAgent({ inboundGreeting: e.target.value })} aria-label="Inbound greeting" />
-        </Field>
-      </Card>
+      <DirectionPrompt direction="inbound" />
 
-      <Card
-        title="Outbound campaign calls"
-        subtitle="Used when the gateway calls someone. A campaign adds its own details for each contact on top of this, and a greeting template set on the campaign still wins for that campaign."
-      >
-        <Field label={`Outbound instructions (${(agent.outboundInstructions ?? '').length}/8000)`} hint="For example: you are calling on behalf of Acme about a recent enquiry; be brief; if they are busy offer a callback; never pressure.">
-          <TextArea value={agent.outboundInstructions ?? ''} maxLength={8000} onChange={(e) => setAgent({ outboundInstructions: e.target.value })} className="min-h-[140px]" aria-label="Outbound instructions" />
-        </Field>
-        <Field label="Outbound greeting" hint="Spoken when the person answers. A campaign's greeting template, when it has one, is spoken instead.">
-          <TextInput value={agent.outboundGreeting ?? ''} maxLength={500} onChange={(e) => setAgent({ outboundGreeting: e.target.value })} aria-label="Outbound greeting" />
-        </Field>
-        {dirty && <SaveBar dirty={dirty} problems={problems} action={action} onSave={save} onCancel={cancel} />}
-      </Card>
+      <DirectionPrompt direction="outbound" />
 
       <AutomationCard draft={draft} setDraft={setDraft} attestations={state.settings.attestations} />
       {dirty && (

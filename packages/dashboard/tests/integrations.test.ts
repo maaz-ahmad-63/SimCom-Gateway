@@ -198,7 +198,7 @@ describe('inbound and outbound agent settings in the dashboard form', () => {
     expect(validateDraft(base, catalog)).toEqual([]);
   });
 
-  it('the Agent tab shows an inbound and an outbound section next to the shared settings', async () => {
+  it('the Agent tab shows what an inbound and an outbound call will say, next to the shared settings, with the editor behind Edit', async () => {
     vi.resetModules();
     const draft = draftFromSettings(settings({ inboundGreeting: 'Thanks for calling Acme.', outboundGreeting: 'Hi from Acme.' }));
     vi.doMock('../src/components/ai/useSettingsDraft', () => ({
@@ -214,16 +214,26 @@ describe('inbound and outbound agent settings in the dashboard form', () => {
         state: { sessions: [], settings: { attestations: { inbound: { confirmed: false, confirmedAt: null, note: null, source: 'none' }, outbound: { confirmed: false, confirmedAt: null, note: null, source: 'none' } } } },
       }),
     }));
+    // The two prompt cards read what the gateway has SAVED, through the AI context.
+    vi.doMock('../src/lib/context/AiContext', () => ({
+      useAi: () => ({
+        state: { settings: { agent: { instructions: '', greeting: '', inboundInstructions: '', inboundGreeting: 'Thanks for calling Acme.', outboundInstructions: 'Outreach for Acme.', outboundGreeting: 'Hi from Acme.' } } },
+        refresh: async () => undefined,
+      }),
+    }));
     const { AgentTab } = await import('../src/components/ai/AgentTab');
     const html = renderToStaticMarkup(React.createElement(AgentTab));
     vi.doUnmock('../src/components/ai/useSettingsDraft');
+    vi.doUnmock('../src/lib/context/AiContext');
     expect(html).toContain('Inbound calls');
-    expect(html).toContain('Outbound campaign calls');
-    expect(html).toContain('aria-label="Inbound instructions"');
-    expect(html).toContain('aria-label="Outbound instructions"');
-    expect(html).toContain('value="Thanks for calling Acme."');
-    expect(html).toContain('value="Hi from Acme."');
+    expect(html).toContain('Outbound calls');
+    expect(html).toContain('data-testid="inbound-reading"'); // read first; the editor appears when Edit is pressed
+    expect(html).toContain('data-testid="outbound-reading"');
+    expect(html).not.toContain('aria-label="Inbound instructions"');
+    expect(html).toContain('Thanks for calling Acme.');
+    expect(html).toContain('Hi from Acme.');
+    expect(html).toContain('Outreach for Acme.');
     expect(html).toContain('Shared instructions');
-    expect(html).toContain('a greeting template set on the campaign still wins');
+    expect(html).toContain('A campaign adds its own prompt');
   });
 });

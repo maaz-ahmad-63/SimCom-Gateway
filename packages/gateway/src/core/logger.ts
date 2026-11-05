@@ -68,9 +68,50 @@ export function redactDiagnosticText(value: string): string {
   return value
     .replace(/(ATD)\s*([+0-9][0-9\s-]{5,})(;?)/gi, '$1[REDACTED]$3')
     .replace(/(\+CLIP:\s*")[^"]+(")/gi, '$1[REDACTED]$2')
+    .replace(/(\+RXDTMF:\s*)\S+/gi, '$1[REDACTED]') // a key the caller pressed may be a PIN or a card digit
     .replace(/\b(?:sk|gsk|pk|xox[bp])[-_][A-Za-z0-9_-]{8,}/gi, '[REDACTED]')
     .replace(/\b(api[-_]?key|token|secret)=\S+/gi, '$1=[REDACTED]')
     .replace(/\b\d{7,}\b/g, '[REDACTED]');
+}
+
+export interface LogSinkRecord {
+  ts: string;
+  level: LogLevel;
+  component: string;
+  msg: string;
+  callId?: string;
+  data?: unknown;
+}
+
+let sink: ((record: LogSinkRecord) => void) | null = null;
+
+/** Where structured (JSON) records go, in addition to the console. The gateway points this at a rotating file. */
+export function setLogSink(fn: ((record: LogSinkRecord) => void) | null): void {
+  sink = fn;
+}
+
+function redactDeep(value: unknown): unknown {
+  if (typeof value === 'string') return redactDiagnosticText(value);
+  if (Array.isArray(value)) return value.map(redactDeep);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, redactDeep(v)]));
+  return value;
+}
+
+function toSink(level: LogLevel, module: string, message: string, meta?: unknown): void {
+  if (!sink) return;
+  try {
+    const msg = typeof message === 'string' ? redactDiagnosticText(sanitizeValue('', message) as string) : String(message);
+    const record: LogSinkRecord = { ts: new Date().toISOString(), level, component: module, msg };
+    if (meta instanceof Error) record.data = { error: redactDiagnosticText(meta.message), stack: meta.stack ? redactDiagnosticText(meta.stack).slice(0, 1500) : undefined };
+    else if (meta !== undefined) {
+      record.data = redactDeep(sanitizeValue('', meta));
+      const id = (meta as { callId?: unknown } | null)?.callId;
+      if (typeof id === 'string') record.callId = id.slice(0, 100);
+    }
+    sink(record);
+  } catch {
+    /* logging must never throw */
+  }
 }
 
 export class Logger {
@@ -116,6 +157,7 @@ export class Logger {
   debug(message: string, meta?: unknown): void {
     if (this.shouldLog('debug')) {
       console.debug(this.formatMessage('debug', message, meta));
+      toSink('debug', this.module, message, meta);
     }
   }
 
@@ -124,6 +166,7 @@ export class Logger {
       const line = this.formatMessage('info', message, meta);
       keepRecent('info', this.module, line);
       console.log(line);
+      toSink('info', this.module, message, meta);
     }
   }
 
@@ -132,6 +175,7 @@ export class Logger {
       const line = this.formatMessage('warn', message, meta);
       keepRecent('warn', this.module, line);
       console.warn(line);
+      toSink('warn', this.module, message, meta);
     }
   }
 
@@ -140,6 +184,7 @@ export class Logger {
       const line = this.formatMessage('error', message, meta);
       keepRecent('error', this.module, line);
       console.error(line);
+      toSink('error', this.module, message, meta);
     }
   }
 

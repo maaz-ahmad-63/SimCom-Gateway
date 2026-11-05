@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { NextFunction, Router, Request, Response } from 'express';
 import os from 'node:os';
 import {
   AtCommunicationStatus,
@@ -61,22 +61,31 @@ export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
   // so "one SMS operation at a time" holds across requests. Refused during any call.
   router.use('/sms', createSmsRouter(deps.sms ?? new SmsService({ modem: deps.modem, callManager: deps.callManager }), { inbox: deps.smsInbox, store: deps.smsStore }));
 
-  // Complete-call recordings (not diagnostic captures): status, metadata, and the WAV tracks.
-  router.get('/recordings', (_req: Request, res: Response) => {
+  // Complete-call recordings (not diagnostic captures): status, metadata, and ONE combined WAV per call. Behind the API key like every
+  // other route here; the recording itself is only ever served by the authenticated route below.
+  router.get('/recordings', (req: Request, res: Response) => {
     if (!deps.recorder) {
       res.json({ status: null, recordings: [] });
       return;
     }
-    res.json({ status: deps.recorder.getStatus(), recordings: deps.recorder.list() });
+    // ?ids=a,b,c answers for exactly those calls (the call history asks about the page it is showing).
+    const ids = typeof req.query.ids === 'string' ? req.query.ids.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 200) : null;
+    const recordings = ids ? ids.map((id) => deps.recorder!.get(id)).filter((r) => r !== null) : deps.recorder.list();
+    res.json({ status: deps.recorder.getStatus(), recordings });
   });
 
-  router.get('/recordings/:callId/:track.wav', (req: Request, res: Response) => {
-    const file = deps.recorder?.trackFile(String(req.params.callId), String(req.params.track)) ?? null;
-    if (!file) {
-      res.status(404).json({ error: 'Recording not found', code: 'RECORDING_NOT_FOUND' });
-      return;
+  router.get('/recordings/:callId/audio.wav', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const file = (await deps.recorder?.ensureCombined(String(req.params.callId))) ?? null;
+      if (!file) {
+        res.status(404).json({ error: 'No recording exists for this call', code: 'RECORDING_NOT_FOUND' });
+        return;
+      }
+      // sendFile answers Range requests, so a player can seek; the file is private to the key holder.
+      res.set('Cache-Control', 'private, no-store').type('audio/wav').sendFile(file);
+    } catch (error) {
+      next(error);
     }
-    res.type('audio/wav').sendFile(file);
   });
 
   router.get('/health', async (_req: Request, res: Response) => {

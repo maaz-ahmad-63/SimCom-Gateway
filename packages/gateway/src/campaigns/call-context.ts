@@ -7,6 +7,18 @@ export interface CallContextEntry {
   greeting?: string | null;
   campaignId: string;
   contactId: number;
+  /**
+   * Set when the campaign has its own prompt: it IS this call's system prompt, replacing the gateway's outbound/shared agent
+   * instructions for this call only. Fixed when the call is placed, so editing the campaign never changes a call in progress.
+   */
+  systemPrompt?: string;
+  /** A Model Hub model chosen for this campaign (null/absent: the gateway's selected model answers). */
+  llmKey?: string | null;
+  /** Names the campaign version's shared prompt prefix to a provider that can use that to route prompt-cache hits. */
+  promptCacheKey?: string;
+  /** The campaign configuration version this call was created with, and the fingerprint of its prompt. */
+  configVersion?: number;
+  promptSha?: string;
 }
 
 /**

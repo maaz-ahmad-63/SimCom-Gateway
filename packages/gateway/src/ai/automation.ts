@@ -3,6 +3,7 @@ import { GatewayEventBus } from '../core/event-bus.js';
 import { createLogger } from '../core/logger.js';
 import { AiConfig } from './config.js';
 import type { TraceInput } from './conversation.js';
+import type { IvrCallHooks } from '../ivr/ownership.js';
 
 export interface AutomationDeps {
   manager: ICallSessionManager;
@@ -27,6 +28,13 @@ export interface AutomationDeps {
   activationRetryMs?: number;
   /** Total activation attempts per call (default 3). */
   activationAttempts?: number;
+  /**
+   * IVR call ownership. The IVR runs on OUTBOUND calls only: an outbound call it owns has its USB audio activated whether or not the AI
+   * is enabled (the IVR can run without the AI), and the IVR is told when audio flows or when this fails. Inbound calls are never the
+   * IVR's, so answering and everything else about them is exactly the AI automation below. Absent, or answering 'ai' for every call,
+   * leaves every path as it was.
+   */
+  ivr?: Pick<IvrCallHooks, 'decide' | 'audioReady' | 'fail'>;
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -96,6 +104,23 @@ export class AiCallAutomation {
     return h === 'all' || h === direction;
   }
 
+  private ivrOwns(call: CallSession): boolean {
+    return this.deps.ivr?.decide(call) === 'ivr';
+  }
+
+  /** What a call the IVR owns needs, which is not the AI: only that the gateway knows its audio sample rate. Never asks about AI keys or mode. */
+  private ivrBlockers(): string[] {
+    const { config, errors } = this.cfg;
+    return config.audio.format ? [] : [errors?.find((e) => e.startsWith('AI_AUDIO_SAMPLE_RATE')) ?? 'the gateway audio sample rate is not set'];
+  }
+
+  /** Something the IVR needed did not work: it releases the call (to the AI if the AI can answer, otherwise by ending it). */
+  private ivrFailed(call: CallSession, reason: string): void {
+    void Promise.resolve(this.deps.ivr?.fail(call.id, reason)).catch((error: unknown) =>
+      this.logger.error(`IVR could not release call ${call.id}: ${error instanceof Error ? error.message : String(error)}`)
+    );
+  }
+
   /** Reasons automation must not act on a call, or an empty list if it may. */
   private blockers(direction: 'inbound' | 'outbound'): string[] {
     const { config, passiveUsable, usable, errors } = this.cfg;
@@ -114,8 +139,8 @@ export class AiCallAutomation {
   private handleUrc(urc: UrcEvent): void {
     if (urc.type !== 'RING' && urc.type !== 'CLIP') return;
     const { config } = this.cfg;
-    if (!config.automation.autoAnswer) return;
     const call = this.deps.manager.getCurrentCall();
+    if (!config.automation.autoAnswer) return;
     // The very first ring is announced before the call exists; handleStarted counts that one.
     if (!call || call.state !== 'INBOUND_RINGING' || this.answered.has(call.id)) return;
 
@@ -129,7 +154,13 @@ export class AiCallAutomation {
 
   /** The call object appears with the first ring: that ring counts as cycle one. */
   private handleStarted(session: CallSession): void {
-    if (session.direction !== 'inbound' || !this.cfg.config.automation.autoAnswer) return;
+    if (session.direction !== 'inbound') {
+      // An outbound call is the IVR's or the AI's from the moment it exists: asked here, before it can be answered, this pins who owns
+      // it for its whole life (the AI orchestrator asks the same question when the callee picks up). Nothing is answered or dialled.
+      this.ivrOwns(session);
+      return;
+    }
+    if (!this.cfg.config.automation.autoAnswer) return;
     this.rings.set(session.id, { ring: 1, clip: 0 });
     this.maybeAnswer(session, 1);
   }
@@ -217,20 +248,29 @@ export class AiCallAutomation {
     if (event.currentState !== 'ACTIVE') return;
     const call = event.session;
     const { config } = this.cfg;
-    if (!config.automation.autoActivateUsbAudio || this.activated.has(call.id)) return;
-    const blockers = this.blockers(call.direction);
-    if (blockers.length > 0) return; // not an eligible call: stay out of it, and say nothing about calls we do not handle
+    // A call the IVR owns always gets its audio activated (the IVR cannot run without it), whatever AI_AUTO_ACTIVATE_USB_AUDIO says.
+    const owned = this.ivrOwns(call);
+    if ((!config.automation.autoActivateUsbAudio && !owned) || this.activated.has(call.id)) return;
+    const blockers = owned ? this.ivrBlockers() : this.blockers(call.direction);
+    if (blockers.length > 0) {
+      if (owned) this.ivrFailed(call, blockers.join('; '));
+      return; // not an eligible call: stay out of it, and say nothing about calls we do not handle
+    }
     this.activated.add(call.id); // once per call
 
     const manager = this.deps.manager;
     if (!manager.activateUsbAudioDiagnostic) {
       this.deps.mark(call.id, { turnId: null, stage: 'call', status: 'failed', detail: 'USB audio activation is unavailable on this gateway' });
+      if (owned) this.ivrFailed(call, 'USB audio activation is unavailable on this gateway');
       return;
     }
     if (manager.isUsbAudioDiagnosticActive?.()) {
       this.deps.mark(call.id, { turnId: null, stage: 'call', status: 'ok', detail: 'USB audio was already activated for this call' });
     } else {
-      if (!(await this.activateWithRetry(call))) return;
+      if (!(await this.activateWithRetry(call))) {
+        if (owned) this.ivrFailed(call, 'USB audio could not be activated');
+        return;
+      }
     }
 
     // Registration accepted is not audio. Wait for actual bytes, and say plainly if none come.
@@ -242,6 +282,7 @@ export class AiCallAutomation {
       if (!current || current.id !== call.id || current.state !== 'ACTIVE') return; // the call ended meanwhile
       if (manager.getUsbAudioStatus?.().audio.state === 'flowing') {
         this.deps.mark(call.id, { turnId: null, stage: 'call', status: 'ok', detail: 'Audio bytes are flowing from the modem (bytes are not proof of speech)' });
+        if (owned) this.deps.ivr?.audioReady(call); // the IVR may start now
         return;
       }
       if (Date.now() >= deadline) break;
@@ -257,5 +298,6 @@ export class AiCallAutomation {
     const detail = `USB audio was activated but no audio bytes arrived within ${Math.round(waitMs / 1000)} s${moduleSays}; the AI will not attach until they do`;
     this.deps.mark(call.id, { turnId: null, stage: 'call', status: 'failed', detail });
     this.deps.alert('warn', detail);
+    if (owned) this.ivrFailed(call, `no audio bytes arrived within ${Math.round(waitMs / 1000)} s of activating USB audio`);
   }
 }

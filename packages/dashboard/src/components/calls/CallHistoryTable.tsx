@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CallSession } from '@sim-gateway/shared';
 import { apiClient } from '../../lib/api-client';
 import { formatDate, formatDuration, getOutcomeBadge } from '../../lib/utils';
+import { nextRecordingAction, recordingAvailability, RecordingInfo } from '../../lib/recordings';
 import { CallDetailsModal } from './CallDetailsModal';
+import { PlayerHandle, RecordingActionButton, RecordingPlayer } from './RecordingPlayer';
 import {
   PhoneIncoming,
   PhoneOutgoing,
@@ -25,6 +27,34 @@ export function CallHistoryTable() {
   const [searchQuery, setSearchQuery] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState('ALL');
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
+  // What the gateway says about each call's recording on this page (null: it did not answer, so Play simply tries).
+  const [recordings, setRecordings] = useState<Map<string, RecordingInfo> | null>(null);
+  // The call whose recording row is open under it (a player, or the reason there is no recording), and whether its audio is playing.
+  const [openCallId, setOpenCallId] = useState<string | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const player = useRef<PlayerHandle | null>(null);
+
+  const loadRecordings = async (ids: string[]) => {
+    try {
+      const res = await apiClient.getRecordings(ids);
+      setRecordings(new Map(res.recordings.map((r) => [r.callId, r])));
+    } catch {
+      setRecordings(null); // not known: Play is offered and reports what happens when pressed
+    }
+  };
+
+  /** Play (or pause/resume) this call's recording; a call with no recording opens its reason instead. */
+  const onRecordingAction = (callId: string) => {
+    const action = nextRecordingAction(openCallId, callId, recordingAvailability(calls.find((c) => c.id === callId) ?? { id: callId }, recordings));
+    if (action === 'toggle') {
+      player.current?.toggle();
+    } else if (action === 'close') {
+      setOpenCallId(null);
+    } else {
+      setPlaying(false);
+      setOpenCallId(callId);
+    }
+  };
 
   const fetchCalls = async () => {
     try {
@@ -35,6 +65,8 @@ export function CallHistoryTable() {
       });
       setCalls(res.calls);
       setTotal(res.total);
+      setOpenCallId(null);
+      void loadRecordings(res.calls.map((c) => c.id));
     } catch (err) {
       console.error('Failed to load call history:', err);
     } finally {
@@ -141,10 +173,12 @@ export function CallHistoryTable() {
                 filteredCalls.map((call) => {
                   const isInbound = call.direction === 'inbound';
                   const outcomeBadge = getOutcomeBadge(call.outcome);
+                  const availability = recordingAvailability(call, recordings);
+                  const isOpen = openCallId === call.id;
 
                   return (
+                    <React.Fragment key={call.id}>
                     <tr
-                      key={call.id}
                       className="hover:bg-slate-800/40 transition-colors group cursor-pointer"
                       onClick={() => setSelectedCallId(call.id)}
                     >
@@ -198,18 +232,39 @@ export function CallHistoryTable() {
                       </td>
 
                       <td className="py-3 px-4 text-right">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedCallId(call.id);
-                          }}
-                          className="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition"
-                          title="Inspect Call Timeline"
-                        >
-                          <Eye className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center justify-end gap-1">
+                          <RecordingActionButton availability={availability} open={isOpen} playing={playing} onClick={() => onRecordingAction(call.id)} />
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedCallId(call.id);
+                            }}
+                            className="p-1 rounded hover:bg-slate-700 text-slate-400 hover:text-white transition"
+                            title="Inspect Call Timeline"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
+                    {isOpen && (
+                      <tr className="bg-slate-950/50">
+                        <td colSpan={7} className="px-4 py-3 font-sans">
+                          {availability.state === 'none' ? (
+                            <p role="status" className="text-xs text-slate-400">{availability.reason}</p>
+                          ) : (
+                            <RecordingPlayer
+                              key={call.id}
+                              callId={call.id}
+                              recording={availability.state === 'available' ? availability.recording : null}
+                              handleRef={player}
+                              onPlayingChange={setPlaying}
+                            />
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })
               )}

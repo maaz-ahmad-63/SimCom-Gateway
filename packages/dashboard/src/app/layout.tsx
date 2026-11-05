@@ -4,10 +4,12 @@ import { GatewayProvider } from '../lib/context/GatewayContext';
 import { Header } from '../components/layout/Header';
 import { Navigation } from '../components/layout/Navigation';
 import { IncomingCallBanner } from '../components/layout/IncomingCallBanner';
+import { AlertCenter } from '../components/ops/AlertCenter';
+import { UpdateBanner } from '../components/updates/UpdateBanner';
 
 export const metadata: Metadata = {
-  title: 'SIM7600EI Cellular Gateway Dashboard',
-  description: 'Real-time telemetry and call management for SIMCOM SIM7600EI cellular gateway',
+  title: 'SIZH IT Solution',
+  description: 'Call handling, AI assistant and SMS from one place.',
 };
 
 export default function RootLayout({
@@ -24,6 +26,12 @@ export default function RootLayout({
 
           {/* Global Incoming Call Banner (shown when INBOUND_RINGING) */}
           <IncomingCallBanner />
+
+          {/* Connection loss, critical alerts and the alert bell (health and alerts come from the gateway) */}
+          <AlertCenter />
+
+          {/* A new version is ready, or the last update was undone */}
+          <UpdateBanner />
 
           {/* Main App Body with Sidebar & Content */}
           <div className="flex-1 flex overflow-hidden">
