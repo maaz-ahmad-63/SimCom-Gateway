@@ -45,7 +45,7 @@ describe('the installer script', () => {
   it('stops with an explanation when an earlier all-users install is present, instead of installing beside it', () => {
     expect(iss).toMatch(/function InitializeSetup[\s\S]*RegKeyExists\(HKLM64, OldMachineKey\)[\s\S]*Result := False/);
     expect(iss).toContain('{6F2A9C1E-5B7D-4C3A-9E48-2D7A41B8C0F3}_is1');
-    expect(iss).toMatch(/choose NO/);
+    expect(iss).toMatch(/Choose NO/i);
   });
 
   it('starts the program through the guard outside the program folder, never through a batch or PowerShell script that opens the browser at once', () => {

@@ -3,6 +3,8 @@
 ; Build with:  powershell -File installer\build-package.ps1   (it assembles installer\stage\app first, then calls ISCC.exe)
 ;
 ; Rules this script follows:
+;   - Customer data is never removed by anything in this script. An older all-users install is only removed by the CUSTOMER, and only after a
+;     verified safety copy exists in %LOCALAPPDATA%\SIZH IT Solution Data Backups (see migrate\customer-data.cjs).
 ;   - PER-USER install: no administrator prompt, ever. Program files go in %LOCALAPPDATA%\Programs\SIZH IT Solution, a folder only this Windows
 ;     user can write, so the product can replace its own files when it updates itself. Customer data stays in %ProgramData%\SimGateway (and
 ;     the key in %ProgramData%\SimGatewaySecrets), exactly where earlier versions kept it, and is NEVER installed over, overwritten or removed by an
@@ -68,6 +70,10 @@ Type: files; Name: "{app}\stop-product.ps1"
 [Files]
 Source: "stage\app\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "guard\SimGatewayStart.js"; DestDir: "{localappdata}\SIZH IT Solution"; Flags: ignoreversion
+; The customer-data safety copy / restore tool. One copy is unpacked to a temporary folder when setup starts (to protect the data of an
+; older all-users install BEFORE it is removed); the other stays in the program folder for the restore step after installing.
+Source: "migrate\customer-data.cjs"; DestName: "customer-data.cjs"; Flags: dontcopy
+Source: "migrate\customer-data.cjs"; DestDir: "{app}\migrate"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\SIZH IT Solution"; Filename: "{sys}\wscript.exe"; Parameters: "//B //Nologo ""{localappdata}\SIZH IT Solution\SimGatewayStart.js"""; WorkingDir: "{app}"; IconFilename: "{app}\runtime\node.exe"; Comment: "Start SIZH IT Solution and open the dashboard"
@@ -120,20 +126,102 @@ begin
   Result := SecretsWereMissing;
 end;
 
+const
+  { Outside both program folders and outside every cleanup rule below: nothing in this script ever deletes it. }
+  BackupRoot = '{localappdata}\SIZH IT Solution Data Backups';
+
+function OldInstallDir: String;
+var
+  Dir: String;
+begin
+  Dir := '';
+  if not RegQueryStringValue(HKLM64, OldMachineKey, 'InstallLocation', Dir) then
+    RegQueryStringValue(HKLM32, OldMachineKey, 'InstallLocation', Dir);
+  if Dir = '' then Dir := ExpandConstant('{commonpf}\SimGateway');
+  Result := RemoveBackslash(Dir);
+end;
+
+function ResultText(FileName: String): String;
+var
+  S: AnsiString;
+begin
+  S := '';
+  if FileExists(FileName) then LoadStringFromFile(FileName, S);
+  Result := S;
+end;
+
+{ Make and VERIFY a copy of the customer's data before the older version's uninstaller (which offers to delete it) can be run. It uses the
+  older install's own Node and database library, so nothing extra has to be shipped. Returns True only for a verified copy (or when there is
+  no data at all). On any problem nothing was changed and the customer is told not to uninstall. }
+function ProtectDataOfOlderInstall: Boolean;
+var
+  OldDir, Node, Tool, ResFile: String;
+  Code: Integer;
+begin
+  Result := False;
+  OldDir := OldInstallDir;
+  Node := OldDir + '\runtime\node.exe';
+  if not FileExists(Node) then begin
+    MsgBox('Setup could not find the older version''s program files (' + OldDir + '), so it cannot make a safety copy of your data.' + #13#10#13#10 +
+      'Your data has NOT been changed. Please do NOT uninstall the older version yet; contact support.', mbError, MB_OK);
+    exit;
+  end;
+  if MsgBox('An earlier version of this product is installed for all users on this computer.' + #13#10#13#10 +
+    'This version installs just for you and needs no administrator rights. Before anything is removed, setup will first make a verified SAFETY COPY of your data ' +
+    '(call history, settings, prompts, recordings, saved API keys and the key that protects them) in:' + #13#10 + ExpandConstant(BackupRoot) + #13#10#13#10 +
+    'This can take a few minutes. Continue?', mbInformation, MB_OKCANCEL) = IDCANCEL then exit;
+  ExtractTemporaryFile('customer-data.cjs');
+  Tool := ExpandConstant('{tmp}\customer-data.cjs');
+  ResFile := ExpandConstant('{tmp}\backup-result.json');
+  if not Exec(Node, '"' + Tool + '" backup --data "' + ExpandConstant(DataDir) + '" --secrets "' + ExpandConstant('{commonappdata}\SimGatewaySecrets') + '" --out "' + ExpandConstant(BackupRoot) +
+    '" --old-app "' + OldDir + '" --result "' + ResFile + '"', '', SW_HIDE, ewWaitUntilTerminated, Code) then Code := 40;
+  case Code of
+    0, 10: Result := True;
+    20: MsgBox('The key that protects your saved API keys cannot be read by this Windows account.' + #13#10#13#10 +
+        'Sign in with the Windows account that used the product and run setup again. Nothing was changed. Please do NOT uninstall the older version yet.', mbError, MB_OK);
+    30: MsgBox('There is not enough free disk space for a safety copy of your data.' + #13#10#13#10 +
+        'Free some space and run setup again. Nothing was changed. Please do NOT uninstall the older version yet.' + #13#10#13#10 + ResultText(ResFile), mbError, MB_OK);
+  else
+    MsgBox('The safety copy of your data could not be completed and verified.' + #13#10#13#10 +
+      'Nothing was changed. Please do NOT uninstall the older version. Details: ' + ResultText(ResFile), mbError, MB_OK);
+  end;
+end;
+
 function InitializeSetup: Boolean;
 begin
   Result := True;
   DataWasMissing := not DirExists(ExpandConstant(DataDir));
   SecretsWereMissing := not DirExists(ExpandConstant('{commonappdata}\SimGatewaySecrets'));
   { An all-users install (made by the earlier, administrator-level setup) is registered under HKLM. Installing beside it would leave two
-    copies fighting over one modem and one data folder, and replacing it needs administrator rights, so setup stops and says what to do. }
+    copies fighting over one modem and one data folder, and replacing it needs administrator rights, so setup stops and says what to do,
+    but only AFTER the customer's data has been copied and the copy verified. }
   if RegKeyExists(HKLM64, OldMachineKey) or RegKeyExists(HKLM32, OldMachineKey) then begin
-    MsgBox('An earlier version of this product is installed for all users on this computer.' + #13#10#13#10 +
-      'Please remove it first: open Windows Settings > Apps > Installed apps, choose SIZH IT Solution (or SIM Gateway) and click Uninstall. ' +
-      'When it asks whether to delete your data, choose NO. Your call history, settings, prompts and saved keys are then kept.' + #13#10#13#10 +
-      'Then run this setup again. This version installs just for you and does not need administrator rights.', mbInformation, MB_OK);
     Result := False;
+    if ProtectDataOfOlderInstall then
+      MsgBox('Your data is safe: a verified copy was made in ' + ExpandConstant(BackupRoot) + '.' + #13#10#13#10 +
+        'Now remove the older version: open Windows Settings > Apps > Installed apps, choose SIZH IT Solution (or SIM Gateway) and click Uninstall.' + #13#10 +
+        'The uninstaller will ask whether to delete your data. Choose NO. If you choose Yes by mistake, nothing is lost: run this setup again and it restores your data from the safety copy.' + #13#10#13#10 +
+        'Then run this setup again.', mbInformation, MB_OK);
   end;
+end;
+
+procedure RestoreCustomerData;
+var
+  Code: Integer;
+  ResFile, Text: String;
+begin
+  { After installing and BEFORE the product starts: put back only what is missing (for example after the older uninstaller deleted the data).
+    It never overwrites existing data, never makes an encryption key, and restores the key only for the same Windows account. }
+  if not DirExists(ExpandConstant(BackupRoot)) then exit;
+  ResFile := ExpandConstant('{tmp}\restore-result.json');
+  if not Exec(ExpandConstant('{app}\runtime\node.exe'), '"' + ExpandConstant('{app}\migrate\customer-data.cjs') + '" restore --data "' + ExpandConstant(DataDir) + '" --secrets "' +
+    ExpandConstant('{commonappdata}\SimGatewaySecrets') + '" --out "' + ExpandConstant(BackupRoot) + '" --result "' + ResFile + '"', '', SW_HIDE, ewWaitUntilTerminated, Code) then Code := 60;
+  Text := ResultText(ResFile);
+  if Code <> 0 then
+    MsgBox('Setup could not restore all of your data from the safety copy in ' + ExpandConstant(BackupRoot) + '. The safety copy was not changed and nothing was overwritten.' + #13#10#13#10 +
+      'Details: ' + Text, mbError, MB_OK)
+  else if Pos('Restored from', Text) > 0 then
+    MsgBox('Your data was restored from the safety copy in ' + ExpandConstant(BackupRoot) + '. Nothing that already existed was overwritten.', mbInformation, MB_OK);
 end;
 
 function StopRunningProduct: Boolean;
@@ -194,7 +282,10 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssPostInstall then CheckModemDriver;
+  if CurStep = ssPostInstall then begin
+    RestoreCustomerData;
+    CheckModemDriver;
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
