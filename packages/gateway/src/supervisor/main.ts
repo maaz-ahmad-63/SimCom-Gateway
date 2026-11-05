@@ -6,6 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildSpecs, ensureConfigFile, parseEnvFile, preflight, resolveLayout } from './launcher.js';
 import { provisionMasterKey, secretsStatus } from './master-key.js';
+import { collectFailure } from './child-output.js';
+import { spawnWithStderrFile } from './spawn-service.js';
 import { acquireSupervisorLock, ServiceSupervisor, startStatusServer, SupervisorLockError, TokenRoute } from './supervisor.js';
 import { resolveUpdateUrl } from './update/config.js';
 import { UpdateError } from './update/manifest.js';
@@ -78,8 +80,13 @@ async function main(): Promise<void> {
     });
   // The fourth stdio slot is a message channel: it is how a service is asked to finish and exit on Windows, where a signal is an instant kill.
   const run = (s: typeof specs.gateway) => spawn(s.command, s.args, { cwd: s.cwd, env: s.env as NodeJS.ProcessEnv, stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true });
+  // The dashboard explains a failed start only on its standard error ("Cannot find module …"). It is written to a file (never a pipe,
+  // which could block or break it), and on an unexpected exit the supervisor logs a sanitized summary of it. The gateway keeps its own
+  // log files and is started exactly as before.
+  const dashboardErr = path.join(layout.dataDir, 'logs', 'dashboard-stderr.log');
+  const runDashboard = (s: typeof specs.dashboard) => spawnWithStderrFile(s, dashboardErr);
   const gateway = new ServiceSupervisor(specs.gateway, { spawn: run as never, probe, log });
-  const dashboard = new ServiceSupervisor(specs.dashboard, { spawn: run as never, log, hungAfterMs: 10 * 60_000 });
+  const dashboard = new ServiceSupervisor(specs.dashboard, { spawn: runDashboard as never, log, hungAfterMs: 10 * 60_000, diagnose: () => collectFailure(dashboardErr) });
   const statusPort = Number(process.env.SIMGW_STATUS_PORT) || 4010;
   const token = crypto.randomBytes(24).toString('hex');
   const tokenFile = path.join(layout.dataDir, 'supervisor.token');

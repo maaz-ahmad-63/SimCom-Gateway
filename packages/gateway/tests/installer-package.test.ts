@@ -194,3 +194,21 @@ describe('SIZH IT Solution branding of the installer', () => {
     expect(customer).not.toMatch(/SIM Gateway|SIM7600/);
   });
 });
+
+describe('the packaging build guards the dashboard start', () => {
+  const b = read('installer/build-package.ps1');
+  it('refuses to build from a tree whose node_modules is a junction or link (Next.js would leave the dashboard dependencies out)', () => {
+    expect(b).toMatch(/\$item\.LinkType\) \{ throw/);
+    for (const nm of ["'node_modules'", "'packages\\dashboard\\node_modules'"]) expect(b).toContain(nm);
+    expect(b.indexOf('every node_modules must be a real folder')).toBeLessThan(b.indexOf("Step 'Clean staging folder"));
+  });
+  it('checks, with the bundled Node, that the packaged dashboard resolves next, react and react-dom', () => {
+    expect(b).toMatch(/require\.resolve\(m\)/);
+    expect(b).toContain("['next', 'react', 'react-dom']");
+  });
+  it('really starts the packaged dashboard and fails the build unless it answers over HTTP', () => {
+    expect(b).toMatch(/Start-Process -FilePath \$bundledNode -ArgumentList 'server\.js' -WorkingDirectory \$dashDir/);
+    expect(b).toMatch(/if \(-not \$answered\) \{[\s\S]*throw/);
+    expect(b).toMatch(/Stop-Process -Id \$proc\.Id/);
+  });
+});

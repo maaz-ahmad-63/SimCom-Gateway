@@ -36,6 +36,18 @@ function Run([string]$exe, [string[]]$a, [string]$cwd = $Root, [hashtable]$env =
 $version = (Get-Content (Join-Path $Root 'package.json') -Raw | ConvertFrom-Json).version
 Step "Building SIZH IT Solution $version"
 
+Step 'Check the build tree: every node_modules must be a real folder, not a link'
+# Next.js copies the dashboard's runtime dependencies (next, react, ...) into its self-contained folder by tracing which files it loads. When
+# node_modules is a junction or symbolic link (for example a git worktree borrowing another checkout's node_modules), those files resolve to a
+# path OUTSIDE this checkout and are silently left out. The packaged dashboard then stops at once with "Cannot find module 'next'" (exit 1).
+foreach ($nm in 'node_modules', 'packages\dashboard\node_modules', 'packages\gateway\node_modules', 'packages\shared\node_modules') {
+  $p = Join-Path $Root $nm
+  if (Test-Path $p) {
+    $item = Get-Item -LiteralPath $p -Force
+    if ($item.LinkType) { throw "$nm is a $($item.LinkType) (to $($item.Target)). Build from a checkout with its own 'npm install': a linked node_modules makes the packaged dashboard miss its dependencies. Nothing was packaged." }
+  }
+}
+
 Step 'Clean staging folder (installer\stage only)'
 if (Test-Path $Stage) { Remove-Item -LiteralPath $Stage -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $App, $Out | Out-Null
@@ -109,6 +121,50 @@ $mustExist = 'runtime\node.exe', 'SimGateway.js', 'check-modem-driver.ps1', 'gat
 $missing = $mustExist | Where-Object { -not (Test-Path (Join-Path $App $_)) }
 if ($missing) { $missing | ForEach-Object { Write-Host "  missing: $_" -ForegroundColor Red }; throw 'The package is incomplete. Nothing was packaged.' }
 Write-Host '  complete' -ForegroundColor Green
+
+Step 'Check the packaged dashboard: its runtime dependencies resolve, and it really starts and answers'
+$dashDir = Join-Path $App 'dashboard\packages\dashboard'
+$bundledNode = Join-Path $App 'runtime\node.exe'
+# The same resolution the dashboard does at start, from its own folder, with the bundled Node (not this machine's).
+Push-Location $dashDir
+try {
+  & $bundledNode -e "for (const m of ['next', 'react', 'react-dom']) { try { require.resolve(m) } catch { console.error('missing: ' + m); process.exitCode = 3 } }"
+  $resolved = $LASTEXITCODE
+} finally { Pop-Location }
+if ($resolved -ne 0) { throw 'The packaged dashboard cannot load its own dependencies (see "missing:" above). The installed dashboard would stop at start with exit code 1. Nothing was packaged.' }
+$smokePort = 39871
+while (Get-NetTCPConnection -LocalPort $smokePort -State Listen -ErrorAction SilentlyContinue) { $smokePort++ }
+$smokeErr = Join-Path $Stage 'dashboard-smoke.err'
+$smokeOut = Join-Path $Stage 'dashboard-smoke.out'
+$hadCache = Test-Path (Join-Path $dashDir '.next-package\cache')
+$saved = @{}; foreach ($k in 'PORT', 'HOSTNAME', 'NODE_ENV') { $saved[$k] = [Environment]::GetEnvironmentVariable($k) }
+[Environment]::SetEnvironmentVariable('PORT', "$smokePort"); [Environment]::SetEnvironmentVariable('HOSTNAME', '127.0.0.1'); [Environment]::SetEnvironmentVariable('NODE_ENV', 'production')
+try {
+  $proc = Start-Process -FilePath $bundledNode -ArgumentList 'server.js' -WorkingDirectory $dashDir -PassThru -WindowStyle Hidden -RedirectStandardError $smokeErr -RedirectStandardOutput $smokeOut
+} finally { foreach ($k in $saved.Keys) { [Environment]::SetEnvironmentVariable($k, $saved[$k]) } }
+$answered = $false
+try {
+  $deadline = (Get-Date).AddSeconds(60)
+  while ((Get-Date) -lt $deadline -and -not $proc.HasExited) {
+    try {
+      $r = Invoke-WebRequest -Uri "http://127.0.0.1:$smokePort/" -UseBasicParsing -MaximumRedirection 0 -TimeoutSec 5 -ErrorAction Stop
+      if ($r.StatusCode -lt 500) { $answered = $true; break }
+    } catch {
+      $code = $_.Exception.Response.StatusCode.value__
+      if ($code -and $code -lt 500) { $answered = $true; break }
+    }
+    Start-Sleep -Milliseconds 500
+  }
+} finally {
+  if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+}
+if (-not $hadCache) { Remove-Item -LiteralPath (Join-Path $dashDir '.next-package\cache') -Recurse -Force -ErrorAction SilentlyContinue }
+if (-not $answered) {
+  $why = if (Test-Path $smokeErr) { (Get-Content $smokeErr -Tail 15) -join "`n" } else { '' }
+  throw "The packaged dashboard did not start and answer on port $smokePort (exit code $(if ($proc.HasExited) { $proc.ExitCode } else { 'none: no answer in 60 s' })).`n$why`nNothing was packaged."
+}
+Remove-Item -LiteralPath $smokeErr, $smokeOut -Force -ErrorAction SilentlyContinue
+Write-Host "  the packaged dashboard started with the bundled Node and answered on port $smokePort" -ForegroundColor Green
 
 Step 'Safety check: nothing private may be in the package'
 $bad = @()

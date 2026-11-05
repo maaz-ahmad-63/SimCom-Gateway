@@ -33,6 +33,8 @@ export interface ServiceStatus {
   lastExit: { code: number | null; signal: string | null; at: string } | null;
   nextRestartAt: string | null;
   message: string;
+  /** The service's own explanation of its last failure (sanitized), when it gave one. */
+  lastError: string | null;
 }
 
 /** The part of a child process the supervisor needs, so tests can supply a fake. */
@@ -64,6 +66,8 @@ export interface SupervisorDeps {
   probeEveryMs?: number;
   /** How long a service may stay unresponsive before it is stopped. Long, because it may be in the middle of a call. */
   hungAfterMs?: number;
+  /** After an unexpected exit: the service's own explanation (already sanitized), e.g. "Error: Cannot find module 'next'". */
+  diagnose?: () => string | null;
 }
 
 const DEFAULT_BACKOFF = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 60_000];
@@ -78,6 +82,7 @@ export class ServiceSupervisor {
   private lastExit: ServiceStatus['lastExit'] = null;
   private nextRestartAt: number | null = null;
   private message = 'Not started';
+  private lastError: string | null = null;
   private restartTimer: unknown = null;
   private probeTimer: unknown = null;
   private unresponsiveSince: number | null = null;
@@ -113,6 +118,7 @@ export class ServiceSupervisor {
       lastExit: this.lastExit,
       nextRestartAt: this.nextRestartAt ? new Date(this.nextRestartAt).toISOString() : null,
       message: this.message,
+      lastError: this.lastError,
     };
   }
 
@@ -180,10 +186,18 @@ export class ServiceSupervisor {
     this.crashes = this.crashes.filter((t) => at - t <= (this.deps.windowMs ?? 600_000));
     this.crashes.push(at);
     this.consecutive += 1;
-    this.log('warn', `exited (code ${code ?? 'none'}, signal ${signal ?? 'none'})${why ? `: ${why}` : ''}`);
+    let detail: string | null = null;
+    try {
+      detail = this.deps.diagnose?.() ?? null;
+    } catch {
+      detail = null;
+    }
+    this.lastError = why ?? detail ?? this.lastError;
+    const reason = why ?? detail;
+    this.log('warn', `exited (code ${code ?? 'none'}, signal ${signal ?? 'none'})${reason ? `: ${reason}` : ''}`);
     if (this.crashes.length >= (this.deps.maxCrashes ?? 5)) {
       this.state = 'failed';
-      this.message = `Stopped after ${this.crashes.length} crashes in ${Math.round((this.deps.windowMs ?? 600_000) / 60_000)} minutes. It is not restarted again automatically.`;
+      this.message = `Stopped after ${this.crashes.length} crashes in ${Math.round((this.deps.windowMs ?? 600_000) / 60_000)} minutes. It is not restarted again automatically.${this.lastError ? ` Last error: ${this.lastError}` : ''}`;
       this.nextRestartAt = null;
       this.log('error', this.message);
       return;
