@@ -12,11 +12,21 @@
 //          The copy goes to a folder outside both program folders. It is built as "<name>.partial", every file is hashed twice
 //          (source while copying, copy afterwards), the database is checked again, and only then is it renamed to its final name with a
 //          COMPLETE marker. Nothing in the data or secrets folders is changed, and nothing is ever deleted except this run's own .partial.
-// restore  After the new install and BEFORE the product starts: puts back only what is missing. It never overwrites an existing file or
-//          database, never makes a key, and refuses to restore the key for a different Windows account.
+// restore  After the new install and BEFORE the product starts: puts back only what is missing, taking each item from the NEWEST complete,
+//          verified copy that still has it (older copies fill what newer ones lack). It never overwrites an existing file or database,
+//          never makes a key, verifies every file's hash first, ignores unfinished or altered copies, and refuses to restore the key for a
+//          different Windows account.
+//
+// SUPPORTED SCOPE: customer data in %ProgramData%\SimGateway and the key in %ProgramData%\SimGatewaySecrets, plus a key kept inside
+// config\gateway.env (it is copied with that file). Anything else is REFUSED (exit 70), never silently left out:
+//   - SIMGW_DATA_DIR / SIMGW_SECRETS_DIR pointing anywhere else (process, user or machine environment)
+//   - SQLITE_DB_PATH, CALL_RECORDING_DIR, AI_REGISTRY_DIR, AI_KNOWLEDGE_DIR, AI_SYSTEM_PROMPT_FILE set (environment or gateway.env) to a
+//     place outside the data folder, to a relative path, or to something the copy skips (logs, audio-dumps, updates)
+//   - AI_SECRETS_MASTER_KEY set as a Windows environment variable (the key is then in no file this tool can copy)
 //
 // Exit codes: 0 ok, 10 nothing to protect (no data folder), 20 the encryption key cannot be read by this account,
-//             30 not enough free disk space, 40 the copy failed, 50 verification failed, 60 restore problem (see message), 2 usage.
+//             30 not enough free disk space, 40 the copy failed, 50 verification failed, 60 restore problem (see message),
+//             70 unsupported configuration: customer data (or the key) lives where this tool does not copy it, 2 usage.
 
 const crypto = require('node:crypto');
 const cp = require('node:child_process');
@@ -29,6 +39,93 @@ const DB_NAME = 'gateway.sqlite';
 // Not customer data: regenerated or recreated by the product.
 const SKIP_TOP = new Set(['logs', 'audio-dumps', 'updates', 'supervisor.lock', 'supervisor.token', 'supervisor-status.json']);
 const isDbFile = (n) => n === DB_NAME || n === `${DB_NAME}-wal` || n === `${DB_NAME}-shm`;
+
+// Settings that name where customer data lives. AUDIO_DUMP_DIRECTORY and LOG_DIR are diagnostics, not customer data, and are ignored.
+const PATH_VARS = { SQLITE_DB_PATH: 'database file', CALL_RECORDING_DIR: 'recordings folder', AI_REGISTRY_DIR: 'model registry folder', AI_KNOWLEDGE_DIR: 'knowledge folder', AI_SYSTEM_PROMPT_FILE: 'prompt file' };
+
+function readRegistryEnv() {
+  if (process.platform !== 'win32') return {};
+  const reg = path.join(process.env.SystemRoot || 'C:/Windows', 'System32', 'reg.exe');
+  const out = {};
+  // machine first, then user: the same order Windows uses (the user's value wins)
+  for (const key of ['HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment', 'HKCU\\Environment']) {
+    let text = '';
+    try {
+      text = cp.execFileSync(reg, ['query', key], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      continue;
+    }
+    for (const line of text.split(/\r?\n/)) {
+      const m = /^\s+(\S+)\s+REG_(?:EXPAND_)?SZ\s+(.*)$/.exec(line);
+      if (m) out[m[1].toUpperCase()] = m[2].trim();
+    }
+  }
+  return out;
+}
+
+function parseEnvFile(text) {
+  const out = {};
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq < 1) continue;
+    const key = line.slice(0, eq).trim();
+    if (/^[A-Z][A-Z0-9_]*$/.test(key)) out[key] = line.slice(eq + 1).trim().replace(/^"(.*)"$/, '$1');
+  }
+  return out;
+}
+
+const norm = (p) => path.resolve(p).toLowerCase().replace(/[\\/]+$/, '');
+const expandPercent = (v, env) => v.replace(/%([^%]+)%/g, (m, n) => env[n.toUpperCase()] ?? m);
+
+/**
+ * Every way this installation can keep customer data (or its key) where the safety copy does not reach. Returns plain-English reasons;
+ * an empty list means everything is inside the two standard folders. Values of secrets are never included.
+ */
+function findUnsupportedLocations(opts, deps) {
+  const { dataDir, secretsDir } = opts;
+  const env = { ...deps.registryEnv() };
+  for (const [k, v] of Object.entries(process.env)) env[k.toUpperCase()] = v;
+  let file = {};
+  try {
+    file = parseEnvFile(fs.readFileSync(path.join(dataDir, 'config', 'gateway.env'), 'utf8'));
+  } catch {
+    /* no configuration file: nothing to inspect there */
+  }
+  const problems = [];
+  const dataRoot = norm(dataDir);
+
+  for (const [name, expected] of [['SIMGW_DATA_DIR', dataDir], ['SIMGW_SECRETS_DIR', secretsDir]]) {
+    const v = (env[name] || '').trim();
+    if (!v) continue;
+    const x = expandPercent(v, env);
+    if (/%/.test(x) || !path.isAbsolute(x) || norm(x) !== norm(expected)) problems.push(`${name} is set (to ${v}), so this installation keeps ${name === 'SIMGW_DATA_DIR' ? 'its data' : 'its encryption key'} somewhere other than the standard folder.`);
+  }
+  for (const [source, values] of [['the Windows environment', env], ['config\\gateway.env', file]]) {
+    for (const [name, what] of Object.entries(PATH_VARS)) {
+      const raw = (values[name] || '').trim();
+      if (!raw) continue;
+      const x = expandPercent(raw, env);
+      let ok = false;
+      if (!/%/.test(x) && path.isAbsolute(x)) {
+        if (name === 'SQLITE_DB_PATH') ok = norm(x) === norm(path.join(dataDir, DB_NAME));
+        else {
+          const rel = path.relative(dataRoot, path.resolve(x));
+          const first = rel.split(path.sep)[0];
+          ok = !rel.startsWith('..') && !path.isAbsolute(rel) && !SKIP_TOP.has(first) && !isDbFile(first);
+        }
+      }
+      if (!ok) problems.push(`${name} is set in ${source} (to ${raw}): the ${what} is outside the standard data folder, or its place cannot be determined.`);
+    }
+  }
+  if ((env.AI_SECRETS_MASTER_KEY || '').trim()) problems.push('AI_SECRETS_MASTER_KEY is set as a Windows environment variable, so the key that protects the saved API keys is not in any file that can be copied (it is not lost by uninstalling, but it is not protected by this copy either).');
+  return problems;
+}
+
+function unsupportedMessage(problems, action) {
+  return `This installation cannot be ${action === 'restore' ? 'restored' : 'migrated'} automatically, because customer data or the encryption key is kept where the safety copy does not reach:\n- ${problems.join('\n- ')}\nThe safety copy covers only the standard folders (%ProgramData%\\SimGateway and %ProgramData%\\SimGatewaySecrets). Nothing was changed. Do NOT uninstall the older version; contact support.`;
+}
 
 class MigrationError extends Error {
   constructor(code, message) {
@@ -102,6 +199,7 @@ const defaultDeps = {
     }
     throw new MigrationError(40, `The database library of the installed product could not be loaded (${last && last.message}).`);
   },
+  registryEnv: readRegistryEnv,
   afterCopy: () => undefined, // test seam: runs after a file was copied, before verification
   log: () => undefined,
 };
@@ -122,6 +220,9 @@ async function backup(opts, over = {}) {
   const { dataDir, secretsDir, outRoot, oldAppDir } = opts;
   const dbFile = path.join(dataDir, DB_NAME);
   const keyFile = path.join(secretsDir, KEY_FILE);
+  // Before anything else (even before "there is nothing to protect"): data that lives elsewhere must never be reported as protected.
+  const unsupported = findUnsupportedLocations(opts, deps);
+  if (unsupported.length > 0) return { code: 70, message: unsupportedMessage(unsupported, 'backup'), problems: unsupported };
   if (!fs.existsSync(dataDir) && !fs.existsSync(secretsDir)) return { code: 10, message: 'There is no customer data folder, so there is nothing to protect.' };
 
   // 1. The key must be readable by THIS account. If it is not, the data cannot be used by the new install either: stop, and never invent a new key.
@@ -239,66 +340,117 @@ function sameAccount(was, now) {
   return Boolean(was.name && now.name && was.name.toLowerCase() === now.name.toLowerCase());
 }
 
-function latestBackup(outRoot) {
-  if (!fs.existsSync(outRoot)) return null;
+/** Every finished copy that passes its own checks, newest first, and the ones that were turned away (with the reason). */
+function completeBackups(outRoot) {
+  const valid = [];
+  const rejected = [];
+  if (!fs.existsSync(outRoot)) return { valid, rejected };
+  // only finished names: an unfinished "*.partial" never matches, even if it contains a COMPLETE marker
   const names = fs.readdirSync(outRoot).filter((n) => /^migration-\d{8}-\d{6}$/.test(n)).sort().reverse();
   for (const n of names) {
     const d = path.join(outRoot, n);
-    if (fs.existsSync(path.join(d, 'COMPLETE')) && fs.existsSync(path.join(d, 'MANIFEST.json'))) return d;
+    try {
+      if (!fs.existsSync(path.join(d, 'COMPLETE')) || !fs.existsSync(path.join(d, 'MANIFEST.json'))) throw new Error('unfinished (no COMPLETE marker)');
+      if (fs.readFileSync(path.join(d, 'COMPLETE'), 'utf8') !== sha256File(path.join(d, 'MANIFEST.json'))) throw new Error('its manifest does not match the COMPLETE marker (changed or damaged)');
+      const manifest = JSON.parse(fs.readFileSync(path.join(d, 'MANIFEST.json'), 'utf8'));
+      if (!manifest || manifest.version !== 1 || !Array.isArray(manifest.files) || !Array.isArray(manifest.secrets)) throw new Error('not a valid manifest');
+      valid.push({ name: n, dir: d, manifest });
+    } catch (e) {
+      rejected.push(`${n}: ${e.message}`);
+    }
   }
-  return null;
+  return { valid, rejected };
 }
+
+function latestBackup(outRoot) {
+  const first = completeBackups(outRoot).valid[0];
+  return first ? first.dir : null;
+}
+
+/** Account-independent, traversal-free relative name (a hostile manifest cannot point outside the data folder). */
+const safeRel = (rel) => typeof rel === 'string' && rel !== '' && !path.isAbsolute(rel) && !/[:]/.test(rel) && !rel.split(/[\\/]/).some((seg) => seg === '..' || seg === '');
+const safeName = (n) => typeof n === 'string' && n !== '' && !/[\\/:]/.test(n) && n !== '..' && n !== '.';
 
 function restore(opts, over = {}) {
   const deps = { ...defaultDeps, ...over };
   const { dataDir, secretsDir, outRoot } = opts;
-  const dir = latestBackup(outRoot);
-  const report = { restored: [], kept: [], skipped: [] };
-  if (!dir) return { code: 0, message: 'There is no safety copy to restore from.', ...report };
-  let manifest;
-  try {
-    manifest = JSON.parse(fs.readFileSync(path.join(dir, 'MANIFEST.json'), 'utf8'));
-    if (fs.readFileSync(path.join(dir, 'COMPLETE'), 'utf8') !== sha256File(path.join(dir, 'MANIFEST.json'))) throw new Error('marker mismatch');
-  } catch {
-    return { code: 60, message: `The safety copy in ${dir} is incomplete or was changed, so nothing was restored from it.`, ...report };
+  const { valid, rejected } = completeBackups(outRoot);
+  const report = { restored: [], kept: [], skipped: [], rejected };
+  if (valid.length === 0) {
+    return rejected.length
+      ? { code: 60, message: `None of the safety copies in ${outRoot} is usable (${rejected.join('; ')}), so nothing was restored.`, ...report }
+      : { code: 0, message: 'There is no safety copy to restore from.', ...report };
   }
-  const putBack = (from, to, expectHash, label, protectKey) => {
-    if (fs.existsSync(to)) return void report.kept.push(label);
-    if (!fs.existsSync(from) || sha256File(from) !== expectHash) return void report.skipped.push(`${label} (the safety copy no longer matches its checksum)`);
+  const unsupported = findUnsupportedLocations(opts, deps);
+  if (unsupported.length > 0) return { code: 70, message: unsupportedMessage(unsupported, 'restore'), problems: unsupported, ...report };
+
+  // For every item, the list of copies that have it, newest first.
+  const items = new Map();
+  const offer = (id, label, dest, kind, candidate) => {
+    if (!items.has(id)) items.set(id, { label, dest, kind, candidates: [] });
+    items.get(id).candidates.push(candidate);
+  };
+  const liveDb = path.join(dataDir, DB_NAME);
+  for (const b of valid) {
+    if (b.manifest.db && /^[0-9a-f]{64}$/.test(b.manifest.db.sha256 || '')) offer('db', 'database', liveDb, 'db', { backup: b.name, from: path.join(b.dir, DB_NAME), hash: b.manifest.db.sha256 });
+    for (const f of b.manifest.files) {
+      if (!safeRel(f.rel) || isDbFile(f.rel)) report.skipped.push(`${String(f.rel)} (unsafe name in ${b.name})`);
+      else offer(`file:${f.rel}`, f.rel, path.join(dataDir, ...f.rel.split('/')), 'file', { backup: b.name, from: path.join(b.dir, 'data', ...f.rel.split('/')), hash: f.sha256 });
+    }
+    for (const sec of b.manifest.secrets) {
+      if (!safeName(sec.name)) report.skipped.push(`${String(sec.name)} (unsafe name in ${b.name})`);
+      else offer(`key:${sec.name}`, sec.name, path.join(secretsDir, sec.name), 'key', { backup: b.name, from: path.join(b.dir, 'secrets', sec.name), hash: sec.sha256, owner: b.manifest.user });
+    }
+  }
+
+  const place = (from, to, hash, label, protectKey) => {
     fs.mkdirSync(path.dirname(to), { recursive: true });
     const tmp = `${to}.restoring`;
     fs.copyFileSync(from, tmp);
     if (protectKey) deps.protect(tmp, false);
     fs.renameSync(tmp, to);
-    if (sha256File(to) !== expectHash) throw new Error(`${label} does not match after restoring`);
-    report.restored.push(label);
+    if (sha256File(to) !== hash) throw new Error(`${label} does not match after restoring`);
   };
   try {
-    // Database: only when there is none at all (also no leftover -wal), never over an existing one.
-    if (manifest.db) {
-      const live = path.join(dataDir, DB_NAME);
-      if (fs.existsSync(live) || fs.existsSync(`${live}-wal`)) report.kept.push('database');
-      else putBack(path.join(dir, DB_NAME), live, manifest.db.sha256, 'database');
-    }
-    for (const f of manifest.files) putBack(path.join(dir, 'data', ...f.rel.split('/')), path.join(dataDir, ...f.rel.split('/')), f.sha256, f.rel);
-    // Key: same Windows account as before, and only if there is none. A new key is NEVER made here.
-    for (const s of manifest.secrets) {
-      const me = deps.user();
-      if (!sameAccount(manifest.user, me)) {
-        report.skipped.push(`${s.name} (it belongs to ${manifest.user.name}; sign in with that account, then run setup again)`);
+    for (const it of items.values()) {
+      // Already there (live, or restored a moment ago from a newer copy): never overwritten.
+      if (it.kind === 'db' ? fs.existsSync(it.dest) || fs.existsSync(`${it.dest}-wal`) : fs.existsSync(it.dest)) {
+        report.kept.push(it.label);
         continue;
       }
-      fs.mkdirSync(secretsDir, { recursive: true });
-      putBack(path.join(dir, 'secrets', s.name), path.join(secretsDir, s.name), s.sha256, s.name, true);
+      const why = [];
+      let done = false;
+      for (const c of it.candidates) {
+        if (it.kind === 'key' && !sameAccount(c.owner, deps.user())) {
+          why.push(`it belongs to ${(c.owner && c.owner.name) || 'another account'}; sign in with that account, then run setup again`);
+          continue;
+        }
+        if (!/^[0-9a-f]{64}$/.test(c.hash || '') || !fs.existsSync(c.from) || sha256File(c.from) !== c.hash) {
+          why.push(`the copy in ${c.backup} no longer matches its checksum`);
+          continue;
+        }
+        place(c.from, it.dest, c.hash, it.label, it.kind === 'key');
+        report.restored.push(it.label);
+        done = true;
+        break;
+      }
+      if (!done) report.skipped.push(`${it.label} (${why.join('; ')})`);
     }
   } catch (e) {
-    return { code: 60, message: `Restoring from ${dir} stopped: ${e.message}`, ...report };
+    return { code: 60, message: `Restoring stopped: ${e.message}`, ...report };
   }
   const problems = report.skipped.length;
-  return { code: problems ? 60 : 0, message: problems ? `Some data could not be restored: ${report.skipped.join('; ')}. The safety copy is in ${dir}.` : report.restored.length ? `Restored from ${dir}: ${report.restored.length} item(s). Nothing existing was overwritten.` : 'Your existing data was kept; nothing needed restoring.', dir, ...report };
+  const note = rejected.length ? ` Unusable copies were ignored: ${rejected.join('; ')}.` : '';
+  const from = valid.length === 1 ? valid[0].dir : `${valid.length} safety copies in ${outRoot}`;
+  return {
+    code: problems ? 60 : 0,
+    message: (problems ? `Some data could not be restored: ${report.skipped.join('; ')}. The safety copies are in ${outRoot}.` : report.restored.length ? `Restored from ${from}: ${report.restored.length} item(s). Nothing existing was overwritten.` : 'Your existing data was kept; nothing needed restoring.') + note,
+    dir: valid[0].dir,
+    ...report,
+  };
 }
 
-module.exports = { backup, restore, verifyBackup, latestBackup, KEY_FILE, DB_NAME, MigrationError, sha256File };
+module.exports = { backup, restore, verifyBackup, latestBackup, completeBackups, findUnsupportedLocations, KEY_FILE, DB_NAME, MigrationError, sha256File };
 
 if (require.main === module) {
   const argv = process.argv.slice(2);
@@ -317,6 +469,7 @@ if (require.main === module) {
     if (arg('result')) {
       try {
         fs.writeFileSync(arg('result'), JSON.stringify(r));
+        fs.writeFileSync(`${arg('result')}.txt`, String(r.message || ''));
       } catch {
         /* the exit code still carries the outcome */
       }

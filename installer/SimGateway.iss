@@ -177,13 +177,15 @@ begin
     '" --old-app "' + OldDir + '" --result "' + ResFile + '"', '', SW_HIDE, ewWaitUntilTerminated, Code) then Code := 40;
   case Code of
     0, 10: Result := True;
+    70: MsgBox('Your installation keeps customer data (or the key that protects your saved API keys) outside the standard folders, so setup cannot protect it automatically.' + #13#10#13#10 +
+        'Setup has stopped. NOTHING was changed. Please do NOT uninstall the older version; contact support.' + #13#10#13#10 + ResultText(ResFile + '.txt'), mbError, MB_OK);
     20: MsgBox('The key that protects your saved API keys cannot be read by this Windows account.' + #13#10#13#10 +
         'Sign in with the Windows account that used the product and run setup again. Nothing was changed. Please do NOT uninstall the older version yet.', mbError, MB_OK);
     30: MsgBox('There is not enough free disk space for a safety copy of your data.' + #13#10#13#10 +
-        'Free some space and run setup again. Nothing was changed. Please do NOT uninstall the older version yet.' + #13#10#13#10 + ResultText(ResFile), mbError, MB_OK);
+        'Free some space and run setup again. Nothing was changed. Please do NOT uninstall the older version yet.' + #13#10#13#10 + ResultText(ResFile + '.txt'), mbError, MB_OK);
   else
     MsgBox('The safety copy of your data could not be completed and verified.' + #13#10#13#10 +
-      'Nothing was changed. Please do NOT uninstall the older version. Details: ' + ResultText(ResFile), mbError, MB_OK);
+      'Nothing was changed. Please do NOT uninstall the older version. Details: ' + ResultText(ResFile + '.txt'), mbError, MB_OK);
   end;
 end;
 
@@ -216,7 +218,7 @@ begin
   ResFile := ExpandConstant('{tmp}\restore-result.json');
   if not Exec(ExpandConstant('{app}\runtime\node.exe'), '"' + ExpandConstant('{app}\migrate\customer-data.cjs') + '" restore --data "' + ExpandConstant(DataDir) + '" --secrets "' +
     ExpandConstant('{commonappdata}\SimGatewaySecrets') + '" --out "' + ExpandConstant(BackupRoot) + '" --result "' + ResFile + '"', '', SW_HIDE, ewWaitUntilTerminated, Code) then Code := 60;
-  Text := ResultText(ResFile);
+  Text := ResultText(ResFile + '.txt');
   if Code <> 0 then
     MsgBox('Setup could not restore all of your data from the safety copy in ' + ExpandConstant(BackupRoot) + '. The safety copy was not changed and nothing was overwritten.' + #13#10#13#10 +
       'Details: ' + Text, mbError, MB_OK)
