@@ -81,8 +81,8 @@ export function ensureConfigFile(file: string): { created: boolean } {
     'MODEM_AUDIO_PORT=',
     'MODEM_AUTO_RECONNECT=true',
     'CORS_ORIGIN=http://127.0.0.1:3000',
-    '# Updates: the https address of latest.json (its signature is latest.json.sig). Placeholder until the publisher address is known.',
-    '# UPDATE_URL=https://updates.example.com/sizh-it-solution/latest.json',
+    '# Updates come from the project\'s public GitHub Releases by default. Set UPDATE_URL (the https address of latest.json) only to use another source.',
+    '# UPDATE_URL=',
     '',
   ].join('\n');
   fs.writeFileSync(file, body, { mode: 0o600 });

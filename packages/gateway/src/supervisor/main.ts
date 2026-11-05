@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { buildSpecs, ensureConfigFile, parseEnvFile, preflight, resolveLayout } from './launcher.js';
 import { provisionMasterKey, secretsStatus } from './master-key.js';
 import { acquireSupervisorLock, ServiceSupervisor, startStatusServer, SupervisorLockError, TokenRoute } from './supervisor.js';
+import { resolveUpdateUrl } from './update/config.js';
 import { UpdateError } from './update/manifest.js';
 import { callStateFrom, downloadTo, fetchBytes, launchRunnerFrom } from './update/real.js';
 import { UpdateService } from './update/service.js';
@@ -90,7 +91,7 @@ async function main(): Promise<void> {
   const keyFile = path.join(appDir, 'update', 'public-key.pem');
   const updates = new UpdateService(
     {
-      updateUrl: (process.env.SIMGW_UPDATE_URL || fileValues.UPDATE_URL || '').trim(),
+      updateUrl: resolveUpdateUrl(process.env, fileValues),
       publicKeyPem: fs.existsSync(keyFile) ? fs.readFileSync(keyFile, 'utf8') : null,
       currentVersion,
       appDir,

@@ -228,3 +228,19 @@ describe('downloading the application ZIP from GitHub', () => {
     expect(launched).toEqual([]);
   });
 });
+
+describe('the default update address', () => {
+  it('is the public GitHub Releases "latest" address of this repository, and the asset names match what the release tool publishes', async () => {
+    const { DEFAULT_UPDATE_URL, resolveUpdateUrl } = await import('../src/supervisor/update/config.js');
+    expect(DEFAULT_UPDATE_URL).toBe('https://github.com/maaz-ahmad-63/SimCom-Gateway/releases/latest/download/latest.json');
+    expect(path.basename(DEFAULT_UPDATE_URL)).toBe('latest.json'); // the release asset the tool writes
+    expect(fs.readdirSync(out)).toContain('latest.json.sig'); // the product asks for `${url}.sig`
+    expect(resolveUpdateUrl({}, {})).toBe(DEFAULT_UPDATE_URL);
+    expect(resolveUpdateUrl({}, { UPDATE_URL: '' })).toBe(DEFAULT_UPDATE_URL);
+  });
+  it('can be replaced in gateway.env or by the environment, the environment winning', async () => {
+    const { resolveUpdateUrl } = await import('../src/supervisor/update/config.js');
+    expect(resolveUpdateUrl({}, { UPDATE_URL: 'https://mirror.example.org/latest.json' })).toBe('https://mirror.example.org/latest.json');
+    expect(resolveUpdateUrl({ SIMGW_UPDATE_URL: 'https://test.example.org/latest.json' }, { UPDATE_URL: 'https://mirror.example.org/latest.json' })).toBe('https://test.example.org/latest.json');
+  });
+});
