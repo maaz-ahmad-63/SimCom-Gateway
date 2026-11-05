@@ -55,8 +55,10 @@ export const CHECK_LABELS: Record<string, string> = {
   call: 'Call active',
   'audio-format': 'Audio format configured',
   'inbound-wire': 'Caller audio arriving',
-  'inbound-audio': 'Caller audio confirmed intelligible',
-  'outbound-audio': 'Agent audio confirmed audible',
+  // With automatic verification these are TRANSPORT checks; intelligibility and audibility are reported per call
+  // (Call Audio Verification), never by these two lines.
+  'inbound-audio': 'Caller audio path ready',
+  'outbound-audio': 'Agent audio path ready',
 };
 
 export interface AudioHealth {

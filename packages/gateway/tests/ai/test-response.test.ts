@@ -90,8 +90,8 @@ describe('one-shot test response', () => {
     return { server, modem, source, sink, providers, events, commands, api, startCall, attachAndHear, post, endCall };
   }
 
-  it('answers the latest transcript once, with every stage reported, and verifies nothing', async () => {
-    const h = await harness();
+  it('answers the latest transcript once, with every stage reported, and verifies nothing (manual confirmation mode)', async () => {
+    const h = await harness({ env: { AI_AUDIO_AUTO_VERIFY: 'false' } });
     const call = await h.attachAndHear();
     const state = (await h.api('get', '/api/ai/state')).body;
     expect(state.testResponse).toMatchObject({ allowed: true, blockers: [], format: expect.stringMatching(/8000 Hz/) });

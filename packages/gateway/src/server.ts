@@ -1,3 +1,4 @@
+import { AudioVerificationStore } from './ai/audio-verification-store.js';
 import http from 'node:http';
 import path from 'node:path';
 import express, { Express } from 'express';
@@ -366,6 +367,7 @@ export function createGatewayServer(
     automationActivation: options.ai?.automationActivation,
     audioPortBusy: () => usbPcmVerifierRef.current?.isBusy === true,
     ivr: ivrOwnership,
+    audioVerificationStore: new AudioVerificationStore(db),
   });
   aiRuntimeRef.current = aiRuntime;
   // The IVR controller runs the menu for calls the IVR owns. Registering it changes nothing while the IVR is switched off (the default):
@@ -691,6 +693,7 @@ export function createGatewayServer(
     atPort: config.atPort,
     audioPort: config.audioPort,
     currentPorts,
+    audioVerification: aiRuntime.audioVerification,
   });
 
   let instanceLock: InstanceLock | null = null;

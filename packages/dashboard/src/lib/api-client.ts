@@ -1,3 +1,4 @@
+import type { AudioVerificationResponse, CallAudioVerification } from './audio-verification';
 import {
   AiAgentProfile,
   AiConversationReadiness,
@@ -322,6 +323,17 @@ export class GatewayApiClient {
 
   getAiState(): Promise<AiStateResponse> {
     return this.aiJson('/state', 'GET');
+  }
+  /** Automatic call-audio verification: whether it is on, the call in progress (or the last one), and recent calls. */
+  getAudioVerification(limit = 20): Promise<AudioVerificationResponse> {
+    return this.aiJson(`/audio-verification?limit=${encodeURIComponent(String(limit))}`, 'GET');
+  }
+  getCallAudioVerification(callId: string): Promise<CallAudioVerification> {
+    return this.aiJson(`/audio-verification/${encodeURIComponent(callId)}`, 'GET');
+  }
+  /** Diagnostic: arm the key-press test on a call in progress (a person asks the caller to press the key). */
+  armAudibilityKeyTest(callId: string, key = '1'): Promise<CallAudioVerification> {
+    return this.aiJson(`/audio-verification/${encodeURIComponent(callId)}/key-test`, 'POST', { key });
   }
   getAiCatalog(): Promise<AiCatalogResponse> {
     return this.aiJson('/catalog', 'GET');

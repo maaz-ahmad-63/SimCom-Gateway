@@ -184,8 +184,8 @@ describe('a campaign can START from an idle gateway (no call is up)', () => {
   it.each([
     ['automatic replies off (the agent would only transcribe)', { AI_AUTO_REPLIES: 'false' }, /Automatic replies is off/],
     ['automatic handling covers inbound calls only', { AI_AUTO_HANDLE: 'inbound' }, /Automatic handling must include outbound/],
-    ['outgoing audio never confirmed', { AI_AUDIO_OUTBOUND_VERIFIED: 'false' }, /Outgoing audio has not been confirmed/],
-    ['incoming audio never confirmed', { AI_AUDIO_INBOUND_VERIFIED: 'false' }, /Incoming audio has not been confirmed/],
+    ['outgoing audio never confirmed (manual confirmation mode)', { AI_AUDIO_AUTO_VERIFY: 'false', AI_AUDIO_OUTBOUND_VERIFIED: 'false' }, /Outgoing audio has not been confirmed/],
+    ['incoming audio never confirmed (manual confirmation mode)', { AI_AUDIO_AUTO_VERIFY: 'false', AI_AUDIO_INBOUND_VERIFIED: 'false' }, /Incoming audio has not been confirmed/],
     ['the speech-to-text key is missing', { DEEPGRAM_API_KEY: undefined }, /stt-key|provider-keys|not complete/],
     ['the AI is disabled', { AI_ENABLED: 'false' }, /not enabled/],
   ])('names the problem when %s, and refuses to start', async (_label, env, message) => {

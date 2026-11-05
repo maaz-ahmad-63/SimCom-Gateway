@@ -229,8 +229,8 @@ describe('IVR end to end', () => {
   });
 
   describe('when audio is not ready or breaks', () => {
-    it('outbound audio not confirmed: nothing is played, and with an AI that cannot answer the call is ended cleanly, with the reason', async () => {
-      const h = await harness({ env: { ...AUTO, AI_AUDIO_INBOUND_VERIFIED: 'true', AI_AUDIO_OUTBOUND_VERIFIED: 'false' } });
+    it('manual confirmation mode: outbound audio not confirmed: nothing is played, and with an AI that cannot answer the call is ended cleanly, with the reason', async () => {
+      const h = await harness({ env: { ...AUTO, AI_AUDIO_AUTO_VERIFY: 'false', AI_AUDIO_INBOUND_VERIFIED: 'true', AI_AUDIO_OUTBOUND_VERIFIED: 'false' } });
       await h.callOut();
       await vi.waitFor(() => expect(h.server.callManager.getCurrentCall()).toBeNull(), { timeout: 5000 });
       expect(h.bytesWritten()).toBe(0); // never wrote to an audio path nobody confirmed

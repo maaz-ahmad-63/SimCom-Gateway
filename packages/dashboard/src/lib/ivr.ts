@@ -321,7 +321,7 @@ export function readiness(input: ReadinessInput): { items: ReadinessItem[]; bloc
   if (!input.ai) items.push({ label: 'Outbound audio', tone: 'warn', detail: 'the AI readiness could not be read' });
   else if (!outbound) items.push({ label: 'Outbound audio', tone: 'warn', detail: 'no outbound-audio check was reported' });
   else if (outbound.status !== 'pass') block('Outbound audio', `${outbound.detail}. The IVR will not play audio nobody has confirmed is audible; confirm it on the AI page first`);
-  else items.push({ label: 'Outbound audio', tone: 'good', detail: 'confirmed audible, and the audio port accepts writes' });
+  else items.push({ label: 'Outbound audio', tone: 'good', detail: 'the audio path is ready (the audio port accepts writes); whether the caller hears it is verified per call' });
 
   items.push({ label: 'USB audio and key presses', tone: 'warn', detail: 'only checkable during a real call: the first test call confirms that audio flows and that each key reaches the option you expect' });
 

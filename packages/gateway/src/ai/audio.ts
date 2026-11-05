@@ -28,6 +28,8 @@ export interface PlayResult {
   /** Longest single write to the port, and writes slower than one frame (the port pushing back, not the loop stalling). */
   maxWriteMs?: number;
   slowWrites?: number;
+  /** Waits for late data during a streamed reply (each one a possible audible gap). Already counted by the paced player. */
+  underruns?: number;
 }
 
 export interface AgentAudioSink {

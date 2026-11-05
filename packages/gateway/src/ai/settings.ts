@@ -105,6 +105,8 @@ export const settingsPatchSchema = z
     /** Stream caller audio to Deepgram while they speak (the existing AI_STT_STREAMING switch, now settable here). */
     sttStreaming: z.boolean(),
     diagnosticRecording: z.boolean(),
+    /** Verify call audio automatically (AI_AUDIO_AUTO_VERIFY). On unless switched off. */
+    audioAutoVerify: z.boolean(),
     audioSampleRate: z.number().int().min(8000).max(48000).nullable(),
     autoHandle: z.enum(['off', 'inbound', 'outbound', 'all']),
     automation,
@@ -153,6 +155,7 @@ interface StoredSettings {
   showTranscripts?: boolean;
   sttStreaming?: boolean;
   diagnosticRecording?: boolean;
+  audioAutoVerify?: boolean;
   audioSampleRate?: number;
   agent?: Partial<AiAgentProfile> & DirectionAgentFields;
   autoHandle?: 'off' | 'inbound' | 'outbound' | 'all';
@@ -244,7 +247,7 @@ export class AiSettingsService {
       if (current.inboundEvidence && current.inboundEvidence.sampleRate === undefined) next.inboundEvidence = { ...current.inboundEvidence, sampleRate: previousRate };
     }
 
-    for (const key of ['mode', 'stt', 'llm', 'tts', 'ttsVoice', 'language', 'showTranscripts', 'sttStreaming', 'diagnosticRecording'] as const) {
+    for (const key of ['mode', 'stt', 'llm', 'tts', 'ttsVoice', 'language', 'showTranscripts', 'sttStreaming', 'diagnosticRecording', 'audioAutoVerify'] as const) {
       if (patch[key] !== undefined) (next as Record<string, unknown>)[key] = patch[key];
     }
     // Changing the provider without naming a voice must not keep a voice that belongs to the old one.
@@ -483,6 +486,7 @@ export class AiSettingsService {
       set('AI_VAD_RMS_THRESHOLD', p.vadRmsThreshold);
     }
     if (stored.autoHandle !== undefined) set('AI_AUTO_HANDLE', stored.autoHandle);
+    if (stored.audioAutoVerify !== undefined) set('AI_AUDIO_AUTO_VERIFY', stored.audioAutoVerify);
     const a = stored.automation;
     if (a) {
       set('AI_AUTO_ANSWER', a.autoAnswer);

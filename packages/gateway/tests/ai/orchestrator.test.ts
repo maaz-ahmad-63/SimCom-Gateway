@@ -127,8 +127,8 @@ describe('AI agent inside the gateway', () => {
     expect(h.sink.playCalls).toBe(0);
   });
 
-  it('refuses to arm until incoming and outgoing audio have been verified, and says why', async () => {
-    const h = await harness({ env: { AI_AUDIO_INBOUND_VERIFIED: undefined, AI_AUDIO_OUTBOUND_VERIFIED: undefined } });
+  it('manual confirmation mode: refuses to arm until incoming and outgoing audio have been verified, and says why', async () => {
+    const h = await harness({ env: { AI_AUDIO_AUTO_VERIFY: 'false', AI_AUDIO_INBOUND_VERIFIED: undefined, AI_AUDIO_OUTBOUND_VERIFIED: undefined } });
     const call = await h.startCall();
 
     const readiness = (await h.api('get', '/api/ai/readiness')).body;
@@ -196,8 +196,8 @@ describe('AI agent inside the gateway', () => {
     await vi.waitFor(() => expect(outbound.server.aiOrchestrator!.isAttached(call.id)).toBe(true), { timeout: 3000 });
   });
 
-  it('does not auto-attach while readiness fails, reports it only when the reason changes, and stops when the call ends', async () => {
-    const h = await harness({ env: { AI_AUTO_HANDLE: 'all', AI_AUDIO_INBOUND_VERIFIED: 'false' } });
+  it('manual confirmation mode: does not auto-attach while readiness fails, reports it only when the reason changes, and stops when the call ends', async () => {
+    const h = await harness({ env: { AI_AUDIO_AUTO_VERIFY: 'false', AI_AUTO_HANDLE: 'all', AI_AUDIO_INBOUND_VERIFIED: 'false' } });
     const call = await h.startCall();
     await sleep(600);
     const waiting = () => h.alerts.filter((a) => /AI agent waiting to attach/.test(a)).length;

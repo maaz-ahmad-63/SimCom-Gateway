@@ -33,8 +33,8 @@ describe('AI readiness check', () => {
     expect(readiness.ok).toBe(true);
   });
 
-  it('is not ready by default: nothing about this hardware has been verified', () => {
-    const readiness = build({ env: { AI_AUDIO_INBOUND_VERIFIED: undefined, AI_AUDIO_OUTBOUND_VERIFIED: undefined } });
+  it('manual confirmation mode: is not ready without the confirmations', () => {
+    const readiness = build({ env: { AI_AUDIO_AUTO_VERIFY: 'false', AI_AUDIO_INBOUND_VERIFIED: undefined, AI_AUDIO_OUTBOUND_VERIFIED: undefined } });
     expect(readiness.ok).toBe(false);
     expect(status('inbound-audio', readiness)).toBe('unverified');
     expect(status('outbound-audio', readiness)).toBe('unverified');
@@ -47,8 +47,8 @@ describe('AI readiness check', () => {
     expect(status('outbound-audio', build({ streaming: false }))).toBe('fail');
   });
 
-  it('does not let flowing bytes stand in for the verified flag', () => {
-    const readiness = build({ env: { AI_AUDIO_INBOUND_VERIFIED: undefined }, wire: 'flowing' });
+  it('manual confirmation mode: does not let flowing bytes stand in for the verified flag', () => {
+    const readiness = build({ env: { AI_AUDIO_AUTO_VERIFY: 'false', AI_AUDIO_INBOUND_VERIFIED: undefined }, wire: 'flowing' });
     expect(status('inbound-audio', readiness)).toBe('unverified');
     expect(readiness.ok).toBe(false);
   });
@@ -131,5 +131,38 @@ describe('AI readiness: a registration that could not be stopped', () => {
   it('keeps the plain wording for an ordinary unverified drop', () => {
     const check = wireCheck({ audio: { state: 'unverified', msSinceLastFrame: 100 }, lastDeactivation: { ok: true, at: 'x' } });
     expect(check.detail).toBe("the USB audio stream is 'unverified', not flowing");
+  });
+});
+
+describe('AI readiness with automatic call-audio verification (the default)', () => {
+  const none = { AI_AUDIO_INBOUND_VERIFIED: undefined, AI_AUDIO_OUTBOUND_VERIFIED: undefined };
+  it('is on by default and lets the agent speak once the transport is ready, without a person confirming anything', () => {
+    expect(loadAiConfig(aiEnv({})).config.audio.autoVerify).toBe(true);
+    const r = build({ env: none });
+    expect(status('inbound-audio', r)).toBe('pass');
+    expect(status('outbound-audio', r)).toBe('pass');
+    expect(r.ok).toBe(true);
+  });
+  it('says in the check itself that these are transport checks, never proof of intelligibility or hearing', () => {
+    const r = build({ env: none });
+    expect(r.checks.find((c) => c.name === 'inbound-audio')!.detail).toMatch(/transport ready.*verified automatically during this call/);
+    expect(r.checks.find((c) => c.name === 'outbound-audio')!.detail).toMatch(/a write is not proof of hearing/);
+  });
+  it('keeps every hardware and transport safety check: no call, a stalled wire or a port that is not streaming still block', () => {
+    expect(build({ env: none, call: null }).ok).toBe(false);
+    expect(status('inbound-audio', build({ env: none, call: null }))).toBe('unverified');
+    expect(status('inbound-audio', build({ env: none, wire: 'stalled' }))).toBe('fail');
+    expect(status('outbound-audio', build({ env: none, streaming: false }))).toBe('fail');
+    expect(build({ env: none, modemState: 'ERROR' }).ok).toBe(false);
+  });
+  it('a person\'s confirmation is not consulted while automatic verification is on (it can neither pass a broken stream nor is it required)', () => {
+    expect(status('inbound-audio', build({ env: { AI_AUDIO_INBOUND_VERIFIED: 'true' }, wire: 'stalled' }))).toBe('fail');
+    expect(status('outbound-audio', build({ env: { AI_AUDIO_OUTBOUND_VERIFIED: 'false' } }))).toBe('pass');
+  });
+  it('switched off, the manual confirmations are required again exactly as before', () => {
+    const r = build({ env: { AI_AUDIO_AUTO_VERIFY: 'false', ...none } });
+    expect(status('inbound-audio', r)).toBe('unverified');
+    expect(status('outbound-audio', r)).toBe('unverified');
+    expect(r.ok).toBe(false);
   });
 });

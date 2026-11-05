@@ -165,8 +165,38 @@ export function checkAiReadiness(input: ReadinessInput): AiReadiness {
     }
   }
 
+  // 8 + 9 with automatic verification (the default): the agent may speak once the TRANSPORT is ready. Intelligibility and remote
+  // audibility are judged per call from the call's own evidence (Call Audio Verification) and never assumed here; a person's
+  // confirmation is a diagnostic override and is not consulted.
+  if (config.audio.autoVerify) {
+    if (!audio) {
+      add('inbound-audio', 'fail', 'no audio adapter');
+      add('outbound-audio', 'fail', 'no audio adapter');
+    } else if (call?.state !== 'ACTIVE') {
+      add('inbound-audio', 'unverified', 'automatic verification: caller audio is checked during an active call');
+      add('outbound-audio', 'unverified', 'automatic verification: the audio port is checked during an active call');
+    } else {
+      add(
+        'inbound-audio',
+        usb?.audio.state === 'flowing' ? 'pass' : 'fail',
+        usb?.audio.state === 'flowing'
+          ? 'transport ready: caller audio bytes are flowing; whether the caller is intelligible is verified automatically during this call'
+          : `the caller audio stream is '${usb?.audio.state ?? 'unknown'}', not flowing`
+      );
+      add(
+        'outbound-audio',
+        audio.getStats().isStreaming ? 'pass' : 'fail',
+        audio.getStats().isStreaming
+          ? 'transport ready: the audio port accepts writes; delivery and remote audibility are verified separately per call (a write is not proof of hearing)'
+          : 'the audio port is not streaming'
+      );
+    }
+  }
+
   // 8. Incoming audio: evidence flag AND live wire state
-  if (!audio) {
+  if (config.audio.autoVerify) {
+    // handled above
+  } else if (!audio) {
     add('inbound-audio', 'fail', 'no audio adapter');
   } else if (!config.audio.inboundVerified) {
     add(
@@ -183,7 +213,9 @@ export function checkAiReadiness(input: ReadinessInput): AiReadiness {
   }
 
   // 9. Playback
-  if (!audio) {
+  if (config.audio.autoVerify) {
+    // handled above
+  } else if (!audio) {
     add('outbound-audio', 'fail', 'no audio adapter');
   } else if (!config.audio.outboundVerified) {
     add(

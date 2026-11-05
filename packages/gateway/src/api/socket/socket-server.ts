@@ -31,6 +31,8 @@ export interface SocketServerOptions {
   audioPort: string;
   /** The ports in use now (discovered or configured). */
   currentPorts?: () => { at: string; audio: string };
+  /** Automatic call-audio verification: every change is pushed as 'ai:audio-verification'. */
+  audioVerification?: { onUpdate(listener: (v: unknown) => void): () => void };
 }
 
 export class GatewaySocketServer {
@@ -174,6 +176,12 @@ export class GatewaySocketServer {
     // AI pipeline inspector events (already stripped of text unless the operator enabled transcripts)
     this.options.eventBus.on('ai:event', (event) => {
       this.io.emit('ai:event', event);
+    });
+
+    // Call-audio verification results (statuses, reasons and numeric evidence; never transcript text). Not in the shared typed
+    // event map yet, so it is emitted untyped.
+    this.options.audioVerification?.onUpdate((v) => {
+      (this.io as unknown as { emit(event: string, payload: unknown): boolean }).emit('ai:audio-verification', v);
     });
 
     // Audio adapter live VU meter / RMS events (throttled to 10Hz)

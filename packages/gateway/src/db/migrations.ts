@@ -1,3 +1,4 @@
+import { AUDIO_VERIFICATION_SCHEMA_SQL } from '../ai/audio-verification-store.js';
 import { Database as DatabaseType } from 'better-sqlite3';
 import { OPS_SCHEMA_SQL } from '../ops/schema.js';
 
@@ -408,6 +409,14 @@ CREATE INDEX IF NOT EXISTS idx_canao_campaign ON call_analysis_overrides(campaig
     up: (db: DatabaseType) => {
       // Additive: two new tables (alerts with their history, and one diagnosis per call). Nothing existing is changed.
       db.exec(OPS_SCHEMA_SQL);
+    },
+  },
+  {
+    version: 12,
+    name: '012_call_audio_verification',
+    up: (db: DatabaseType) => {
+      // Additive: one new table with the automatic call-audio verification result of each call. Nothing existing is changed.
+      db.exec(AUDIO_VERIFICATION_SCHEMA_SQL);
     },
   },
 ];

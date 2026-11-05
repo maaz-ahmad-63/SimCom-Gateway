@@ -104,8 +104,8 @@ describe('automatic attachment, state by state', () => {
     await vi.waitFor(() => expect(h.providers.llm.requests).toHaveLength(1), { timeout: 4000 });
   });
 
-  it('automatic replies ON but a confirmation missing: stays passive, never half-active, with the reason on the readiness list', async () => {
-    const h = await harness({ ...AUTO, AI_AUDIO_INBOUND_VERIFIED: 'true', AI_AUTO_REPLIES: 'true' }); // outbound not confirmed
+  it('manual confirmation mode: automatic replies ON but a confirmation missing: stays passive, never half-active, with the reason on the readiness list', async () => {
+    const h = await harness({ ...AUTO, AI_AUDIO_AUTO_VERIFY: 'false', AI_AUDIO_INBOUND_VERIFIED: 'true', AI_AUTO_REPLIES: 'true' }); // outbound not confirmed
     h.ring();
     h.ring();
     await vi.waitFor(() => expect(h.server.aiOrchestrator.getSessions()).toHaveLength(1), { timeout: 4000 });
@@ -117,8 +117,8 @@ describe('automatic attachment, state by state', () => {
     expect(readiness.passiveOk).toBe(true);
   });
 
-  it('arriving audio frames are not proof of speech: bytes alone never make it ready to reply', async () => {
-    const h = await harness({ ...AUTO, AI_AUTO_REPLIES: 'true' }); // nothing confirmed; USB audio flows
+  it('manual confirmation mode: arriving audio frames are not proof of speech: bytes alone never make it ready to reply', async () => {
+    const h = await harness({ ...AUTO, AI_AUDIO_AUTO_VERIFY: 'false', AI_AUTO_REPLIES: 'true' }); // nothing confirmed; USB audio flows
     h.ring();
     h.ring();
     await vi.waitFor(() => expect(h.server.aiOrchestrator.getSessions()).toHaveLength(1), { timeout: 4000 });

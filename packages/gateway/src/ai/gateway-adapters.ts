@@ -99,6 +99,7 @@ export class GatewayAudioSink implements AgentAudioSink {
       maxLateMs: Math.round(result.maxLateMs),
       maxWriteMs: Math.round(result.maxWriteMs),
       slowWrites: result.slowWrites,
+      underruns: result.underruns,
     };
   }
 
@@ -142,6 +143,7 @@ export class GatewayAudioSink implements AgentAudioSink {
       maxLateMs: Math.round(result.maxLateMs),
       maxWriteMs: Math.round(result.maxWriteMs),
       slowWrites: result.slowWrites,
+      underruns: 0,
     };
   }
 

@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import type { AiConversationPhase, AiInspectorEvent } from '@sim-gateway/shared';
 import { AgentAudioSink, AudioFormat, checkPcmBuffer, PlayResult } from './audio.js';
+import { countWords, detectHearingComplaint } from './call-audio-verifier.js';
 import { ChunkQueue } from './chunk-queue.js';
 import { AiConfig } from './config.js';
 import { assessUtterance, UtteranceAssessment } from './endpointer.js';
@@ -42,6 +43,15 @@ export interface TurnMetrics {
   lateFrames: number;
   /** Frames written later than the write-ahead could cover: an audible gap is possible (a subset of lateFrames in spirit). */
   riskFrames: number;
+  /** Agent audio bytes the audio adapter accepted for this turn (summed over its playbacks). Delivery to the modem only. */
+  bytesWritten?: number;
+  /** Underruns while streaming this turn's reply, as counted by the paced player. */
+  underruns?: number;
+  slowWrites?: number;
+  /** False when any playback of this turn was cut short; null when nothing was played. */
+  playbackCompleted?: boolean | null;
+  /** Why the first cut-short playback stopped ('not-written', 'aborted', 'call-ended', ...). */
+  playbackStoppedBy?: string | null;
   /**
    * What the caller waited: from the moment they stopped talking to the first reply audio written to the audio port.
    * Null when the endpointer supplied no end-of-speech time or no audio was written. A write is not a sound heard:
@@ -143,6 +153,12 @@ export interface TurnResult {
   cancelSource?: CancelSource;
   assessment?: UtteranceAssessment;
   transcriptChars?: number;
+  /** Words in the final transcript (a count; the text is only present when transcript logging is on). */
+  transcriptWords?: number;
+  /** The speech-to-text provider's confidence for the final transcript, when it reports one. */
+  sttConfidence?: number | null;
+  /** An in-memory phrase check found the caller saying they cannot hear the agent (the text is not kept). */
+  callerReportsNotHearing?: boolean;
   replyChars?: number;
   endRequested: boolean;
   metrics: TurnMetrics;
@@ -283,6 +299,11 @@ function notePlayback(metrics: TurnMetrics, played: PlayResult): void {
   metrics.riskFrames += played.riskFrames ?? 0;
   metrics.maxLateMs = Math.max(metrics.maxLateMs, played.maxLateMs ?? 0);
   metrics.maxWriteMs = Math.max(metrics.maxWriteMs, played.maxWriteMs ?? 0);
+  metrics.bytesWritten = (metrics.bytesWritten ?? 0) + played.bytesWritten;
+  metrics.underruns = (metrics.underruns ?? 0) + (played.underruns ?? 0);
+  metrics.slowWrites = (metrics.slowWrites ?? 0) + (played.slowWrites ?? 0);
+  metrics.playbackCompleted = (metrics.playbackCompleted ?? true) && played.completed;
+  if (!played.completed && !metrics.playbackStoppedBy) metrics.playbackStoppedBy = played.stoppedBy ?? 'unknown';
   if (played.bytesWritten > 0) metrics.marks.playbackDone = performance.now();
 }
 
@@ -318,6 +339,11 @@ const emptyMetrics = (utteranceMs: number): TurnMetrics => ({
   firstAudioMs: null,
   lateFrames: 0,
   riskFrames: 0,
+  bytesWritten: 0,
+  underruns: 0,
+  slowWrites: 0,
+  playbackCompleted: null,
+  playbackStoppedBy: null,
   perceivedFirstAudioMs: null,
   timeline: null,
   sttWaitedMs: null,
@@ -1164,9 +1190,12 @@ export class ConversationSession {
       metrics.marks.endpointed = timing.endpointedAt;
     }
     const cfg = this.config;
+    const sttFacts: { words?: number; confidence: number | null; complaint: boolean } = { confidence: null, complaint: false };
     const outcome = (partial: Partial<TurnResult> & { status: TurnStatus }, countFailure = false): TurnResult => {
       metrics.totalMs = performance.now() - started;
-      return this.finish({ turnId, endRequested: false, metrics, ...partial }, countFailure);
+      const facts =
+        sttFacts.words === undefined ? {} : { transcriptWords: sttFacts.words, sttConfidence: sttFacts.confidence, ...(sttFacts.complaint ? { callerReportsNotHearing: true } : {}) };
+      return this.finish({ turnId, endRequested: false, metrics, ...facts, ...partial }, countFailure);
     };
 
     // 1. Is this audio worth paying a provider for?
@@ -1278,6 +1307,7 @@ export class ConversationSession {
           if (hasSpeechContent(text) || assessment.decision !== 'ok') {
             streamed = text;
             streamOutcome = 'final';
+            sttFacts.confidence = typeof result.confidence === 'number' ? result.confidence : null;
           } else {
             streamReason = `the stream returned no words for audio that looks like speech (${finalize})`;
           }
@@ -1304,7 +1334,9 @@ export class ConversationSession {
         // No stream, or it failed or timed out: the batch provider transcribes the whole utterance.
         const started = hedge as { promise: Promise<SttResult> } | null;
         if (!started) this.totals.sttAudioSeconds += utteranceMs / 1000;
-        transcript = (await (started ? started.promise : this.providers.stt.transcribe(pcm, format, signal))).text.trim();
+        const batch = await (started ? started.promise : this.providers.stt.transcribe(pcm, format, signal));
+        transcript = batch.text.trim();
+        sttFacts.confidence = typeof batch.confidence === 'number' ? batch.confidence : null;
         metrics.sttMode = 'batch';
         metrics.sttMs = performance.now() - sttStarted;
         metrics.sttWaitedMs = metrics.sttMs;
@@ -1327,6 +1359,10 @@ export class ConversationSession {
       notRun(['llm-request', 'llm-response', 'tts-generated', 'playback'], 'speech-to-text failed');
       return outcome({ status: 'failed', reason: 'stt-failed', assessment }, true);
     }
+    // Facts about the final transcript for call-audio verification: a word count, the provider's confidence, and an in-memory
+    // check for "I can't hear you". The text itself goes nowhere new.
+    sttFacts.words = countWords(transcript);
+    sttFacts.complaint = detectHearingComplaint(transcript);
     if (signal.aborted && (this.cancelSource === 'caller-speech' || this.cancelSource === 'endpoint-continuation')) {
       // The caller spoke again just as the words arrived and before they were committed: same as cancelled during
       // recognition, so the audio is transcribed together with what follows. (An operator or teardown cancel keeps

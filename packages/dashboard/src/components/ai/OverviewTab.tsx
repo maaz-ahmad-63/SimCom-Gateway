@@ -6,6 +6,7 @@ import type { AiMode, AiSessionView, AiSettingsView } from '@sim-gateway/shared'
 import { apiClient } from '../../lib/api-client';
 import { attachControlState, checklist, CHECK_LABELS, describeAudioHealth, formatDb, summarizeReadiness } from '../../lib/ai-readiness';
 import { AttachControl } from './AttachControl';
+import { AudioVerificationPanel } from './AudioVerificationPanel';
 import { ConversationCard } from './ConversationCard';
 import { RecordingCard } from './RecordingCard';
 import { TestResponseCard } from './TestResponseCard';
@@ -333,10 +334,18 @@ export function OverviewTab() {
       <ConversationCard />
       <TestResponseCard />
       <RecordingCard />
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-        <AttestationCard kind="inbound" />
-        <AttestationCard kind="outbound" />
-      </div>
+      <AudioVerificationPanel />
+      <details className="rounded-xl border border-slate-800 bg-slate-900/40 p-4" data-testid="diagnostics-override">
+        <summary className="cursor-pointer text-sm text-slate-300">Diagnostics: manual audio confirmation (optional override)</summary>
+        <p className="text-[11px] text-slate-500 mt-2 mb-3">
+          Not part of normal calls. A person's confirmation never changes the automatic results above; it is only used for replies when
+          automatic verification is switched off.
+        </p>
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <AttestationCard kind="inbound" />
+          <AttestationCard kind="outbound" />
+        </div>
+      </details>
       <ProviderHealthCard />
       <Card title="Today" subtitle={u.costNote}>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">

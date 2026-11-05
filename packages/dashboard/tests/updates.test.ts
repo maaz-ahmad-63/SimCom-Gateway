@@ -52,12 +52,12 @@ describe('the update relay', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'upd-proxy-'));
   const tokenFile = path.join(dir, 'supervisor.token');
   fs.writeFileSync(tokenFile, 'secret-token');
-  const env = { SIMGW_SUPERVISOR_URL: 'http://127.0.0.1:4010', SIMGW_SUPERVISOR_TOKEN_FILE: tokenFile } as NodeJS.ProcessEnv;
+  const env = { SIMGW_SUPERVISOR_URL: 'http://127.0.0.1:4010', SIMGW_SUPERVISOR_TOKEN_FILE: tokenFile } as unknown as NodeJS.ProcessEnv;
   const post = (headers: Record<string, string> = {}) =>
     new Request('http://localhost:3000/api/update/check', { method: 'POST', headers: { host: 'localhost:3000', origin: 'http://localhost:3000', 'content-type': 'application/json', [UI_HEADER]: '1', ...headers }, body: '{}' });
 
   it('is absent outside the installed product', async () => {
-    const res = await relayUpdate(post(), 'check', {});
+    const res = await relayUpdate(post(), 'check', {} as unknown as NodeJS.ProcessEnv);
     expect(res.status).toBe(404);
   });
   it('refuses another computer, a missing dashboard header and another site, without calling the supervisor', async () => {

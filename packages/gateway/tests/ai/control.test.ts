@@ -352,10 +352,10 @@ describe('AI control center (settings, credentials, passive mode, tests, usage)'
     expect(attest.body.error).toMatch(/No live transcript from real caller audio/);
   });
 
-  it('records evidence from a real provider transcript, then lets the operator confirm, and active still needs everything', async () => {
+  it('manual confirmation mode: records evidence from a real provider transcript, then lets the operator confirm, and active still needs everything', async () => {
     const transcript = json({ results: { channels: [{ alternatives: [{ transcript: 'hello this is a test', confidence: 0.9 }] }] } });
     const fetched = fakeFetch([transcript]);
-    const h = await harness({ fetchImpl: fetched.impl });
+    const h = await harness({ fetchImpl: fetched.impl, env: { AI_AUDIO_AUTO_VERIFY: 'false' } });
     const call = await h.startCall();
     expect((await h.api('post', `/api/ai/calls/${call.id}/arm`)).status).toBe(200);
     h.callerSpeaks();

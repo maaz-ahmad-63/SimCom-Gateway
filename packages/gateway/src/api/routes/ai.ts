@@ -67,6 +67,46 @@ export function createAiRouter(deps: AiRouteDependencies): Router {
     })
   );
 
+  // ---- automatic call-audio verification ---------------------------------------------------------------------------
+  router.get(
+    '/audio-verification',
+    wrap((req, res) => {
+      const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 20));
+      res.json({
+        enabled: runtime.config.config.audio.autoVerify,
+        current: runtime.audioVerification.current(),
+        recent: runtime.audioVerification.recent(limit),
+      });
+    })
+  );
+
+  router.get(
+    '/audio-verification/:callId',
+    wrap((req, res) => {
+      const result = runtime.audioVerification.get(String(req.params.callId));
+      if (!result) {
+        res.status(404).json({ success: false, error: 'No audio verification is recorded for that call' });
+        return;
+      }
+      res.json(result);
+    })
+  );
+
+  router.post(
+    '/audio-verification/:callId/key-test',
+    wrap((req, res) => {
+      const key = String((req.body as { key?: unknown } | undefined)?.key ?? '1');
+      if (!/^[0-9*#]$/.test(key)) throw new SettingsError('key must be one of 0-9, * or #');
+      const windowMs = Number((req.body as { windowMs?: unknown } | undefined)?.windowMs) || undefined;
+      if (windowMs !== undefined && (windowMs < 5_000 || windowMs > 300_000)) throw new SettingsError('windowMs must be between 5000 and 300000');
+      if (!runtime.audioVerification.armKeyTest(String(req.params.callId), key, windowMs)) {
+        res.status(409).json({ success: false, error: 'That call is not in progress or is not being verified' });
+        return;
+      }
+      res.json(runtime.audioVerification.get(String(req.params.callId)));
+    })
+  );
+
   router.get(
     '/readiness',
     wrap((_req, res) => {

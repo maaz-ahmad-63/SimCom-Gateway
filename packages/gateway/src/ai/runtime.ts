@@ -1,3 +1,5 @@
+import type { AudioVerificationStore } from './audio-verification-store.js';
+import { CallAudioVerificationService } from './call-audio-verification-service.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -63,6 +65,8 @@ export interface AiRuntimeOptions {
   fetchImpl?: FetchLike;
   /** Persistent call telemetry: every inspector event is also written here. Absent means nothing is persisted. */
   observability?: ObservabilityStore;
+  /** Where per-call audio verification results are kept (migration 012). Without it results live in memory only. */
+  audioVerificationStore?: AudioVerificationStore | null;
   /** Per-call context for campaign calls (looked up from the call's metadata). */
   callContext?: OrchestratorDeps['callContext'];
   /** A campaign contact asked, during the call, not to be called again. */
@@ -115,6 +119,7 @@ export class AiRuntime {
   readonly hub: TraceHub;
   readonly orchestrator: AiCallOrchestrator;
   readonly automation: AiCallAutomation;
+  readonly audioVerification: CallAudioVerificationService;
   private readonly deps: OrchestratorDeps;
   private env: Record<string, string | undefined>;
   private configResult: AiConfigResult;
@@ -179,6 +184,19 @@ export class AiRuntime {
       },
     };
     this.orchestrator = new AiCallOrchestrator(this.deps);
+    // Automatic call-audio verification listens to events that already exist. It never touches audio, the modem or the call.
+    this.audioVerification = new CallAudioVerificationService({
+      events: options.eventBus,
+      conversations: this.orchestrator,
+      modem: options.modem,
+      wireState: () => options.callManager.getUsbAudioStatus?.()?.audio.state,
+      pipelineActive: () => this.orchestrator.hasActiveSession,
+      enabled: () => this.configResult.config.audio.autoVerify,
+      simulated: () => options.modem.isSimulated === true || options.audio?.isSimulated === true || options.providers !== undefined,
+      store: options.audioVerificationStore ?? null,
+      log: (level, message) => this.logger[level](message),
+      alert: (level, message) => options.eventBus.emit('gateway:alert', { level, message, timestamp: new Date().toISOString() }),
+    });
     this.automation = new AiCallAutomation({
       manager: options.callManager,
       eventBus: options.eventBus,
@@ -206,10 +224,12 @@ export class AiRuntime {
   start(): void {
     this.orchestrator.start();
     this.automation.start();
+    this.audioVerification.start();
   }
 
   async stop(): Promise<void> {
     this.options.eventBus.off('call:ended', this.onCallEnded);
+    this.audioVerification.stop();
     this.automation.stop();
     await this.orchestrator.stop();
   }
@@ -452,8 +472,11 @@ export class AiRuntime {
     }
     if (!config.automation.autoReplies) blockers.push('Automatic replies is off: without it the agent only transcribes and the person would hear nothing (AI > Overview)');
     if (config.autoHandle !== 'outbound' && config.autoHandle !== 'all') blockers.push('Automatic handling must include outbound calls (AI > Overview > Automatic handling)');
-    if (!config.audio.inboundVerified) blockers.push('Incoming audio has not been confirmed (AI > Overview > audio confirmations)');
-    if (!config.audio.outboundVerified) blockers.push('Outgoing audio has not been confirmed: nobody has confirmed the person can hear the agent (AI > Overview > audio confirmations)');
+    // With automatic verification (the default) every call is judged from its own evidence, so no person's confirmation is required.
+    if (!config.audio.autoVerify) {
+      if (!config.audio.inboundVerified) blockers.push('Incoming audio has not been confirmed (AI > Overview > audio confirmations)');
+      if (!config.audio.outboundVerified) blockers.push('Outgoing audio has not been confirmed: nobody has confirmed the person can hear the agent (AI > Overview > audio confirmations)');
+    }
     return blockers;
   }
 

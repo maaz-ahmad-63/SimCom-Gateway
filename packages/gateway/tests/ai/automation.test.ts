@@ -322,8 +322,8 @@ describe('hands-free calling workflow', () => {
       expect(saved.body).toMatchObject({ autoHandle: 'inbound', automation: { autoAnswer: true, autoAnswerRings: 3, autoActivateUsbAudio: true, autoReplies: false } });
     });
 
-    it('stays passive when replies were switched on but the paths are not confirmed (never half-active)', async () => {
-      const h = await harness({ env: { ...AUTO, AI_AUTO_REPLIES: 'true' } }); // bypasses the settings check on purpose
+    it('manual confirmation mode: stays passive when replies were switched on but the paths are not confirmed (never half-active)', async () => {
+      const h = await harness({ env: { ...AUTO, AI_AUDIO_AUTO_VERIFY: 'false', AI_AUTO_REPLIES: 'true' } }); // bypasses the settings check on purpose
       h.ring();
       h.ring();
       await vi.waitFor(() => expect(h.server.aiOrchestrator.getSessions()).toHaveLength(1), { timeout: 4000 });

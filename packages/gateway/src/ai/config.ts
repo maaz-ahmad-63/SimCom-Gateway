@@ -62,8 +62,11 @@ export interface AiConfig {
    */
   audio: {
     format: PcmFormat | null;
+    /** A person's diagnostic confirmation (manual override). Only consulted when automatic verification is switched off. */
     inboundVerified: boolean;
     outboundVerified: boolean;
+    /** Automatic call-audio verification (AI_AUDIO_AUTO_VERIFY, default on): calls are judged from their own evidence. */
+    autoVerify: boolean;
   };
   vad: {
     rmsThreshold: number;
@@ -379,6 +382,7 @@ export function loadAiConfig(env: Env = process.env): AiConfigResult {
       format,
       inboundVerified: bool(env, 'AI_AUDIO_INBOUND_VERIFIED', false, errors),
       outboundVerified: bool(env, 'AI_AUDIO_OUTBOUND_VERIFIED', false, errors),
+      autoVerify: bool(env, 'AI_AUDIO_AUTO_VERIFY', true, errors),
     },
     vad: {
       rmsThreshold: num(env, 'AI_VAD_RMS_THRESHOLD', 0.003, 0.0005, 0.5, errors),
