@@ -77,7 +77,9 @@ describe('Inworld Gemma 4 31B in the Model Hub', () => {
     const first = await boot(dir);
 
     const before = (await first.api('get', '/api/ai/catalog')).body;
-    expect(before.llm.some((m: any) => m.provider === 'inworld')).toBe(false);
+    // Only the seeded Inworld Router model is there by default; the Gemma model is not until it is added.
+    expect(before.llm.filter((m: any) => m.provider === 'inworld').map((m: any) => m.key)).toEqual(['inworld_gpt_5_4']);
+    expect(llmOption(before, 'inworld_gpt_5_4')).toMatchObject({ model: 'openai/gpt-5.4', keyEnv: 'INWORLD_API_KEY', implemented: true });
     expect(llmOption(before, 'groq_qwen_3_8_27b')).toMatchObject({ implemented: true });
     expect(llmOption(before, 'telnyx_kimi_k3')).toMatchObject({ implemented: true });
     const revisionBefore = (await first.api('get', '/api/ai/state')).body.catalogRevision;

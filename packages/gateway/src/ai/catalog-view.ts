@@ -49,6 +49,7 @@ export function buildCatalog(env: Record<string, string | undefined> = {}): AiCa
       label: r.label,
       provider: r.vendor,
       model: r.model,
+      keyEnv: r.keyEnv,
       implemented: usable,
       unavailableReason: usable ? null : r.disabled && spec !== null ? SWITCHED_OFF : (error ?? r.unavailableReason ?? 'Not ported to the gateway yet'),
       // The only request parameter the operator controls; the rest are set per model by the gateway.

@@ -89,7 +89,30 @@ function llmOptions(family: string, model: string): Record<string, unknown> {
   }
 }
 
+/**
+ * Inworld Router (OpenAI-compatible chat completions at the inworld provider's base URL, Basic auth). Only the model id its quickstart
+ * documents is seeded (https://docs.inworld.ai/router/quickstart); add others from inworld.ai/models on the Model Hub. Tool calling stays
+ * off until it is confirmed through the router on a real call.
+ */
+const INWORLD_LLMS: ModelEntry[] = [
+  {
+    id: 'inworld_gpt_5_4',
+    stage: 'llm',
+    provider: 'inworld',
+    protocol: 'openai-chat',
+    model: 'openai/gpt-5.4',
+    label: 'Inworld Router: OpenAI GPT-5.4',
+    enabled: true,
+    aliases: [],
+    options: { body: {}, tools: false, family: 'inworld' },
+  },
+];
+
 function llmModels(): ModelEntry[] {
+  return [...catalogLlmModels(), ...INWORLD_LLMS];
+}
+
+function catalogLlmModels(): ModelEntry[] {
   return Object.entries(LLM_CATALOG).map(([id, entry]) => ({
     id,
     stage: 'llm' as const,

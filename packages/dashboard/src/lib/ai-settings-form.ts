@@ -157,13 +157,14 @@ export function voicesFor(catalog: AiCatalogResponse, tts: string): Array<{ id: 
 }
 
 /**
- * Switching TTS provider invalidates the old voice. Returns the draft with a voice that belongs to the
- * new provider, never silently keeping one from the old provider.
+ * Switching TTS provider keeps the voice only when it is one of the new provider's voices; otherwise the new provider's first known voice
+ * (or none, chosen from its live list), never silently a voice of the old provider.
  */
 export function selectTtsProvider(draft: SettingsDraft, catalog: AiCatalogResponse, tts: string): SettingsDraft {
   const voices = voicesFor(catalog, tts);
+  const keep = tts === draft.tts || voices.some((v) => v.id === draft.ttsVoice);
   // A model id belongs to one provider: choosing another provider returns to that provider's default model.
-  return { ...draft, tts, ttsVoice: voices[0]?.id ?? '', ttsModel: null };
+  return { ...draft, tts, ttsVoice: keep ? draft.ttsVoice : (voices[0]?.id ?? ''), ttsModel: tts === draft.tts ? draft.ttsModel : null };
 }
 
 /** Order-preserving de-duplication (avoids spreading a Set, which this project's TS target does not allow). */

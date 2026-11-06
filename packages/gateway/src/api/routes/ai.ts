@@ -151,6 +151,15 @@ export function createAiRouter(deps: AiRouteDependencies): Router {
     })
   );
 
+  // The voices of a text-to-speech option, read from the provider with the stored key (the key never leaves the gateway).
+  router.get(
+    '/voices/:tts',
+    wrap(async (req, res) => {
+      const model = typeof req.query.model === 'string' ? req.query.model : null;
+      res.json(await runtime.ttsVoices(String(req.params.tts), { refresh: req.query.refresh === '1', model }));
+    })
+  );
+
   router.put(
     '/settings',
     wrap((req, res) => {

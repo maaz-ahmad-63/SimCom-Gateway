@@ -5,10 +5,11 @@ import React, { useEffect, useState } from 'react';
 import { AiTtsCompatibility, AiTtsPreviewResult, apiClient } from '../../lib/api-client';
 import { formatLatency } from '../../lib/ai-inspector';
 import { credentialBadges } from '../../lib/ai-secrets';
-import { selectTtsProvider, voicesFor } from '../../lib/ai-settings-form';
+import { selectTtsProvider } from '../../lib/ai-settings-form';
 import { unique } from '../../lib/ai-settings-form';
 import { ActionNote, Badge, Button, Card, Field, SaveBar, Select, Tile, TextInput, useAction } from './ui';
 import { useSettingsDraft } from './useSettingsDraft';
+import { VoicePicker } from './VoicePicker';
 
 const COMMON_RATES = [8000, 16000];
 
@@ -106,7 +107,6 @@ export function TtsTab() {
   const { draft, setDraft, dirty, problems, action, save, cancel, catalog, state } = useSettingsDraft();
   if (!draft || !catalog || !state) return <p className="text-xs text-slate-500">Loading…</p>;
   const option = catalog.tts.find((o) => o.key === draft.tts);
-  const voices = voicesFor(catalog, draft.tts);
   const key = state.credentials.find((c) => c.name === keyEnvFor(option));
   const models = ((option as { models?: Array<{ id: string; label: string }> } | undefined)?.models ?? []);
   const badges = key ? credentialBadges(key) : null;
@@ -138,20 +138,9 @@ export function TtsTab() {
               </Select>
             </Field>
           )}
-          <Field label="Voice" hint={draft.tts === 'deepgram' ? 'Aura voice ids end in -en and start with aura-.' : draft.tts === 'elevenlabs' ? 'Paste a voice ID from your ElevenLabs account (Voices > the voice > ID).' : draft.tts.startsWith('murf') ? 'Use a voice id from your Murf account voice list (for example en-US-natalie).' : draft.tts === 'inworld' ? 'Use a voice id from your Inworld voice list (for example Ashley).' : draft.tts === 'soniox' ? 'A Soniox TTS voice name (for example Adrian).' : undefined}>
-            {voices.length > 0 ? (
-              <Select value={draft.ttsVoice} onChange={(e) => setDraft({ ...draft, ttsVoice: e.target.value })}>
-                {!voices.some((v) => v.id === draft.ttsVoice) && draft.ttsVoice && <option value={draft.ttsVoice}>{draft.ttsVoice} (current)</option>}
-                {voices.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.label}
-                  </option>
-                ))}
-              </Select>
-            ) : (
-              <TextInput value={draft.ttsVoice} onChange={(e) => setDraft({ ...draft, ttsVoice: e.target.value })} />
-            )}
-          </Field>
+          <div className="md:col-span-2">
+            <VoicePicker tts={draft.tts} model={draft.ttsModel ?? option?.model ?? null} value={draft.ttsVoice} onChange={(ttsVoice) => setDraft({ ...draft, ttsVoice })} />
+          </div>
           <Field label="Language">
             <Select value={draft.language} onChange={(e) => setDraft({ ...draft, language: e.target.value })}>
               {unique([draft.language, ...catalog.languages]).map((l) => (

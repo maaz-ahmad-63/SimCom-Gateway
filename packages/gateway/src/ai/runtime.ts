@@ -35,6 +35,8 @@ import { probeForProvider } from './registry/service.js';
 import { AiSettingsService, credentialProviders, SettingsError } from './settings.js';
 import { extractEndCall, hasSpeechContent, ProtocolTextFilter } from './text.js';
 import { TraceHub } from './trace.js';
+import { listProviderVoices, ProviderVoice, supportsVoiceList, VoiceListError } from './voices.js';
+import { createHash } from 'node:crypto';
 import type { ObservabilityStore } from './observability-store.js';
 import { AiUsageStore } from './usage-store.js';
 import { CallSession } from '@sim-gateway/shared';
@@ -543,6 +545,46 @@ export class AiRuntime {
     }
     this.options.settings.recordCheck(name, result.check, result.detail);
     return result;
+  }
+
+  // ---- voices -----------------------------------------------------------------------------------
+
+  private readonly voiceCache = new Map<string, { at: number; voices: ProviderVoice[] }>();
+
+  /**
+   * The voices of a text-to-speech option, from the provider's own voice-list API with the stored key (read-only, cached for ten
+   * minutes per option, model and key). Without a key, without a list API, or when the provider fails, the built-in list is returned
+   * with the reason, so the dropdown always has something correct to show and says why it is not the live list.
+   */
+  async ttsVoices(ttsKey: string, opts: { refresh?: boolean; model?: string | null } = {}) {
+    const r = activeRegistry().tts(ttsKey);
+    if (!r) throw new SettingsError(`Unknown text-to-speech option '${ttsKey}'`, 404);
+    const builtIn: ProviderVoice[] = r.voices.map((v) => ({ id: v.name, name: v.label ?? v.name, language: null, gender: null, description: null }));
+    const current = this.configResult.config.tts;
+    const model = opts.model?.trim() || (current.key === ttsKey ? current.model : null) || r.models[0] || null;
+    const base = { tts: ttsKey, keyEnv: r.keyEnv, model };
+    const fallback = (reason: string, kind: string) => ({ ...base, source: 'built-in' as const, voices: builtIn, error: { kind, message: reason } });
+
+    if (!supportsVoiceList(r.protocol)) return fallback(`${r.label} has no voice list API here; type or choose a voice id`, 'unsupported');
+    const key = r.keyEnv ? this.options.settings.resolveSecret(r.keyEnv) : null;
+    if (!key) return fallback(`Add the ${r.provider.name} API key (${r.keyEnv ?? 'none named'}) to load its voices`, 'no-credential');
+
+    const cacheKey = `${ttsKey}|${model ?? ''}|${createHash('sha256').update(key).digest('hex').slice(0, 16)}`;
+    const cached = this.voiceCache.get(cacheKey);
+    if (!opts.refresh && cached && Date.now() - cached.at < 10 * 60_000) return { ...base, source: 'provider' as const, voices: cached.voices, error: null };
+    try {
+      const voices = await listProviderVoices(r.protocol!, {
+        key,
+        model,
+        fetchImpl: this.options.fetchImpl ?? ((url, init) => fetch(url, init)),
+        cartesiaVersion: this.env.CARTESIA_VERSION,
+      });
+      this.voiceCache.set(cacheKey, { at: Date.now(), voices });
+      return { ...base, source: 'provider' as const, voices, error: null };
+    } catch (error) {
+      const e = error instanceof VoiceListError ? error : new VoiceListError('The voice list could not be read', 'provider-error');
+      return fallback(e.message, e.kind);
+    }
   }
 
   // ---- operator tests (each is explicit and billable; none touches a call or the modem) ---------

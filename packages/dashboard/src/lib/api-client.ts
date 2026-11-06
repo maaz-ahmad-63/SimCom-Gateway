@@ -1,4 +1,5 @@
 import type { AudioVerificationResponse, CallAudioVerification } from './audio-verification';
+import type { TtsVoicesResponse } from './tts-voices';
 import {
   AiAgentProfile,
   AiConversationReadiness,
@@ -337,6 +338,14 @@ export class GatewayApiClient {
   }
   getAiCatalog(): Promise<AiCatalogResponse> {
     return this.aiJson('/catalog', 'GET');
+  }
+  /** A text-to-speech option's voices, read from the provider by the gateway (cached there; `refresh` asks the provider again). */
+  getTtsVoices(tts: string, opts: { model?: string | null; refresh?: boolean } = {}): Promise<TtsVoicesResponse> {
+    const q = new URLSearchParams();
+    if (opts.model) q.set('model', opts.model);
+    if (opts.refresh) q.set('refresh', '1');
+    const qs = q.toString();
+    return this.aiJson(`/voices/${encodeURIComponent(tts)}${qs ? `?${qs}` : ''}`, 'GET');
   }
   getAiEvents(callId?: string): Promise<{ events: AiInspectorEvent[] }> {
     return this.aiJson(`/events${callId ? `?callId=${encodeURIComponent(callId)}` : ''}`, 'GET');

@@ -23,6 +23,12 @@ const ENVS: Record<string, Record<string, string>> = {
   badMode: { TELNYX_LLM_REGION_MODE: 'sometimes' },
 };
 const json = (v: unknown) => JSON.parse(JSON.stringify(v));
+/** Deliberate additions since the baseline: the seeded Inworld Router model, and each LLM option naming its credential (keyEnv). */
+const ADDED_LLM = ['inworld_gemma_4_31b', 'inworld_gpt_5_4'];
+const asBaseline = (catalog: any) => ({
+  ...catalog,
+  llm: catalog.llm.filter((o: any) => !ADDED_LLM.includes(o.key)).map(({ keyEnv: _keyEnv, ...o }: any) => o),
+});
 
 beforeEach(() => resetActiveRegistry());
 
@@ -30,7 +36,7 @@ describe('the built-in registry is the original catalog', () => {
   const registry = builtinRegistry();
 
   it('keeps every LLM id, provider mapping, model id and alias', () => {
-    expect(registry.llmKeys()).toEqual(Object.keys(LLM_CATALOG));
+    expect(registry.llmKeys().filter((k) => !ADDED_LLM.includes(k))).toEqual(Object.keys(LLM_CATALOG));
     for (const [key, entry] of Object.entries(LLM_CATALOG)) {
       const r = registry.llm(key)!;
       expect(r.model, key).toBe(entry.model);
@@ -72,7 +78,7 @@ describe('the built-in registry is the original catalog', () => {
 
 describe('the registry produces exactly what the original code produced', () => {
   it('the dashboard catalog is identical for each environment', () => {
-    for (const name of ['none', 'reasoning', 'badEffort'] as const) expect(json(buildCatalog(ENVS[name])), name).toEqual(baseline.catalog[name]);
+    for (const name of ['none', 'reasoning', 'badEffort'] as const) expect(asBaseline(json(buildCatalog(ENVS[name]))), name).toEqual(baseline.catalog[name]);
   });
 
   it('every model request spec (body, base URL, credential, reasoning allowance, tool calling) is identical, and so are the errors', () => {
