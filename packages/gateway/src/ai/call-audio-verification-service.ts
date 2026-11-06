@@ -49,6 +49,7 @@ const ASPECT_LABEL: Record<VerificationAspect, string> = { inbound: 'caller audi
 
 export function observeTurn(r: TurnResult): TurnObservation {
   return {
+    turnId: r.turnId,
     status: r.status,
     reason: r.reason,
     utterance: r.assessment?.decision,
@@ -76,36 +77,53 @@ export class CallAudioVerificationService {
 
   constructor(private readonly deps: AudioVerificationServiceDeps) {}
 
-  private readonly onState = (e: CallStateChangeEvent): void => {
-    try {
-      if (e.currentState === 'IDLE' || e.currentState === 'TERMINATING') return;
-      let v = this.active.get(e.callId);
-      if (!v) {
-        if (!this.deps.enabled()) return;
-        v = new CallAudioVerifier(e.callId, { direction: e.session?.direction ?? null, simulated: this.deps.simulated(), now: this.deps.now, thresholds: this.deps.thresholds });
-        this.active.set(e.callId, v);
-        this.deps.log?.('info', `call audio verification started for call ${e.callId}`);
-        this.changed(v);
+  /** Every event handler runs through this: a fault in verification is logged and never reaches the call, the AI or the modem. */
+  private guard<A extends unknown[]>(what: string, fn: (...args: A) => void): (...args: A) => void {
+    return (...args: A) => {
+      try {
+        fn(...args);
+      } catch (err) {
+        this.deps.log?.('error', `call audio verification (${what}): ${sanitize((err as Error).message)}`);
       }
-      if (e.currentState === 'ACTIVE') {
-        v.callActive();
-        this.changed(v);
-      }
-    } catch (err) {
-      this.deps.log?.('error', `call audio verification: ${sanitize((err as Error).message)}`);
-    }
-  };
+    };
+  }
 
-  private readonly onEnded = (s: CallSession): void => {
-    const v = this.active.get(s.id);
+  /** Finish one call's verification: whatever is still undecided becomes 'unable', the result is saved, pushed and reported. */
+  private finish(callId: string): void {
+    const v = this.active.get(callId);
     if (!v) return;
+    this.active.delete(callId);
     v.callEnded();
-    this.active.delete(s.id);
     this.changed(v);
     this.reportFinal(v.snapshot());
-  };
+  }
 
-  private readonly onConversation = (e: ConversationEvent): void => {
+  private readonly onState = this.guard('call state', (e: CallStateChangeEvent): void => {
+    // The line is idle: nothing can still be running, so any verification left open (its end was never reported) is finished.
+    if (e.currentState === 'IDLE') {
+      for (const id of [...this.active.keys()]) this.finish(id);
+      return;
+    }
+    if (e.currentState === 'TERMINATING') return;
+    let v = this.active.get(e.callId);
+    if (!v) {
+      // A new call: one modem carries one call, so a verification still open for another call missed its end and is finished first.
+      for (const id of [...this.active.keys()]) if (id !== e.callId) this.finish(id);
+      if (!this.deps.enabled()) return;
+      v = new CallAudioVerifier(e.callId, { direction: e.session?.direction ?? null, simulated: this.deps.simulated(), now: this.deps.now, thresholds: this.deps.thresholds });
+      this.active.set(e.callId, v);
+      this.deps.log?.('info', `call audio verification started for call ${e.callId}`);
+      this.changed(v);
+    }
+    if (e.currentState === 'ACTIVE') {
+      v.callActive();
+      this.changed(v);
+    }
+  });
+
+  private readonly onEnded = this.guard('call ended', (s: CallSession): void => this.finish(s.id));
+
+  private readonly onConversation = this.guard('conversation', (e: ConversationEvent): void => {
     const v = this.active.get(e.callId);
     if (!v) return;
     v.pipelineAttached();
@@ -113,19 +131,26 @@ export class CallAudioVerificationService {
     else if (e.type === 'error' && e.stage === 'sink') v.transportError(e.message);
     else return;
     this.changed(v);
-  };
+  });
 
-  private readonly onUrc = (urc: UrcEvent): void => {
-    if (!isDtmfUrc(urc)) return; // the modem's own DTMF report (+RXDTMF); the digit is never logged
+  private readonly onUrc = this.guard('key press', (urc: UrcEvent): void => {
+    if (!isDtmfUrc(urc)) return; // the modem's own DTMF report (+RXDTMF); the digit is only compared, never logged or stored
     for (const v of this.active.values()) {
       v.remoteKey(urc.payload.digit);
       this.changed(v);
     }
-  };
+  });
 
   start(): void {
     if (this.started) return;
     this.started = true;
+    // Verifications a previous run left unfinished (the gateway stopped during a call) can never complete: record that, once.
+    try {
+      const n = this.deps.store?.finishUnfinished('the gateway restarted before this call ended, so its audio could not be verified') ?? 0;
+      if (n > 0) this.deps.log?.('info', `${n} call audio verification(s) left unfinished by a restart were marked unable to verify`);
+    } catch (err) {
+      this.deps.log?.('error', `call audio verification (startup): ${sanitize((err as Error).message)}`);
+    }
     this.deps.events.on('call:state_changed', this.onState);
     this.deps.events.on('call:ended', this.onEnded);
     this.deps.conversations.on('conversation', this.onConversation);
@@ -146,14 +171,14 @@ export class CallAudioVerificationService {
   }
 
   /** Sample the wire and whether the AI pipeline is attached, for every call that is active. */
-  poll(): void {
+  readonly poll = this.guard('poll', (): void => {
     for (const v of this.active.values()) {
       const before = JSON.stringify(v.snapshot());
       if (this.deps.pipelineActive()) v.pipelineAttached();
       v.wireState(this.deps.wireState());
       if (JSON.stringify(v.snapshot()) !== before) this.changed(v);
     }
-  }
+  });
 
   onUpdate(listener: (v: CallAudioVerification) => void): () => void {
     this.listeners.add(listener);

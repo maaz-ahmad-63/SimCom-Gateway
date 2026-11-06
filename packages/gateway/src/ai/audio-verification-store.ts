@@ -71,6 +71,40 @@ export class AudioVerificationStore {
       });
   }
 
+  /**
+   * At startup: rows a previous run never finished (the gateway stopped during the call) become final, with every aspect that was still
+   * pending or verifying set to 'unable' and the reason given. Decided aspects are kept. Returns how many rows were finished.
+   */
+  finishUnfinished(reason: string): number {
+    const rows = this.db.prepare('SELECT call_id, result_json FROM call_audio_verifications WHERE final = 0').all() as Array<{ call_id: string; result_json: string }>;
+    const at = this.now().toISOString();
+    let n = 0;
+    for (const r of rows) {
+      let v: CallAudioVerification;
+      try {
+        v = JSON.parse(r.result_json) as CallAudioVerification;
+      } catch {
+        // unreadable: mark the row final without inventing a result (get() already reports it as missing)
+        this.db.prepare('UPDATE call_audio_verifications SET final = 1, updated_at = ? WHERE call_id = ?').run(at, r.call_id);
+        n++;
+        continue;
+      }
+      for (const a of [v.inbound, v.transport, v.audibility]) {
+        if (a && (a.status === 'pending' || a.status === 'verifying')) {
+          a.status = 'unable';
+          a.reason = reason;
+          a.source = 'call-lifecycle';
+          a.updatedAt = at;
+        }
+      }
+      v.final = true;
+      v.endedAt = v.endedAt ?? at;
+      this.save(v);
+      n++;
+    }
+    return n;
+  }
+
   /** The full result for one call, or null. A row that cannot be read is reported as missing, never guessed. */
   get(callId: string): CallAudioVerification | null {
     const r = this.db.prepare('SELECT result_json FROM call_audio_verifications WHERE call_id = ?').get(callId) as { result_json: string } | undefined;

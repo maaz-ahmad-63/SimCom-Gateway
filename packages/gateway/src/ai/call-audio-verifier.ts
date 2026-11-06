@@ -71,6 +71,8 @@ export interface CallAudioVerification {
 
 /** What one finished AI turn says about audio. Built from the pipeline's turn result; no text is ever passed in. */
 export interface TurnObservation {
+  /** The conversation's own turn number: a turn reported twice is counted once. Absent: never de-duplicated. */
+  turnId?: number;
   status: 'completed' | 'skipped' | 'cancelled' | 'failed';
   reason?: string;
   /** The speech detector's verdict on the caller's utterance ('ok', 'silent', 'too-short', 'unlikely-speech'). */
@@ -159,7 +161,9 @@ export class CallAudioVerifier {
   private agentSpoke = false;
   private lastReplyPlayedAt: number | null = null;
   private responses = 0;
+  /** The requested key lives only here, in memory, for the comparison: no digit is ever written to the evidence. */
   private keyTest: { key: string; until: number } | null = null;
+  private readonly seenTurns = new Set<number>();
 
   constructor(
     callId: string,
@@ -276,6 +280,10 @@ export class CallAudioVerifier {
 
   turn(o: TurnObservation): void {
     if (this.state.final) return;
+    if (o.turnId !== undefined && o.turnId > 0) {
+      if (this.seenTurns.has(o.turnId)) return; // the same turn reported again: already counted
+      this.seenTurns.add(o.turnId);
+    }
     this.noteCaller(o);
     this.notePlayback(o);
   }
@@ -375,28 +383,31 @@ export class CallAudioVerifier {
   armKeyTest(key: string, windowMs = this.t.keyTestWindowMs): void {
     if (this.state.final) return;
     this.keyTest = { key, until: this.now().getTime() + windowMs };
-    this.add('audibility', { source: 'remote-key-press', kind: 'info', detail: `diagnostic key-press test armed: waiting for the caller to press ${key}`, data: { key, windowMs } });
+    this.add('audibility', { source: 'remote-key-press', kind: 'info', detail: 'diagnostic key-press test armed: waiting for the caller to press the requested key', data: { windowMs } });
   }
 
-  /** A DTMF key pressed by the remote party (from the modem's own DTMF report). */
+  /**
+   * A DTMF key pressed by the remote party (from the modem's own DTMF report). Only whether it was the requested key is recorded:
+   * the digit itself is never stored, logged, pushed or returned.
+   */
   remoteKey(key: string): void {
     if (this.state.final || !this.keyTest) return;
     const t = this.now().getTime();
     if (t > this.keyTest.until) {
-      this.add('audibility', { source: 'remote-key-press', kind: 'info', detail: 'diagnostic key-press test expired before the caller answered', data: { key } });
+      this.add('audibility', { source: 'remote-key-press', kind: 'info', detail: 'diagnostic key-press test expired before the caller answered' });
       this.keyTest = null;
       return;
     }
     if (key !== this.keyTest.key) {
-      this.add('audibility', { source: 'remote-key-press', kind: 'info', detail: `the caller pressed ${key}, not the requested ${this.keyTest.key} (not counted)`, data: { key } });
+      this.add('audibility', { source: 'remote-key-press', kind: 'info', detail: 'the caller pressed a key other than the requested one (not counted)' });
       return;
     }
     this.keyTest = null;
     if (!this.agentSpoke) {
-      this.add('audibility', { source: 'remote-key-press', kind: 'info', detail: 'the requested key arrived, but the agent had not spoken on this call yet, so it proves nothing about hearing the agent', data: { key } });
+      this.add('audibility', { source: 'remote-key-press', kind: 'info', detail: 'the requested key arrived, but the agent had not spoken on this call yet, so it proves nothing about hearing the agent' });
       return;
     }
-    this.add('audibility', { source: 'remote-key-press', kind: 'supporting', detail: `the caller pressed the requested key ${key} during the diagnostic test`, data: { key } });
+    this.add('audibility', { source: 'remote-key-press', kind: 'supporting', detail: 'the caller pressed the requested key during the diagnostic test' });
     this.set('audibility', 'verified', 'explicit confirmation from the caller side: the caller pressed the requested key during the diagnostic audibility test', 'remote-key-press');
   }
 

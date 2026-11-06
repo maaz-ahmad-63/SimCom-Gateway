@@ -17,9 +17,11 @@ const session = (id: string, direction: 'inbound' | 'outbound' = 'inbound') => (
 const state = (callId: string, currentState: string, direction: 'inbound' | 'outbound' = 'inbound') =>
   ({ callId, previousState: 'IDLE', currentState, timestamp: new Date().toISOString(), session: session(callId, direction) }) as unknown as CallStateChangeEvent;
 const metrics = (over: Record<string, unknown> = {}) => ({ lateFrames: 0, riskFrames: 0, bytesWritten: 0, underruns: 0, slowWrites: 0, playbackCompleted: null, playbackStoppedBy: null, ...over });
+// Each turn gets the next number, as the conversation numbers them (a repeated number is a repeated report of the same turn).
+let nextTurnId = 1;
 const turn = (callId: string, over: Partial<TurnResult> & { m?: Record<string, unknown> } = {}): ConversationEvent => {
   const { m, ...rest } = over;
-  return { type: 'turn', callId, result: { turnId: 1, status: 'completed', endRequested: false, assessment: { decision: 'ok' }, transcriptWords: 4, sttConfidence: 0.9, metrics: metrics(m), ...rest } as unknown as TurnResult };
+  return { type: 'turn', callId, result: { turnId: nextTurnId++, status: 'completed', endRequested: false, assessment: { decision: 'ok' }, transcriptWords: 4, sttConfidence: 0.9, metrics: metrics(m), ...rest } as unknown as TurnResult };
 };
 const dtmf = (digit: string) => ({ type: 'CUSTOM', raw: '+RXDTMF: <redacted>', payload: { kind: 'dtmf', digit } }) as unknown as UrcEvent;
 
@@ -230,5 +232,78 @@ describe('turn observation mapping', () => {
     const o = observeTurn(r);
     expect(o).toMatchObject({ utterance: 'ok', transcriptWords: 3, sttConfidence: 0.7, callerReportsNotHearing: true, bytesWritten: 100, underruns: 2, playbackCompleted: true });
     expect(JSON.stringify(o)).not.toContain('secret words');
+  });
+});
+
+describe('release fixes: privacy, duplicates, stale calls, restarts, faults', () => {
+  const speak = (id: string) => orchestrator.emit('conversation', turn(id, { m: { bytesWritten: 3200, playbackCompleted: true } }));
+
+  it('never stores, pushes or returns the pressed digit: only whether it was the requested key', () => {
+    answer('k1');
+    speak('k1');
+    expect(svc.armKeyTest('k1', '7')).toBe(true);
+    modem.emit('urc', dtmf('3')); // a different key
+    modem.emit('urc', dtmf('7')); // the requested key
+    const v = svc.get('k1')!;
+    expect(v.audibility.status).toBe('verified');
+    const ev = v.audibility.evidence.filter((e) => e.source === 'remote-key-press').map((e) => e.detail);
+    expect(ev).toEqual([
+      'diagnostic key-press test armed: waiting for the caller to press the requested key',
+      'the caller pressed a key other than the requested one (not counted)',
+      'the caller pressed the requested key during the diagnostic test',
+    ]);
+    end('k1');
+    const everything = [JSON.stringify(svc.get('k1')), JSON.stringify(pushed), db.prepare("SELECT result_json FROM call_audio_verifications WHERE call_id='k1'").pluck().get() as string, logs.join('\n')].join('\n');
+    expect(everything).not.toMatch(/"key"\s*:/);
+    expect(everything).not.toMatch(/\b(pressed|press) [0-9*#]\b|requested [0-9*#]\b/);
+  });
+
+  it('counts a turn reported twice once (by its turn id)', () => {
+    answer('d1');
+    const t = turn('d1');
+    orchestrator.emit('conversation', t);
+    orchestrator.emit('conversation', t); // the same turn again
+    const once = svc.get('d1')!.inbound.evidence.length;
+    orchestrator.emit('conversation', t);
+    expect(svc.get('d1')!.inbound.evidence.length).toBe(once);
+    orchestrator.emit('conversation', turn('d1')); // a new turn still counts
+    expect(svc.get('d1')!.inbound.evidence.length).toBeGreaterThan(once);
+  });
+
+  it('a call whose end was never reported is finished when the next call starts, and when the line goes idle', () => {
+    answer('s1'); // its call:ended never arrives
+    answer('s2');
+    expect(svc.get('s1')).toMatchObject({ final: true });
+    expect(store.get('s1')?.final).toBe(true);
+    expect(svc.current()?.callId).toBe('s2');
+    events.emit('call:state_changed', state('s2', 'IDLE')); // idle without call:ended
+    expect(store.get('s2')?.final).toBe(true);
+    expect(svc.current()).toMatchObject({ callId: 's2', final: true });
+  });
+
+  it('after a restart, verifications left unfinished become "unable to verify" with the reason; decided results are kept', () => {
+    answer('r1');
+    speak('r1'); // transport decided
+    svc.stop(); // the gateway stopped during the call: no end was recorded
+    expect(store.get('r1')?.final).toBe(false);
+    const again = new CallAudioVerificationService({ events: events as never, conversations: orchestrator as never, wireState: () => wire, pipelineActive: () => attached, enabled: () => true, simulated: () => false, store, log: (l, m) => logs.push(`${l} ${m}`), pollMs: 60_000 });
+    again.start();
+    const v = store.get('r1')!;
+    expect(v.final).toBe(true);
+    expect(v.transport.status).toBe('verified');
+    expect(v.audibility).toMatchObject({ status: 'unable', reason: expect.stringMatching(/gateway restarted before this call ended/) });
+    expect(logs.some((l) => /1 call audio verification\(s\) left unfinished by a restart/.test(l))).toBe(true);
+    again.stop();
+    svc.start(); // afterEach stops it
+  });
+
+  it('a fault inside verification is logged and never reaches the emitter (call, AI or modem)', () => {
+    answer('e1');
+    const broken = { ...turn('e1'), result: null } as unknown as ConversationEvent; // makes the verifier throw
+    expect(() => orchestrator.emit('conversation', broken)).not.toThrow();
+    expect(() => events.emit('call:ended', null as unknown as CallSession)).not.toThrow();
+    expect(() => modem.emit('urc', { type: 'CUSTOM', payload: { kind: 'dtmf', digit: undefined } } as unknown as UrcEvent)).not.toThrow();
+    expect(logs.some((l) => /^error call audio verification \(conversation\)/.test(l))).toBe(true);
+    expect(logs.some((l) => /^error call audio verification \(call ended\)/.test(l))).toBe(true);
   });
 });
