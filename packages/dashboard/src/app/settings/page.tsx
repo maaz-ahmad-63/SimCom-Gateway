@@ -2,6 +2,8 @@
 
 import React, { useEffect, useState } from 'react';
 import {
+  ensureLocalSession,
+  isLocalSession,
   getGatewayClientConfig,
   saveGatewayClientConfig,
   clearGatewayClientConfig,
@@ -39,10 +41,26 @@ export default function SettingsPage() {
   const [isTesting, setIsTesting] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
 
+  // The installed dashboard on the gateway's own computer connects by itself (a local session): no key is entered or shown here.
+  const [local, setLocal] = useState(false);
   useEffect(() => {
-    const cfg = getGatewayClientConfig();
-    setUrl(cfg.gatewayUrl);
-    setApiKey(cfg.apiKey);
+    let alive = true;
+    const update = () => {
+      if (!alive) return;
+      const isLocal = isLocalSession();
+      setLocal(isLocal);
+      if (!isLocal) {
+        const cfg = getGatewayClientConfig();
+        setUrl(cfg.gatewayUrl);
+        setApiKey(cfg.apiKey);
+      }
+    };
+    void ensureLocalSession().finally(update);
+    window.addEventListener('gateway-config-changed', update);
+    return () => {
+      alive = false;
+      window.removeEventListener('gateway-config-changed', update);
+    };
   }, []);
 
   const handleTestConnection = async () => {
@@ -105,7 +123,21 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      {/* Connection Form */}
+      {local && (
+        <div className="bg-surface border border-slate-800 rounded-lg p-6 space-y-2" data-testid="auto-connection">
+          <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            Connected automatically
+          </h2>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            This dashboard runs on the same computer as the gateway and connects to it by itself with a short-lived session. The gateway API
+            key stays on this computer&apos;s gateway configuration and is never stored in the browser, so there is nothing to enter here.
+          </p>
+        </div>
+      )}
+
+      {/* Connection Form: a dashboard opened from another computer (or a development setup) */}
+      {!local && (
       <form onSubmit={handleSave} className="bg-surface border border-slate-800 rounded-lg p-6 shadow-sm space-y-5">
         <h2 className="text-sm font-semibold text-white uppercase tracking-wider font-mono flex items-center gap-2">
           <Server className="w-4 h-4 text-emerald-400" />
@@ -155,7 +187,7 @@ export default function SettingsPage() {
               </button>
             </div>
             <p className="text-[11px] text-slate-500 mt-1">
-              Matches <code className="text-slate-400">GATEWAY_API_KEY</code> on the gateway host. Stored locally in your browser session.
+              Matches <code className="text-slate-400">GATEWAY_API_KEY</code> on the gateway host. Only needed when this dashboard is opened from another computer; it is saved in this browser (local storage) until you change or reset it.
             </p>
           </div>
         </div>
@@ -192,7 +224,7 @@ export default function SettingsPage() {
         {isSaved && (
           <div className="p-3 rounded-lg bg-emerald-950/60 border border-emerald-800/80 text-emerald-400 text-xs font-mono flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 shrink-0" />
-            <span>Connection parameters saved to browser session and reconnected!</span>
+            <span>Connection settings saved in this browser and reconnected.</span>
           </div>
         )}
 
@@ -214,6 +246,7 @@ export default function SettingsPage() {
           </div>
         )}
       </form>
+      )}
 
       <UpdatesCard />
 

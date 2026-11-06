@@ -22,7 +22,7 @@ import {
   GatewayHealthStatus,
   TriggerMockInboundInput,
 } from '@sim-gateway/shared';
-import { getGatewayClientConfig } from './config';
+import { ensureLocalSession, getGatewayClientConfig, renewAfterAuthFailure } from './config';
 import type { HardwarePorts, HardwareStatus } from './hardware-ops';
 import type { RecordingSettingsView, RecordingsResponse } from './recordings';
 import type { Attempt, Campaign, ColumnMapping, Contact, ContactStatus, Counts, CsvPreview, ImportResult, Review, RunnerStatus } from './campaigns';
@@ -160,7 +160,9 @@ export class GatewayApiClient {
     return getGatewayClientConfig();
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(endpoint: string, options: RequestInit = {}, retried = false): Promise<T> {
+    // The packaged dashboard: have the local session before the first request, so no request goes out with an outdated key.
+    if (!this.customApiKey) await ensureLocalSession();
     const { gatewayUrl, apiKey } = this.getConfig();
     const url = `${gatewayUrl.replace(/\/+$/, '')}${endpoint}`;
 
@@ -182,6 +184,11 @@ export class GatewayApiClient {
         0,
         'NETWORK_ERROR'
       );
+    }
+
+    // A local session that expired or did not survive a gateway restart: get a fresh one and try this request once more.
+    if (response.status === 401 && !retried && !this.customApiKey && (await renewAfterAuthFailure())) {
+      return this.request<T>(endpoint, options, true);
     }
 
     if (!response.ok) {

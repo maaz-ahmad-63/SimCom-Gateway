@@ -20,7 +20,8 @@ import { MockModemAdapter } from './adapters/modem/mock-modem.js';
 import { Sim7600HardwareAdapter } from './adapters/modem/hardware-modem.js';
 import { MockAudioAdapter } from './adapters/audio/mock-audio.js';
 import { Sim7600HardwareAudioAdapter } from './adapters/audio/hardware-audio.js';
-import { createAuthMiddleware } from './api/middleware/auth.js';
+import { createAuthMiddleware, verifyApiKey } from './api/middleware/auth.js';
+import { isLoopbackAddress, SessionTokens } from './api/middleware/session-tokens.js';
 import { AuthFailureLimiter, limitAuthFailures, securityHeaders } from './api/middleware/security.js';
 import { createOpsRouter } from './api/routes/ops.js';
 import { RotatingFileLog } from './core/log-file.js';
@@ -94,6 +95,8 @@ export interface GatewayServerOptions {
   eventBus?: GatewayEventBus;
   /** Directory for serial-port ownership locks (hardware mode). Defaults to the OS temp dir. */
   instanceLockDir?: string;
+  /** Test seam: the local session-token store (a short lifetime or a controlled clock). */
+  sessionTokens?: SessionTokens;
   /** Test seam for automatic port discovery: what Windows reports about its serial ports. Production uses SerialPort.list(). */
   listSerialPorts?: PortLister;
   /** Test seam: how often the gateway looks for a modem that came back after the adapter gave up (default 15 s). */
@@ -514,13 +517,30 @@ export function createGatewayServer(
 
   // API Key Authentication Middleware on all /api routes
   let lastBlockedLog = 0;
-  const authMiddleware = limitAuthFailures(createAuthMiddleware(config.gatewayApiKey), new AuthFailureLimiter(), () => {
+  // Local session tokens: the installed dashboard's server (this computer) trades the API key for a short-lived token, so the browser never
+  // holds the key. A token is accepted like the key (REST and the live connection) and is checked under the same failure limit.
+  const sessionTokens = options.sessionTokens ?? new SessionTokens();
+  const authMiddleware = limitAuthFailures(createAuthMiddleware(config.gatewayApiKey, sessionTokens), new AuthFailureLimiter(), () => {
     if (Date.now() - lastBlockedLog > 60_000) {
       lastBlockedLog = Date.now();
       logger.warn('Too many failed API-key attempts: a client is being refused for a minute');
     }
   });
   app.use('/api', authMiddleware);
+
+  // Minting needs the MASTER key (a session token cannot mint another) and a caller on this computer.
+  app.post('/api/auth/session', (req, res) => {
+    const given = (req.headers['x-api-key'] as string | undefined) ?? '';
+    if (!verifyApiKey(given, config.gatewayApiKey)) {
+      res.status(403).json({ success: false, error: 'A session can only be created with the gateway API key', code: 'FORBIDDEN' });
+      return;
+    }
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      res.status(403).json({ success: false, error: 'Sessions are only issued to programs on this computer', code: 'FORBIDDEN' });
+      return;
+    }
+    res.json({ success: true, ...sessionTokens.issue() });
+  });
 
   // Routes
   app.use(
@@ -695,6 +715,7 @@ export function createGatewayServer(
     httpServer,
     corsOrigin: config.corsOrigin,
     expectedApiKey: config.gatewayApiKey,
+    sessions: sessionTokens,
     modem,
     audio,
     callManager,

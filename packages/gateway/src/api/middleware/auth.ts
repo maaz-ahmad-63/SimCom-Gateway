@@ -16,7 +16,13 @@ export function verifyApiKey(providedToken: string | undefined | null, expectedK
   return crypto.timingSafeEqual(providedHash, expectedHash);
 }
 
-export function createAuthMiddleware(expectedApiKey: string) {
+/** The master API key, or (when given) a live local session token issued by this gateway. */
+export function verifyCredential(provided: string | undefined | null, expectedKey: string, sessions?: { verify(token: string | undefined | null): boolean }): boolean {
+  if (sessions?.verify(provided)) return true;
+  return verifyApiKey(provided, expectedKey);
+}
+
+export function createAuthMiddleware(expectedApiKey: string, sessions?: { verify(token: string | undefined | null): boolean }) {
   return (req: Request, res: Response, next: NextFunction): void => {
     // Check header x-api-key
     let token = req.headers['x-api-key'] as string | undefined;
@@ -38,7 +44,7 @@ export function createAuthMiddleware(expectedApiKey: string) {
       return;
     }
 
-    if (!verifyApiKey(token, expectedApiKey)) {
+    if (!verifyCredential(token, expectedApiKey, sessions)) {
       res.status(401).json({
         success: false,
         error: 'Unauthorized: Invalid API key',

@@ -9,7 +9,7 @@ import {
   ModemSignalQuality,
   UrcEvent,
 } from '@sim-gateway/shared';
-import { getGatewayClientConfig } from './config';
+import { ensureLocalSession, getGatewayClientConfig, renewAfterAuthFailure } from './config';
 
 export type SocketConnectionState = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -47,11 +47,14 @@ export class GatewaySocketService {
       this.socket.disconnect();
     }
 
-    const { gatewayUrl, apiKey } = getGatewayClientConfig();
+    const { gatewayUrl } = getGatewayClientConfig();
     this.updateState('connecting');
 
     this.socket = io(gatewayUrl, {
-      auth: { token: apiKey },
+      // Read on every (re)connection attempt, so a renewed local session is used without rebuilding the socket.
+      auth: (cb) => {
+        void ensureLocalSession().finally(() => cb({ token: getGatewayClientConfig().apiKey }));
+      },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: Infinity,
@@ -72,8 +75,15 @@ export class GatewaySocketService {
       }
     });
 
-    this.socket.on('connect_error', (_err) => {
+    this.socket.on('connect_error', (err) => {
       this.updateState('error');
+      // Refused by the gateway's authentication (an expired local session, or a gateway restart that ended it): renew and connect again.
+      // Socket.IO does not retry a refusal by itself.
+      if (/Unauthorized/i.test(err?.message ?? '')) {
+        void renewAfterAuthFailure().then((ok) => {
+          if (ok && this.socket && !this.socket.connected) this.socket.connect();
+        });
+      }
     });
 
     return this.socket;

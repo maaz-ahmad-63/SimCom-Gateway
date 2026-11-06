@@ -63,6 +63,31 @@ describe.skipIf(!built)('the packaged program (bundled Node, mock modem, isolate
     expect(fs.existsSync(path.join(app, 'gateway', 'gateway.sqlite'))).toBe(false);
   }, 180_000);
 
+  it('connects the dashboard to the gateway by itself: a session token for this computer, never the gateway key', async () => {
+    const localConfig = (headers: Record<string, string>) =>
+      fetch(`http://127.0.0.1:${PORTS.dashboard}/api/local-config`, { headers: { host: `127.0.0.1:${PORTS.dashboard}`, ...headers }, signal: AbortSignal.timeout(8000) });
+    const res = await localConfig({ 'x-dashboard-sms': '1', 'sec-fetch-site': 'same-origin' });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain(gatewayKey); // the master key never reaches the browser
+    const body = JSON.parse(text) as { sessionToken: string; gatewayUrl: string };
+    expect(body.sessionToken).toMatch(/^st_[0-9a-f]{64}$/);
+    // REST with the token
+    const health = await fetch(`http://127.0.0.1:${PORTS.gateway}/api/gateway/health`, { headers: { 'x-api-key': body.sessionToken }, signal: AbortSignal.timeout(8000) });
+    expect(health.status).toBe(200);
+    // the live connection with the token
+    const { io } = await import('socket.io-client');
+    const live = await new Promise<string>((resolve) => {
+      const c = io(`http://127.0.0.1:${PORTS.gateway}`, { auth: { token: body.sessionToken }, transports: ['websocket'], reconnection: false, timeout: 8000 });
+      c.on('connect', () => (c.close(), resolve('connected')));
+      c.on('connect_error', (e) => (c.close(), resolve(`refused: ${e.message}`)));
+    });
+    expect(live).toBe('connected');
+    // another website, or a request that is not from the dashboard page, gets nothing
+    expect((await localConfig({ 'x-dashboard-sms': '1', origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' })).status).toBe(403);
+    expect((await localConfig({})).status).toBe(403);
+  }, 60_000);
+
   it('made its own encryption key at first start (protected, never shown), so a customer can add a provider key with no file edited', async () => {
     const status = JSON.parse((await get(`http://127.0.0.1:${PORTS.status}/status`))!.body) as { secrets: { state: string; usable: boolean } };
     expect(status.secrets).toMatchObject({ state: 'created', usable: true });

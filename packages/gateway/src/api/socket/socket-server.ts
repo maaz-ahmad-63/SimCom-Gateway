@@ -15,7 +15,7 @@ import {
   UrcEvent,
 } from '@sim-gateway/shared';
 import os from 'node:os';
-import { verifyApiKey } from '../middleware/auth.js';
+import { verifyCredential } from '../middleware/auth.js';
 import { GatewayEventBus } from '../../core/event-bus.js';
 import { MockModemAdapter } from '../../adapters/modem/mock-modem.js';
 
@@ -23,6 +23,8 @@ export interface SocketServerOptions {
   httpServer: HttpServer;
   corsOrigin: string;
   expectedApiKey: string;
+  /** Local session tokens (the installed dashboard on this computer); accepted like the API key. */
+  sessions?: { verify(token: string | undefined | null): boolean };
   modem: IModemAdapter;
   audio?: IAudioAdapter;
   callManager: ICallSessionManager;
@@ -73,7 +75,7 @@ export class GatewaySocketServer {
         (socket.handshake.auth?.token as string | undefined) ||
         (socket.handshake.headers['x-api-key'] as string | undefined);
 
-      if (!token || !verifyApiKey(token, this.options.expectedApiKey)) {
+      if (!token || !verifyCredential(token, this.options.expectedApiKey, this.options.sessions)) {
         return next(new Error('Unauthorized: Invalid or missing API key'));
       }
 
