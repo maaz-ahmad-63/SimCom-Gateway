@@ -81,10 +81,14 @@ const end = (id: string) => events.emit('call:ended', session(id));
 
 describe('migration and store', () => {
   it('migration 012 creates the table (011 was already used by ops alerts)', () => {
-    expect(SCHEMA_VERSION).toBe(12);
+    expect(SCHEMA_VERSION).toBeGreaterThanOrEqual(12);
     const names = (db.prepare("SELECT name FROM _schema_migrations ORDER BY version").all() as { name: string }[]).map((r) => r.name);
-    expect(names.at(-1)).toBe('012_call_audio_verification');
+    expect(names).toContain('011_ops_alerts_and_call_diagnostics');
+    expect(names[names.indexOf('011_ops_alerts_and_call_diagnostics') + 1]).toBe('012_call_audio_verification');
     expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='call_audio_verifications'").get()).toBeTruthy();
+    // 013 (why a call was not recorded) is additive and follows it.
+    expect(names[names.indexOf('012_call_audio_verification') + 1]).toBe('013_call_recording_skips');
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='call_recording_skips'").get()).toBeTruthy();
   });
 
   it('a corrupt row reads as missing, never as a guessed result', () => {

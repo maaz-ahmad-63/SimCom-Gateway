@@ -49,8 +49,16 @@ describe('does this call have a recording to play?', () => {
     // Never connected: nothing to record.
     expect(reason(recordingAvailability(call({ answeredAt: null, outcome: 'missed' }), lookup()))).toMatch(/never answered/);
     expect(reason(recordingAvailability(call({ answeredAt: null, outcome: null }), lookup()))).toMatch(/never answered/);
-    // Answered but not recorded (recording was off, or consent was not acknowledged).
-    expect(reason(recordingAvailability(call(), lookup()))).toMatch(/No recording exists for this call.*CALL_RECORDING_ENABLED/);
+    // Answered but not recorded, from a gateway that did not note why (an older one, or a call from before it did).
+    expect(reason(recordingAvailability(call(), lookup()))).toMatch(/No recording exists for this call.*Settings > Call Recording/);
+    // Answered but not recorded, with the reason the gateway noted when the call connected: each says what happened.
+    const skip = (status: string, why = 'x') => new Map([[CALL, { callId: CALL, status, reason: why, at: '2026-11-06T10:00:00.000Z' }]]);
+    expect(reason(recordingAvailability(call(), lookup(), skip('off')))).toMatch(/switched off when this call connected/);
+    expect(reason(recordingAvailability(call(), lookup(), skip('no-consent')))).toMatch(/consent acknowledgement had not been confirmed/);
+    expect(reason(recordingAvailability(call(), lookup(), skip('start-failed', 'EACCES')))).toMatch(/could not start.*EACCES/);
+    expect(reason(recordingAvailability(call(), lookup(), skip('config-error', 'recording configuration is invalid')))).toMatch(/Not recorded: recording configuration is invalid/);
+    // A recording that exists always wins over a noted reason.
+    expect(recordingAvailability(call(), lookup(rec()), skip('off')).state).toBe('available');
     // Recorded, but still being recorded or finished.
     expect(reason(recordingAvailability(call(), lookup(rec({ available: false, endedAt: null, file: null, complete: false }))))).toMatch(/still being recorded/);
     expect(reason(recordingAvailability(call(), lookup(rec({ available: false, file: null, complete: false }))))).toMatch(/still being finished/);

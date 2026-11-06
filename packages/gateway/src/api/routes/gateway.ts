@@ -22,6 +22,7 @@ import { redactDiagnosticText } from '../../core/logger.js';
 import type { UsbPcmTestError, UsbPcmVerifier } from '../../diagnostics/usb-pcm-verification.js';
 import { createHardwareRouter, RawPortInfo } from './hardware.js';
 import type { CallRecorder } from '../../recording/call-recorder.js';
+import { RecordingSettingsError, type RecordingSettingsService, type RecordingSkipStore } from '../../recording/recording-settings.js';
 import type { InboundCaptureTap } from '../../diagnostics/inbound-capture.js';
 import { SmsService } from '../../sms/sms-service.js';
 import type { SmsInbox } from '../../sms/sms-inbox.js';
@@ -45,6 +46,9 @@ export interface GatewayRouteDependencies {
   listPorts?: () => Promise<RawPortInfo[]>;
   /** Complete-call recorder (separate from the diagnostic captures). */
   recorder?: CallRecorder;
+  /** Settings > Call Recording (saved settings over the CALL_RECORDING_* starting values), and why calls were not recorded. */
+  recordingSettings?: RecordingSettingsService;
+  recordingSkips?: RecordingSkipStore;
   /** Automatic port discovery (hardware mode) and the ports in use now. */
   portDiscovery?: PortDiscovery | null;
   currentPorts?: () => { at: string; audio: string };
@@ -71,7 +75,36 @@ export function createGatewayRouter(deps: GatewayRouteDependencies): Router {
     // ?ids=a,b,c answers for exactly those calls (the call history asks about the page it is showing).
     const ids = typeof req.query.ids === 'string' ? req.query.ids.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 200) : null;
     const recordings = ids ? ids.map((id) => deps.recorder!.get(id)).filter((r) => r !== null) : deps.recorder.list();
-    res.json({ status: deps.recorder.getStatus(), recordings });
+    // For asked-about calls with no recording: why it was not made, as noted when the call connected.
+    const missing = ids ? ids.filter((id) => !recordings.some((r) => r!.callId === id)) : [];
+    const notRecorded = deps.recordingSkips ? deps.recordingSkips.get(missing) : [];
+    res.json({ status: deps.recorder.getStatus(), recordings, notRecorded });
+  });
+
+  const recordingSettingsView = () => ({ ...deps.recordingSettings!.view(), status: deps.recorder?.getStatus() ?? null });
+  router.get('/recordings/settings', (_req: Request, res: Response) => {
+    if (!deps.recordingSettings) {
+      res.status(501).json({ error: 'Recording settings are not available on this gateway' });
+      return;
+    }
+    res.json(recordingSettingsView());
+  });
+
+  router.put('/recordings/settings', (req: Request, res: Response, next: NextFunction) => {
+    if (!deps.recordingSettings) {
+      res.status(501).json({ error: 'Recording settings are not available on this gateway' });
+      return;
+    }
+    try {
+      deps.recordingSettings.update(req.body);
+      res.json(recordingSettingsView());
+    } catch (error) {
+      if (error instanceof RecordingSettingsError) {
+        res.status(error.status).json({ error: error.message });
+        return;
+      }
+      next(error);
+    }
   });
 
   router.get('/recordings/:callId/audio.wav', async (req: Request, res: Response, next: NextFunction) => {

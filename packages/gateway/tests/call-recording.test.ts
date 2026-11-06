@@ -230,7 +230,7 @@ describe('CallRecorder', () => {
 
     const noConsent = harness({ consentAcknowledged: false });
     noConsent.activate(); noConsent.audio.frame(sine(440, 20)); noConsent.end();
-    expect(noConsent.recorder.getStatus().inactiveReason).toMatch(/CONSENT/);
+    expect(noConsent.recorder.getStatus().inactiveReason).toMatch(/consent acknowledgement has not been confirmed/);
     expect(fs.readdirSync(noConsent.dir)).toEqual([]);
   });
 
@@ -643,7 +643,8 @@ describe('recording through the real gateway call flow (mock hardware)', () => {
     const modem = new MockModemAdapter({ autoAnswerDelayMs: 0, ringIntervalMs: 100 });
     const audio = new MockAudioAdapter({ frameDurationMs: 20 });
     const server = createGatewayServer({
-      config: { modemDriver: 'mock', gatewayApiKey: KEYS, sqliteDbPath: path.join(dir, 'g.sqlite'), audioDumpDir: path.join(dir, 'dumps') },
+      // A random high port, so a gateway already running on this computer (port 4000) cannot make this test fail
+      config: { port: 41000 + Math.floor(Math.random() * 8000), host: '127.0.0.1', modemDriver: 'mock', gatewayApiKey: KEYS, sqliteDbPath: path.join(dir, 'g.sqlite'), audioDumpDir: path.join(dir, 'dumps') },
       modem,
       audio,
       instanceLockDir: dir,

@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { CallSession } from '@sim-gateway/shared';
 import { apiClient } from '../../lib/api-client';
 import { formatDate, formatDuration, getOutcomeBadge } from '../../lib/utils';
-import { nextRecordingAction, recordingAvailability, RecordingInfo } from '../../lib/recordings';
+import { nextRecordingAction, NotRecordedInfo, recordingAvailability, RecordingInfo } from '../../lib/recordings';
 import { CallDetailsModal } from './CallDetailsModal';
 import { PlayerHandle, RecordingActionButton, RecordingPlayer } from './RecordingPlayer';
 import {
@@ -29,6 +29,8 @@ export function CallHistoryTable() {
   const [selectedCallId, setSelectedCallId] = useState<string | null>(null);
   // What the gateway says about each call's recording on this page (null: it did not answer, so Play simply tries).
   const [recordings, setRecordings] = useState<Map<string, RecordingInfo> | null>(null);
+  // Why a connected call was not recorded (recording off, consent missing, failed to start), as the gateway noted it.
+  const [notRecorded, setNotRecorded] = useState<Map<string, NotRecordedInfo> | null>(null);
   // The call whose recording row is open under it (a player, or the reason there is no recording), and whether its audio is playing.
   const [openCallId, setOpenCallId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -38,14 +40,16 @@ export function CallHistoryTable() {
     try {
       const res = await apiClient.getRecordings(ids);
       setRecordings(new Map(res.recordings.map((r) => [r.callId, r])));
+      setNotRecorded(new Map((res.notRecorded ?? []).map((n) => [n.callId, n])));
     } catch {
       setRecordings(null); // not known: Play is offered and reports what happens when pressed
+      setNotRecorded(null);
     }
   };
 
   /** Play (or pause/resume) this call's recording; a call with no recording opens its reason instead. */
   const onRecordingAction = (callId: string) => {
-    const action = nextRecordingAction(openCallId, callId, recordingAvailability(calls.find((c) => c.id === callId) ?? { id: callId }, recordings));
+    const action = nextRecordingAction(openCallId, callId, recordingAvailability(calls.find((c) => c.id === callId) ?? { id: callId }, recordings, notRecorded));
     if (action === 'toggle') {
       player.current?.toggle();
     } else if (action === 'close') {
@@ -173,7 +177,7 @@ export function CallHistoryTable() {
                 filteredCalls.map((call) => {
                   const isInbound = call.direction === 'inbound';
                   const outcomeBadge = getOutcomeBadge(call.outcome);
-                  const availability = recordingAvailability(call, recordings);
+                  const availability = recordingAvailability(call, recordings, notRecorded);
                   const isOpen = openCallId === call.id;
 
                   return (

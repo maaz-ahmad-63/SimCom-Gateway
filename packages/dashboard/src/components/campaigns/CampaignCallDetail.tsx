@@ -349,7 +349,17 @@ export function CampaignCallDetailModal({ campaignId, attemptId, canAnalyze, onC
         const id = r.call.callId;
         apiClient
           .getRecordings([id])
-          .then((res) => alive && setRecording(recordingAvailability({ id, answeredAt: r.call.answeredAt, outcome: r.call.status }, new Map(res.recordings.map((x: RecordingInfo) => [x.callId, x])))))
+          .then(
+            (res) =>
+              alive &&
+              setRecording(
+                recordingAvailability(
+                  { id, answeredAt: r.call.answeredAt, outcome: r.call.status },
+                  new Map(res.recordings.map((x: RecordingInfo) => [x.callId, x])),
+                  new Map((res.notRecorded ?? []).map((n) => [n.callId, n]))
+                )
+              )
+          )
           .catch(() => alive && setRecording({ state: 'unknown' }));
       })
       .catch((e: Error) => alive && setError(e.message));

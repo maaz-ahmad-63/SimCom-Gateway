@@ -47,6 +47,7 @@ import { createAiRouter } from './api/routes/ai.js';
 import { AiCallOrchestrator } from './ai/orchestrator.js';
 import { AiRuntime } from './ai/runtime.js';
 import { CallRecorder } from './recording/call-recorder.js';
+import { RecordingSettingsService, RecordingSkipStore } from './recording/recording-settings.js';
 import { SmsInbox } from './sms/sms-inbox.js';
 import { SmsService } from './sms/sms-service.js';
 import { SmsStore } from './sms/sms-store.js';
@@ -393,12 +394,18 @@ export function createGatewayServer(
     for (const message of aiRuntime.config.warnings) logger.warn(`AI agent: ${message}`);
   }
 
-  // Complete-call recording: off unless enabled AND consent is acknowledged. Not the diagnostic capture feature.
+  // Complete-call recording: off unless enabled AND consent is acknowledged. Not the diagnostic capture feature. The CALL_RECORDING_*
+  // environment values are the starting point; what the operator saves in Settings > Call Recording wins and applies without a restart.
+  const recordingBase = { ...loadRecordingConfig(options.ai?.env ?? process.env), ...options.recording };
+  const recordingSkips = new RecordingSkipStore(db);
+  // (The callback only runs on a later settings change, after callRecorder exists.)
+  const recordingSettings = new RecordingSettingsService(repository, recordingBase, (next) => callRecorder.updateConfig(next));
   const callRecorder = new CallRecorder({
     audio,
     eventBus,
-    config: { ...loadRecordingConfig(options.ai?.env ?? process.env), ...options.recording },
+    config: recordingSettings.effective(),
     sampleRate: () => aiRuntime.config.config.audio.format?.sampleRate ?? config.audioSampleRate,
+    skips: recordingSkips,
   });
 
   // SMS: one service (so "one SMS operation at a time" and the call protection hold everywhere), a persistent message
@@ -529,6 +536,8 @@ export function createGatewayServer(
       portDiscovery,
       currentPorts,
       recorder: callRecorder,
+      recordingSettings,
+      recordingSkips,
       sms: smsService,
       smsInbox,
       smsStore,

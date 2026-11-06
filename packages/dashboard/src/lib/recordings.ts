@@ -54,9 +54,46 @@ export interface RecorderStatus {
   retentionDays: number;
 }
 
+/** Why a call that connected was not recorded, as the gateway noted it at that moment. */
+export interface NotRecordedInfo {
+  callId: string;
+  status: 'off' | 'no-consent' | 'config-error' | 'start-failed' | string;
+  reason: string;
+  at: string;
+}
+
 export interface RecordingsResponse {
   status: RecorderStatus | null;
   recordings: RecordingInfo[];
+  /** Only for calls asked about by id that have no recording (absent from an older gateway). */
+  notRecorded?: NotRecordedInfo[];
+}
+
+/** GET/PUT /api/gateway/recordings/settings (Settings > Call Recording). */
+export interface RecordingSettingsView {
+  settings: { enabled: boolean; consentAcknowledged: boolean; consentAcknowledgedAt: string | null; retentionDays: number; maxSeconds: number };
+  source: 'saved' | 'environment';
+  dir: string;
+  updatedAt: string | null;
+  status: RecorderStatus | null;
+}
+
+/** What the operator confirms before recording can be switched on (Settings > Call Recording). */
+export const CONSENT_TEXT =
+  'I confirm that recording these calls is lawful where I and the people I call are, and that I have given any notice or obtained any consent that the law requires (for example, telling callers the call is recorded).';
+
+/** The operator-facing sentence for a call that was not recorded. */
+export function notRecordedReason(n: NotRecordedInfo): string {
+  switch (n.status) {
+    case 'off':
+      return 'Not recorded: call recording was switched off when this call connected. Switch it on in Settings > Call Recording.';
+    case 'no-consent':
+      return 'Not recorded: recording was on, but the consent acknowledgement had not been confirmed (Settings > Call Recording).';
+    case 'start-failed':
+      return `The recording could not start, so this call was not recorded: ${n.reason}`;
+    default:
+      return `Not recorded: ${n.reason}`;
+  }
 }
 
 export type RecorderTone = 'good' | 'warn' | 'bad' | 'neutral';
@@ -114,7 +151,8 @@ const NEVER_CONNECTED = new Set(['missed', 'rejected', 'busy_rejected', 'busy', 
  */
 export function recordingAvailability(
   call: { id: string; answeredAt?: string | null; outcome?: string | null },
-  lookup: Map<string, RecordingInfo> | null
+  lookup: Map<string, RecordingInfo> | null,
+  notRecorded?: Map<string, NotRecordedInfo> | null
 ): RecordingAvailability {
   if (lookup === null) return { state: 'unknown' };
   const recording = lookup.get(call.id);
@@ -125,10 +163,15 @@ export function recordingAvailability(
     if (!recording.file) return { state: 'none', reason: recording.error ? `The recording could not be finished: ${recording.error}` : 'The recording is still being finished. Try again in a moment.' };
     return { state: 'none', reason: 'The recording file is no longer on the gateway (it may have been deleted by the retention setting).' };
   }
+  const skipped = notRecorded?.get(call.id);
+  if (skipped) return { state: 'none', reason: notRecordedReason(skipped) };
   if (!call.answeredAt && (call.outcome ? NEVER_CONNECTED.has(call.outcome) : true)) {
     return { state: 'none', reason: 'This call was never answered, so there is nothing to record.' };
   }
-  return { state: 'none', reason: 'No recording exists for this call. Recording is off unless CALL_RECORDING_ENABLED is on and the consent acknowledgement is set on the gateway, and it only covers calls made while it was on.' };
+  return {
+    state: 'none',
+    reason: 'No recording exists for this call. Calls are recorded only while recording is switched on with the consent acknowledgement confirmed (Settings > Call Recording), and only calls made while it was on.',
+  };
 }
 
 /**

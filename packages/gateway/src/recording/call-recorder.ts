@@ -4,6 +4,7 @@ import { AudioFrame, CallSession, CallStateChangeEvent, IAudioAdapter } from '@s
 import { GatewayEventBus } from '../core/event-bus.js';
 import { createLogger } from '../core/logger.js';
 import { RecordingConfig } from './config.js';
+import type { NotRecordedStatus } from './recording-settings.js';
 import { Mixdown, MixResult, toDbfs } from './mixdown.js';
 import { WavFileWriter } from './wav.js';
 
@@ -181,6 +182,8 @@ export interface CallRecorderDeps {
   /** The PCM rate of the audio path (16-bit mono). */
   sampleRate: () => number;
   now?: () => number;
+  /** Where the reason is kept when a call is not recorded (shown in the call history). */
+  skips?: { record(callId: string, status: NotRecordedStatus, reason: string): void };
 }
 
 const yieldToLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
@@ -195,7 +198,7 @@ const yieldToLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
  *
  * "Agent" is what was written to the audio port. A successful write does not prove the caller heard it, and the agent's audio is
  * placed where it was WRITTEN, which is up to the audio sink's write-ahead (150 ms) earlier than it plays.
- * Off by default, and it also needs CALL_RECORDING_CONSENT_ACKNOWLEDGED=true.
+ * Off by default; switched on in Settings > Call Recording (or CALL_RECORDING_* as starting values), always with the consent acknowledgement.
  */
 export class CallRecorder {
   private readonly logger = createLogger('CallRecorder');
@@ -214,31 +217,68 @@ export class CallRecorder {
   };
   private readonly onEnded = (session: CallSession) => this.finish(session.id, session);
 
+  private config: RecordingConfig;
+
   constructor(private readonly deps: CallRecorderDeps) {
     this.now = deps.now ?? (() => Date.now());
+    this.config = { ...deps.config };
   }
 
+  /** Why calls are not being recorded right now, or null when recording is armed. */
   get inactiveReason(): string | null {
-    const { config } = this.deps;
-    if (!config.enabled) return 'call recording is off (CALL_RECORDING_ENABLED)';
-    if (!config.consentAcknowledged) return 'recording is enabled but CALL_RECORDING_CONSENT_ACKNOWLEDGED is not true, so nothing is recorded';
-    if (config.errors.length > 0) return `recording configuration is invalid: ${config.errors[0]}`;
+    return this.inactive()?.reason ?? null;
+  }
+
+  private inactive(): { status: NotRecordedStatus; reason: string } | null {
+    const config = this.config;
+    if (!config.enabled) return { status: 'off', reason: 'call recording is switched off (Settings > Call Recording)' };
+    if (!config.consentAcknowledged) return { status: 'no-consent', reason: 'recording is switched on but the consent acknowledgement has not been confirmed, so nothing is recorded' };
+    if (config.errors.length > 0) return { status: 'config-error', reason: `recording configuration is invalid: ${config.errors[0]}` };
     return null;
   }
 
+  /**
+   * Listens to calls whether or not recording is armed (only to note why a call was not recorded); the audio listeners do nothing while
+   * no recording is in progress. Interrupted recordings from an earlier run are finished either way, so nothing already captured is lost.
+   */
   start(): void {
     if (this.started) return;
     this.started = true;
-    const { config } = this.deps;
-    if (config.enabled && this.inactiveReason) this.logger.warn(`Call recording is NOT active: ${this.inactiveReason}`);
-    if (this.inactiveReason) return;
-    this.logger.info(`Call recording armed; recordings are saved under ${path.resolve(config.dir)}`);
     this.deps.eventBus.on('call:state_changed', this.onState);
     this.deps.eventBus.on('call:ended', this.onEnded);
     this.deps.audio.on('audio_frame', this.onFrame);
     this.deps.audio.on('audio_out', this.onOut);
+    this.announce();
     this.recoverUnfinished();
-    this.purgeExpired();
+    if (!this.inactiveReason) this.purgeExpired();
+  }
+
+  /**
+   * New settings from Settings > Call Recording, applied at once: switching recording on takes effect from the next call (never midway
+   * through one); switching it off, or withdrawing consent, during a call ends that recording there and keeps what was captured, marked
+   * incomplete. The recordings folder does not change while running.
+   */
+  updateConfig(next: RecordingConfig): void {
+    const wasArmed = this.inactiveReason === null;
+    this.config = { ...next, dir: this.config.dir };
+    const armed = this.inactiveReason === null;
+    if (this.started && wasArmed !== armed) this.announce();
+    if (!armed && this.active) this.finish(this.active.callId, null, 'Recording was switched off during the call; the part before that was kept');
+    if (armed && this.started) this.purgeExpired();
+  }
+
+  private announce(): void {
+    const reason = this.inactiveReason;
+    if (reason) this.logger.info(`Call recording is not active: ${reason}`);
+    else this.logger.info(`Call recording armed; recordings are saved under ${path.resolve(this.config.dir)}`);
+  }
+
+  private noteSkip(callId: string, status: NotRecordedStatus, reason: string): void {
+    try {
+      this.deps.skips?.record(callId, status, reason);
+    } catch (error) {
+      this.logger.warn(`Could not note why call ${callId} was not recorded: ${(error as Error).message}`);
+    }
   }
 
   /** Finalize anything in progress, including mixes still running. Safe to call more than once; used at shutdown. */
@@ -272,15 +312,15 @@ export class CallRecorder {
   getStatus(): RecorderStatus {
     const a = this.active;
     return {
-      enabled: this.deps.config.enabled,
-      consentAcknowledged: this.deps.config.consentAcknowledged,
+      enabled: this.config.enabled,
+      consentAcknowledged: this.config.consentAcknowledged,
       inactiveReason: this.inactiveReason,
-      dir: this.deps.config.dir,
+      dir: this.config.dir,
       active: a
         ? { callId: a.callId, startedAt: a.meta.startedAt, callerBytes: a.caller.writer.dataBytes, agentBytes: a.agent.writer.dataBytes }
         : null,
       lastError: this.lastError,
-      retentionDays: this.deps.config.retentionDays,
+      retentionDays: this.config.retentionDays,
     };
   }
 
@@ -288,7 +328,7 @@ export class CallRecorder {
     const out: ListedRecording[] = [];
     let names: string[];
     try {
-      names = fs.readdirSync(this.deps.config.dir);
+      names = fs.readdirSync(this.config.dir);
     } catch {
       return out;
     }
@@ -354,11 +394,15 @@ export class CallRecorder {
   // ---- recording ----------------------------------------------------------------------------------
 
   private callDir(callId: string): string {
-    return path.join(path.resolve(this.deps.config.dir), callId);
+    return path.join(path.resolve(this.config.dir), callId);
   }
 
   private begin(session: CallSession): void {
-    if (this.inactiveReason) return;
+    const inactive = this.inactive();
+    if (inactive) {
+      if (this.active?.callId !== session.id) this.noteSkip(session.id, inactive.status, inactive.reason);
+      return;
+    }
     if (this.active) {
       if (this.active.callId === session.id) return; // a repeated ACTIVE event: one recording per call
       this.finish(this.active.callId, null, 'A new call started before this one was closed');
@@ -370,7 +414,7 @@ export class CallRecorder {
       const agentWriter = new WavFileWriter(path.join(dir, WORK_AGENT), rate);
       callerWriter.open();
       agentWriter.open();
-      const max = this.deps.config.maxSeconds * rate;
+      const max = this.config.maxSeconds * rate;
       const meta: RecordingMeta = {
         kind: RECORDING_KIND,
         callId: session.id,
@@ -385,7 +429,7 @@ export class CallRecorder {
         bitsPerSample: 16,
         format: 'wav-pcm-s16le',
         isSimulated: session.isSimulated,
-        consentAcknowledged: this.deps.config.consentAcknowledged,
+        consentAcknowledged: this.config.consentAcknowledged,
         truncated: false,
         file: null,
         bytes: 0,
@@ -411,7 +455,9 @@ export class CallRecorder {
       this.active = rec;
       this.logger.info(`Recording call ${session.id} (${rate} Hz, 16-bit mono)`);
     } catch (error) {
-      this.fail(`Could not start recording call ${session.id}: ${(error as Error).message}`);
+      const message = `Could not start recording call ${session.id}: ${(error as Error).message}`;
+      this.noteSkip(session.id, 'start-failed', message);
+      this.fail(message);
     }
   }
 
@@ -565,7 +611,7 @@ export class CallRecorder {
   private recoverUnfinished(): void {
     let names: string[];
     try {
-      names = fs.readdirSync(this.deps.config.dir);
+      names = fs.readdirSync(this.config.dir);
     } catch {
       return;
     }
@@ -637,7 +683,7 @@ export class CallRecorder {
 
   /** Deletes only finished recordings this feature made, and only when a retention period was configured. */
   private purgeExpired(): void {
-    const days = this.deps.config.retentionDays;
+    const days = this.config.retentionDays;
     if (days <= 0) return;
     const cutoff = this.now() - days * 86_400_000;
     for (const meta of this.list(100000)) {

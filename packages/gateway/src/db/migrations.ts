@@ -1,6 +1,7 @@
 import { AUDIO_VERIFICATION_SCHEMA_SQL } from '../ai/audio-verification-store.js';
 import { Database as DatabaseType } from 'better-sqlite3';
 import { OPS_SCHEMA_SQL } from '../ops/schema.js';
+import { RECORDING_SKIPS_SCHEMA_SQL } from '../recording/recording-settings.js';
 
 export interface Migration {
   version: number;
@@ -417,6 +418,14 @@ CREATE INDEX IF NOT EXISTS idx_canao_campaign ON call_analysis_overrides(campaig
     up: (db: DatabaseType) => {
       // Additive: one new table with the automatic call-audio verification result of each call. Nothing existing is changed.
       db.exec(AUDIO_VERIFICATION_SCHEMA_SQL);
+    },
+  },
+  {
+    version: 13,
+    name: '013_call_recording_skips',
+    up: (db: DatabaseType) => {
+      // Additive: one new table with why a call was not recorded (recording off, consent missing, failed to start). Nothing existing is changed.
+      db.exec(RECORDING_SKIPS_SCHEMA_SQL);
     },
   },
 ];

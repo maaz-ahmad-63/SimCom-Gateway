@@ -24,7 +24,7 @@ import {
 } from '@sim-gateway/shared';
 import { getGatewayClientConfig } from './config';
 import type { HardwarePorts, HardwareStatus } from './hardware-ops';
-import type { RecordingsResponse } from './recordings';
+import type { RecordingSettingsView, RecordingsResponse } from './recordings';
 import type { Attempt, Campaign, ColumnMapping, Contact, ContactStatus, Counts, CsvPreview, ImportResult, Review, RunnerStatus } from './campaigns';
 import type { CampaignUsage, LlmChoice } from './campaign-config';
 import type { BackupInfo, NetworkReading, OpsAlert, OpsHealth } from './ops';
@@ -216,6 +216,13 @@ export class GatewayApiClient {
    * GET /api/gateway/recordings — complete-call recordings (not diagnostic captures). With `callIds` it answers for exactly those calls
    * (the call history asks about the page it is showing), and each one says whether it can be played.
    */
+  /** Settings > Call Recording. */
+  getRecordingSettings(): Promise<RecordingSettingsView> {
+    return this.request<RecordingSettingsView>('/api/gateway/recordings/settings');
+  }
+  saveRecordingSettings(patch: Record<string, unknown>): Promise<RecordingSettingsView> {
+    return this.request<RecordingSettingsView>('/api/gateway/recordings/settings', { method: 'PUT', body: JSON.stringify(patch) });
+  }
   async getRecordings(callIds?: string[]): Promise<RecordingsResponse> {
     const query = callIds && callIds.length > 0 ? `?ids=${callIds.map(encodeURIComponent).join(',')}` : '';
     return this.request<RecordingsResponse>(`/api/gateway/recordings${query}`);

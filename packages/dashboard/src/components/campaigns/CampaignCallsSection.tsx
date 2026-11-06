@@ -22,7 +22,7 @@ import {
   sentimentTone,
   statusLabel,
 } from '../../lib/campaign-calls';
-import { nextRecordingAction, recordingAvailability, RecordingInfo } from '../../lib/recordings';
+import { nextRecordingAction, NotRecordedInfo, recordingAvailability, RecordingInfo } from '../../lib/recordings';
 import { formatDate } from '../../lib/utils';
 import { Badge, Card } from '../ai/ui';
 import { PlayerHandle, RecordingActionButton, RecordingPlayer } from '../calls/RecordingPlayer';
@@ -65,6 +65,8 @@ export interface TableProps {
   dir: 'asc' | 'desc';
   onSort: (s: CallSort) => void;
   recordings: Map<string, RecordingInfo> | null;
+  /** Why a connected call was not recorded (optional; absent from an older gateway). */
+  notRecorded?: Map<string, NotRecordedInfo> | null;
   openCallId: string | null;
   playing: boolean;
   player: React.MutableRefObject<PlayerHandle | null>;
@@ -92,9 +94,9 @@ const COLUMNS: Array<{ label: string; sort?: CallSort }> = [
   { label: 'Campaign sales outcome', sort: 'outcome' },
 ];
 
-function availabilityOf(row: CampaignCallRow, lookup: Map<string, RecordingInfo> | null) {
+function availabilityOf(row: CampaignCallRow, lookup: Map<string, RecordingInfo> | null, notRecorded?: Map<string, NotRecordedInfo> | null) {
   if (!row.callId) return { state: 'none' as const, reason: 'No call was placed for this attempt, so there is nothing to record.' };
-  return recordingAvailability({ id: row.callId, answeredAt: row.status === 'answered' ? row.startedAt : null, outcome: row.status }, lookup);
+  return recordingAvailability({ id: row.callId, answeredAt: row.status === 'answered' ? row.startedAt : null, outcome: row.status }, lookup, notRecorded);
 }
 
 /** The table. It has no state of its own, so every state of it can be drawn and tested. */
@@ -140,7 +142,7 @@ export function CampaignCallsTable(p: TableProps) {
               </tr>
             ) : (
               p.items.map((row) => {
-                const availability = availabilityOf(row, p.recordings);
+                const availability = availabilityOf(row, p.recordings, p.notRecorded);
                 const open = p.openCallId === String(row.attemptId);
                 const c = row.classification;
                 return (
@@ -248,6 +250,7 @@ export function CampaignCallsSection({ campaignId, refreshKey = 0, analysisAvail
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [recordings, setRecordings] = useState<Map<string, RecordingInfo> | null>(null);
+  const [notRecorded, setNotRecorded] = useState<Map<string, NotRecordedInfo> | null>(null);
   const [openCallId, setOpenCallId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [transcriptFor, setTranscriptFor] = useState<CampaignCallRow | null>(null);
@@ -280,7 +283,11 @@ export function CampaignCallsSection({ campaignId, refreshKey = 0, analysisAvail
       const ids = list.items.map((i) => i.callId).filter((x): x is string => !!x);
       apiClient
         .getRecordings(ids)
-        .then((res) => mine === ticket.current && setRecordings(new Map(res.recordings.map((r) => [r.callId, r]))))
+        .then((res) => {
+          if (mine !== ticket.current) return;
+          setRecordings(new Map(res.recordings.map((r) => [r.callId, r])));
+          setNotRecorded(new Map((res.notRecorded ?? []).map((n) => [n.callId, n])));
+        })
         .catch(() => mine === ticket.current && setRecordings(null));
     } catch (e) {
       if (mine === ticket.current) setError(e instanceof Error ? e.message : 'Could not load the calls');
@@ -295,7 +302,7 @@ export function CampaignCallsSection({ campaignId, refreshKey = 0, analysisAvail
 
   const onRecording = (row: CampaignCallRow) => {
     const key = String(row.attemptId);
-    const action = nextRecordingAction(openCallId, key, availabilityFor(row, recordings));
+    const action = nextRecordingAction(openCallId, key, availabilityFor(row, recordings, notRecorded));
     if (action === 'toggle') player.current?.toggle();
     else if (action === 'close') setOpenCallId(null);
     else {
@@ -386,6 +393,7 @@ export function CampaignCallsSection({ campaignId, refreshKey = 0, analysisAvail
           setPage(1);
         }}
         recordings={recordings}
+        notRecorded={notRecorded}
         openCallId={openCallId}
         playing={playing}
         player={player}
@@ -436,6 +444,6 @@ export function CampaignCallsSection({ campaignId, refreshKey = 0, analysisAvail
   );
 }
 
-function availabilityFor(row: CampaignCallRow, lookup: Map<string, RecordingInfo> | null) {
-  return availabilityOf(row, lookup);
+function availabilityFor(row: CampaignCallRow, lookup: Map<string, RecordingInfo> | null, notRecorded?: Map<string, NotRecordedInfo> | null) {
+  return availabilityOf(row, lookup, notRecorded);
 }
