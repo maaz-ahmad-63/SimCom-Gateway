@@ -1,5 +1,6 @@
 import type { AudioVerificationResponse, CallAudioVerification } from './audio-verification';
 import type { TtsVoicesResponse } from './tts-voices';
+import type { CredentialImportPreview, CredentialImportResult } from './env-import';
 import {
   AiAgentProfile,
   AiConversationReadiness,
@@ -362,6 +363,14 @@ export class GatewayApiClient {
   /** The key travels to the gateway once and is never returned. */
   saveAiCredential(name: string, value: string): Promise<{ credentials: AiCredentialStatus[] }> {
     return this.aiJson(`/credentials/${encodeURIComponent(name)}`, 'PUT', { value });
+  }
+  /** What importing pasted .env text would do. Nothing is stored. */
+  previewCredentialImport(text: string): Promise<CredentialImportPreview> {
+    return this.aiJson('/credentials/import/preview', 'POST', { text });
+  }
+  /** Stores the recognised keys from pasted .env text (only the chosen names, when given) in the gateway's encrypted store. */
+  applyCredentialImport(text: string, only?: string[]): Promise<CredentialImportResult> {
+    return this.aiJson('/credentials/import/apply', 'POST', only ? { text, only } : { text });
   }
   removeAiCredential(name: string): Promise<{ credentials: AiCredentialStatus[] }> {
     return this.aiJson(`/credentials/${encodeURIComponent(name)}`, 'DELETE');

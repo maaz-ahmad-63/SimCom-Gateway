@@ -207,6 +207,24 @@ export function createAiRouter(deps: AiRouteDependencies): Router {
     })
   );
 
+  // Bulk import from pasted .env text. Preview stores nothing; apply re-reads the text and stores the recognised keys. Neither ever
+  // returns a value except masked (••••1234).
+  router.post(
+    '/credentials/import/preview',
+    wrap((req, res) => {
+      const { values: _values, ...plan } = runtime.planCredentialImport((req.body as { text?: unknown } | undefined)?.text);
+      res.json(plan);
+    })
+  );
+
+  router.post(
+    '/credentials/import/apply',
+    wrap((req, res) => {
+      const body = (req.body ?? {}) as { text?: unknown; only?: unknown };
+      res.json(runtime.applyCredentialImport(body.text, body.only));
+    })
+  );
+
   router.put(
     '/credentials/:name',
     wrap((req, res) => {

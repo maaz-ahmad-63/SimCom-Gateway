@@ -36,6 +36,8 @@ import { AiSettingsService, credentialProviders, SettingsError } from './setting
 import { extractEndCall, hasSpeechContent, ProtocolTextFilter } from './text.js';
 import { TraceHub } from './trace.js';
 import { listProviderVoices, ProviderVoice, supportsVoiceList, VoiceListError } from './voices.js';
+import { apiKeyProblem, MAX_IMPORT_CHARS, parseEnvText } from './env-import.js';
+import { maskSecret } from './secrets.js';
 import { createHash } from 'node:crypto';
 import type { ObservabilityStore } from './observability-store.js';
 import { AiUsageStore } from './usage-store.js';
@@ -496,6 +498,78 @@ export class AiRuntime {
   removeCredential(name: string): void {
     this.options.settings.deleteSecret(name);
     this.reload();
+  }
+
+  /**
+   * What importing pasted .env text would do, without storing anything. Recognised = a credential name the gateway can store (the
+   * built-in providers plus every credential a registry provider names). Values are only ever reported masked; unrelated variables are
+   * reported by name only and never stored.
+   */
+  planCredentialImport(text: unknown) {
+    if (typeof text !== 'string') throw new SettingsError('text must be a string');
+    if (text.length > MAX_IMPORT_CHARS) throw new SettingsError(`The pasted text is too long (over ${MAX_IMPORT_CHARS} characters)`);
+    const labels = credentialProviders();
+    const parsed = parseEnvText(text);
+    const recognized: Array<{ name: string; provider: string; line: number; action: 'add' | 'update' | 'unchanged'; masked: string; overridesEnv: boolean }> = [];
+    const invalid: Array<{ line: number; name: string | null; reason: string }> = parsed.problems.map((p) => ({ ...p }));
+    const unrecognized: Array<{ line: number; name: string }> = [];
+    const values = new Map<string, string>();
+    for (const e of parsed.entries) {
+      if (!(e.name in labels)) {
+        unrecognized.push({ line: e.line, name: e.name });
+        continue;
+      }
+      const problem = apiKeyProblem(e.value);
+      if (problem) {
+        invalid.push({ line: e.line, name: e.name, reason: problem });
+        continue;
+      }
+      const value = e.value.trim();
+      const current = this.options.settings.credentialSource(e.name);
+      const same = current.source === 'stored' && this.options.settings.resolveSecret(e.name) === value;
+      recognized.push({
+        name: e.name,
+        provider: labels[e.name],
+        line: e.line,
+        action: same ? 'unchanged' : current.source === 'stored' ? 'update' : 'add',
+        masked: maskSecret(value),
+        overridesEnv: current.source === 'env' && !same,
+      });
+      values.set(e.name, value);
+    }
+    return { recognized, invalid, unrecognized, duplicates: parsed.duplicates, secretStorageAvailable: this.options.settings.secretStorageAvailable, values };
+  }
+
+  /**
+   * Stores every recognised key from pasted .env text (or only `only`, when given) in the encrypted store, then reloads the configuration
+   * once so the providers use them without a restart. Everything is checked before anything is written: an unusable store, or a name in
+   * `only` that is not a valid recognised key, stores nothing. Keys of providers not in the text are left as they are; .env is not touched.
+   */
+  applyCredentialImport(text: unknown, only?: unknown) {
+    const plan = this.planCredentialImport(text);
+    if (!plan.secretStorageAvailable) {
+      throw new SettingsError('Key storage is not enabled on this gateway (AI_SECRETS_MASTER_KEY is not set), so nothing was imported', 409);
+    }
+    let chosen = plan.recognized;
+    if (only !== undefined) {
+      if (!Array.isArray(only) || !only.every((n) => typeof n === 'string')) throw new SettingsError('only must be a list of credential names');
+      const missing = only.filter((n) => !plan.recognized.some((r) => r.name === n));
+      if (missing.length > 0) throw new SettingsError(`Not importable from this text: ${missing.join(', ')}`);
+      chosen = plan.recognized.filter((r) => only.includes(r.name));
+    }
+    const written = chosen.filter((r) => r.action !== 'unchanged');
+    for (const r of written) this.options.settings.setSecret(r.name, plan.values.get(r.name));
+    if (written.length > 0) this.reload();
+    const names = (action: string) => chosen.filter((r) => r.action === action).map((r) => ({ name: r.name, provider: r.provider, masked: r.masked }));
+    return {
+      added: names('add'),
+      updated: names('update'),
+      unchanged: names('unchanged'),
+      invalid: plan.invalid,
+      unrecognized: plan.unrecognized,
+      duplicates: plan.duplicates,
+      credentials: this.credentials(),
+    };
   }
 
   /**

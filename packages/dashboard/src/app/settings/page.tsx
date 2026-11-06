@@ -8,6 +8,7 @@ import {
   DEFAULT_GATEWAY_URL,
 } from '../../lib/config';
 import { UpdatesCard } from '../../components/updates/UpdatesCard';
+import { SettingsNav } from '../../components/settings/SettingsNav';
 import { apiClient, GatewayApiClient, GatewayApiError } from '../../lib/api-client';
 import { useGateway } from '../../lib/context/GatewayContext';
 import { portText } from '../../lib/hardware-mode';
@@ -93,6 +94,7 @@ export default function SettingsPage() {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
+      <SettingsNav />
       <div className="border-b border-slate-800/80 pb-4">
         <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
           <Sliders className="w-5 h-5 text-cyan-400" />
