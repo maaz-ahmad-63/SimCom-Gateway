@@ -85,6 +85,18 @@ export function parseEnvText(text: string): EnvParseResult {
   return { entries: [...byName.values()], problems, duplicates: [...duplicates] };
 }
 
+/**
+ * Other names people's .env files commonly use for the same provider key (vendor SDK defaults). Only mapped when the target is a
+ * credential this gateway stores; when both names are given, the gateway's own name wins. Never GATEWAY_API_KEY: that is the gateway's
+ * own access key, not a provider key.
+ */
+export const CREDENTIAL_ALIASES: Readonly<Record<string, string>> = {
+  ELEVEN_API_KEY: 'ELEVENLABS_API_KEY',
+  XI_API_KEY: 'ELEVENLABS_API_KEY',
+  GOOGLE_API_KEY: 'GEMINI_API_KEY',
+  GOOGLE_GENERATIVE_AI_API_KEY: 'GEMINI_API_KEY',
+};
+
 /** The same rule the encrypted store enforces (8-512 characters, no whitespace or control characters), plus obvious placeholders. */
 export function apiKeyProblem(value: string): string | null {
   const v = value.trim();

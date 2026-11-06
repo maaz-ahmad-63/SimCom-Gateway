@@ -320,7 +320,7 @@ export const PROTOCOLS: Protocol[] = [
     endpoint: { kind: 'full', scheme: 'https', default: MURF_API_URL },
     facts: facts('tts'),
     options: ttsOptions,
-    probe: ({ key }) => ({ url: 'https://global.api.murf.ai/v1/speech/voices', headers: { 'api-key': key }, lists: null }),
+    probe: ({ key }) => ({ url: 'https://api.murf.ai/v1/speech/voices', headers: { 'api-key': key }, lists: null }),
     create: (c, m) => new MurfTts({ ...common(c), apiKey: c.apiKey, voice: c.config.tts.voice, rateKey: m.key, sampleRates: m.sampleRates, model: c.config.tts.model ?? m.model ?? undefined, url: c.endpoint, timeoutMs: c.config.timeoutsMs.tts }),
   },
   {

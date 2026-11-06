@@ -97,7 +97,10 @@ export function EnvImport() {
                       <input type="checkbox" aria-label={`Import ${r.name}`} checked={selected.includes(r.name)} disabled={r.action === 'unchanged'} onChange={() => toggle(r.name)} className="accent-cyan-500" />
                     </td>
                     <td className="py-1.5 pr-2 text-slate-200">{r.provider}</td>
-                    <td className="py-1.5 pr-2 font-mono text-slate-400">{r.name}</td>
+                    <td className="py-1.5 pr-2 font-mono text-slate-400">
+                      {r.name}
+                      {r.from && <span className="block font-sans text-[11px] text-slate-500">from {r.from}</span>}
+                    </td>
                     <td className="py-1.5 pr-2 font-mono text-slate-400">{r.masked}</td>
                     <td className="py-1.5">
                       <Badge tone={r.action === 'add' ? 'good' : r.action === 'update' ? 'warn' : 'neutral'}>{ACTION_LABEL[r.action]}</Badge>

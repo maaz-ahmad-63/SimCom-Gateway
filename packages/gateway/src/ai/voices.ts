@@ -6,7 +6,7 @@
  * Documented list APIs used here:
  *   cartesia-tts   GET https://api.cartesia.ai/voices                          (Bearer, Cartesia-Version)
  *   elevenlabs-tts GET https://api.elevenlabs.io/v2/voices                     (xi-api-key)
- *   murf-tts       GET https://global.api.murf.ai/v1/speech/voices?model=...   (api-key)
+ *   murf-tts       GET https://api.murf.ai/v1/speech/voices?model=...   (api-key)
  *   inworld-tts    GET https://api.inworld.ai/voices/v1/voices                 (Basic)
  *   deepgram-tts   GET https://api.deepgram.com/v1/models  (the "tts" list)    (Token)
  *   soniox-tts     GET https://api.soniox.com/v1/shared-voices?model=...       (Bearer)
@@ -140,7 +140,7 @@ async function elevenlabs(o: VoiceListOptions): Promise<ProviderVoice[]> {
 
 async function murf(o: VoiceListOptions): Promise<ProviderVoice[]> {
   const model = o.model ? `?model=${encodeURIComponent(o.model)}` : '';
-  const body = await getJson(o, 'Murf', `https://global.api.murf.ai/v1/speech/voices${model}`, { 'api-key': o.key });
+  const body = await getJson(o, 'Murf', `https://api.murf.ai/v1/speech/voices${model}`, { 'api-key': o.key });
   const out: ProviderVoice[] = [];
   for (const v of arrayAt(body, 'voices') as Rec[]) {
     const id = firstStr(v.voiceId, v.voice_id, v.id);

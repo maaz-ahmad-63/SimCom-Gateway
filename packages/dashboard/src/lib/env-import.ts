@@ -2,7 +2,8 @@ import type { AiCredentialStatus } from '@sim-gateway/shared';
 
 /** POST /api/ai/credentials/import/preview: what an import would do. Values appear only masked (••••1234). */
 export interface CredentialImportPreview {
-  recognized: Array<{ name: string; provider: string; line: number; action: 'add' | 'update' | 'unchanged'; masked: string; overridesEnv: boolean }>;
+  /** `from`: the name the pasted text used when it was a well-known other name for this key (ELEVEN_API_KEY for ELEVENLABS_API_KEY). */
+  recognized: Array<{ name: string; provider: string; line: number; action: 'add' | 'update' | 'unchanged'; masked: string; overridesEnv: boolean; from?: string }>;
   invalid: Array<{ line: number; name: string | null; reason: string }>;
   unrecognized: Array<{ line: number; name: string }>;
   duplicates: string[];

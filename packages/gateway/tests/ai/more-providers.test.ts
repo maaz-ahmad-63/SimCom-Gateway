@@ -245,7 +245,7 @@ describe('selection, credentials and models through the existing catalog', () =>
       expect(CREDENTIAL_PROVIDERS[name], name).toBeTruthy();
       expect(credentialProbe(name, SECRET).url, name).toMatch(/^https:\/\//);
     }
-    expect(credentialProbe('MURF_API_KEY', SECRET)).toEqual({ url: 'https://global.api.murf.ai/v1/speech/voices', headers: { 'api-key': SECRET } });
+    expect(credentialProbe('MURF_API_KEY', SECRET)).toEqual({ url: 'https://api.murf.ai/v1/speech/voices', headers: { 'api-key': SECRET } });
     expect(credentialProbe('INWORLD_API_KEY', SECRET).headers).toEqual({ Authorization: `Basic ${SECRET}` });
     expect(credentialProbe('SONIOX_API_KEY', SECRET).headers).toEqual({ Authorization: `Bearer ${SECRET}` });
   });

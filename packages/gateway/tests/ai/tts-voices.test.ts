@@ -83,7 +83,7 @@ describe('provider voice lists', () => {
     const h = await boot((url) => {
       if (url.startsWith('https://api.cartesia.ai/voices')) return json({ data: [{ id: 'uuid-1', name: 'Katie', language: 'en', gender: 'feminine', description: 'calm' }], has_more: false });
       if (url.startsWith('https://api.elevenlabs.io/v2/voices')) return json({ voices: [{ voice_id: 'el-1', name: 'Rachel', labels: { gender: 'female', accent: 'american' } }], has_more: false });
-      if (url.startsWith('https://global.api.murf.ai/v1/speech/voices')) return json([{ voiceId: 'en-US-natalie', displayName: 'Natalie (F)', locale: 'en-US', gender: 'Female' }]);
+      if (url.startsWith('https://api.murf.ai/v1/speech/voices')) return json([{ voiceId: 'en-US-natalie', displayName: 'Natalie (F)', locale: 'en-US', gender: 'Female' }]);
       if (url === 'https://api.deepgram.com/v1/models') return json({ stt: [{ name: 'nova-3' }], tts: [{ name: 'thalia', canonical_name: 'aura-2-thalia-en', languages: ['en-us'], metadata: { accent: 'American', tags: ['feminine'] } }] });
       if (url.startsWith('https://api.soniox.com/v1/shared-voices')) return json({ voices: [{ id: 'Maya', gender: 'female', accent: 'american', description: 'bright' }], next_page_cursor: null });
       return json({}, 404);

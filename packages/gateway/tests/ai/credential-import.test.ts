@@ -180,6 +180,21 @@ describe('POST /api/ai/credentials/import', () => {
     expect(res.body.recognized.map((r: any) => [r.name, r.provider])).toEqual([['ACME_API_KEY', 'Acme AI']]);
   });
 
+  it('maps well-known other names (ELEVEN_API_KEY, GOOGLE_API_KEY) to the stored credential, never the gateway key, and the own name wins', async () => {
+    const h = await boot();
+    const res = await h.post('/api/ai/credentials/import/preview', {
+      text: ['ELEVEN_API_KEY=eleven-key-value-0001', 'GOOGLE_API_KEY=AIzaGoogleKeyValue0002', 'GATEWAY_API_KEY=the-gateways-own-key-0003', 'RIME_API_KEY=unsupported-provider-0004'].join('\n'),
+    });
+    expect(res.body.recognized.map((r: any) => [r.name, r.from, r.provider])).toEqual([
+      ['ELEVENLABS_API_KEY', 'ELEVEN_API_KEY', 'ElevenLabs'],
+      ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'Google Gemini'],
+    ]);
+    expect(res.body.unrecognized.map((u: any) => u.name)).toEqual(['GATEWAY_API_KEY', 'RIME_API_KEY']);
+    const both = await h.post('/api/ai/credentials/import/apply', { text: 'ELEVEN_API_KEY=eleven-key-value-0001\nELEVENLABS_API_KEY=elevenlabs-own-name-0005' });
+    expect(both.body.added.map((a: any) => a.name)).toEqual(['ELEVENLABS_API_KEY']);
+    expect(h.server.aiRuntime['options'].settings.resolveSecret('ELEVENLABS_API_KEY')).toBe('elevenlabs-own-name-0005');
+  });
+
   it('refuses something that is not text', async () => {
     const h = await boot();
     expect((await h.post('/api/ai/credentials/import/preview', { text: 42 })).status).toBe(400);

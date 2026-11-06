@@ -36,7 +36,7 @@ import { AiSettingsService, credentialProviders, SettingsError } from './setting
 import { extractEndCall, hasSpeechContent, ProtocolTextFilter } from './text.js';
 import { TraceHub } from './trace.js';
 import { listProviderVoices, ProviderVoice, supportsVoiceList, VoiceListError } from './voices.js';
-import { apiKeyProblem, MAX_IMPORT_CHARS, parseEnvText } from './env-import.js';
+import { apiKeyProblem, CREDENTIAL_ALIASES, MAX_IMPORT_CHARS, parseEnvText } from './env-import.js';
 import { maskSecret } from './secrets.js';
 import { createHash } from 'node:crypto';
 import type { ObservabilityStore } from './observability-store.js';
@@ -510,11 +510,15 @@ export class AiRuntime {
     if (text.length > MAX_IMPORT_CHARS) throw new SettingsError(`The pasted text is too long (over ${MAX_IMPORT_CHARS} characters)`);
     const labels = credentialProviders();
     const parsed = parseEnvText(text);
-    const recognized: Array<{ name: string; provider: string; line: number; action: 'add' | 'update' | 'unchanged'; masked: string; overridesEnv: boolean }> = [];
+    const recognized: Array<{ name: string; provider: string; line: number; action: 'add' | 'update' | 'unchanged'; masked: string; overridesEnv: boolean; from?: string }> = [];
     const invalid: Array<{ line: number; name: string | null; reason: string }> = parsed.problems.map((p) => ({ ...p }));
     const unrecognized: Array<{ line: number; name: string }> = [];
     const values = new Map<string, string>();
-    for (const e of parsed.entries) {
+    const given = new Set(parsed.entries.map((e) => e.name));
+    for (const raw of parsed.entries) {
+      // A well-known other name for a stored credential (ELEVEN_API_KEY -> ELEVENLABS_API_KEY); the gateway's own name wins if both are given.
+      const alias = CREDENTIAL_ALIASES[raw.name];
+      const e = alias && alias in labels && !given.has(alias) ? { ...raw, name: alias, from: raw.name } : { ...raw, from: undefined };
       if (!(e.name in labels)) {
         unrecognized.push({ line: e.line, name: e.name });
         continue;
@@ -534,6 +538,7 @@ export class AiRuntime {
         action: same ? 'unchanged' : current.source === 'stored' ? 'update' : 'add',
         masked: maskSecret(value),
         overridesEnv: current.source === 'env' && !same,
+        ...(e.from ? { from: e.from } : {}),
       });
       values.set(e.name, value);
     }
@@ -1228,8 +1233,9 @@ export function credentialProbe(
         headers: { Authorization: `Bearer ${key}`, 'Cartesia-Version': cartesiaVersion ?? '2026-08-14' },
       };
     case 'MURF_API_KEY':
-      // The account's voice list: authenticated, read-only (documented: GET /v1/speech/voices, key in the api-key header).
-      return { url: 'https://global.api.murf.ai/v1/speech/voices', headers: { 'api-key': key } };
+      // The account's voice list: authenticated, read-only (GET /v1/speech/voices, key in the api-key header). Only on api.murf.ai: the
+      // global host used for streaming synthesis answers 400 "not available on global.api.murf.ai" (checked live 2026-11-06).
+      return { url: 'https://api.murf.ai/v1/speech/voices', headers: { 'api-key': key } };
     case 'INWORLD_API_KEY':
       return { url: 'https://api.inworld.ai/voices/v1/voices?pageSize=1', headers: { Authorization: `Basic ${key}` } };
     case 'SONIOX_API_KEY':
