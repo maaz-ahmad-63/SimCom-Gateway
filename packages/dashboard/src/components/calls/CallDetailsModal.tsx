@@ -51,8 +51,8 @@ export function CallDetailsModal({ callId, onClose }: CallDetailsModalProps) {
   const outcomeBadge = getOutcomeBadge(session?.outcome);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-[#0f172a] border border-slate-800 rounded-xl w-full max-w-2xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
+      <div className="bg-surface border border-slate-800 rounded-lg w-full max-w-2xl max-h-[85vh] flex flex-col shadow-lg overflow-hidden">
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
           <div>
@@ -92,28 +92,28 @@ export function CallDetailsModal({ callId, onClose }: CallDetailsModalProps) {
               {/* Summary Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
                 <div className="bg-slate-900/80 rounded-lg p-2.5 border border-slate-800/80">
-                  <div className="text-[10px] text-slate-500 font-mono uppercase">Remote Party</div>
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide font-medium">Remote Party</div>
                   <div className="font-mono font-bold text-white mt-0.5 truncate">
                     {session.remoteNumber}
                   </div>
                 </div>
 
                 <div className="bg-slate-900/80 rounded-lg p-2.5 border border-slate-800/80">
-                  <div className="text-[10px] text-slate-500 font-mono uppercase">Direction</div>
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide font-medium">Direction</div>
                   <div className="font-mono font-semibold text-slate-200 mt-0.5 capitalize">
                     {session.direction}
                   </div>
                 </div>
 
                 <div className="bg-slate-900/80 rounded-lg p-2.5 border border-slate-800/80">
-                  <div className="text-[10px] text-slate-500 font-mono uppercase">Duration</div>
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide font-medium">Duration</div>
                   <div className="font-mono font-bold text-emerald-400 mt-0.5">
                     {formatDuration(session.durationSeconds)}
                   </div>
                 </div>
 
                 <div className="bg-slate-900/80 rounded-lg p-2.5 border border-slate-800/80">
-                  <div className="text-[10px] text-slate-500 font-mono uppercase">Outcome</div>
+                  <div className="text-[10px] text-slate-500 uppercase tracking-wide font-medium">Outcome</div>
                   <div className="mt-0.5">
                     <span
                       className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-mono border ${outcomeBadge.className}`}
@@ -156,7 +156,7 @@ export function CallDetailsModal({ callId, onClose }: CallDetailsModalProps) {
 
               {/* Event Timeline */}
               <div className="space-y-2">
-                <h4 className="text-xs font-semibold uppercase font-mono tracking-wider text-slate-400 flex items-center gap-1.5">
+                <h4 className="text-xs font-semibold uppercase tracking-wide font-medium tracking-wider text-slate-400 flex items-center gap-1.5">
                   <Clock className="w-3.5 h-3.5" /> Chronological Event Timeline
                 </h4>
 

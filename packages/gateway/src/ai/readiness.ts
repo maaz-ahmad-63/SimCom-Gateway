@@ -133,8 +133,8 @@ export function checkAiReadiness(input: ReadinessInput): AiReadiness {
       'fail',
       wireState === 'not-expected'
         ? usb?.registrationUncertain
-          ? "USB audio has not been activated for this call, and the module may still hold a registration from the previous call (its stop command, AT+CPCMREG=0, was rejected). Activate it with the documented step; this check passes only once bytes are flowing"
-          : "USB audio has not been activated for this call (the gateway has not registered it with the module), so no audio bytes arrive. Activate it with the documented step; this check passes only once bytes are flowing"
+          ? "USB audio has not been activated for this call, and the module may still hold a registration from the previous call (its stop command, AT+CPCMREG=0, was rejected). Hands-free calling activates it automatically when it handles the call (see the call's log); this check passes only once bytes are flowing"
+          : "USB audio has not been activated for this call (the gateway has not registered it with the module), so no audio bytes arrive. Hands-free calling activates it automatically when it handles the call (see the call's log); this check passes only once bytes are flowing"
         : wireState === 'unverified' && usb?.lastDeactivation && !usb.lastDeactivation.ok
           ? "the USB audio registration could not be stopped (AT+CPCMREG=0 was rejected), so the module's audio state is unknown and no stream is trusted"
           : `the USB audio stream is '${wireState}', not flowing`,

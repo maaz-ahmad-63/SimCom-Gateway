@@ -106,7 +106,7 @@ export function ReviewStep({ campaign, contactsVersion, onStarted, restart = fal
                 I have the right to contact these people, and anyone who opted out is marked as such.
               </label>
               <label className="block">
-                <span className="block text-[10px] text-slate-500 uppercase font-mono mb-1">Type the campaign name to confirm: {campaign.name}</span>
+                <span className="block text-[10px] text-slate-500 uppercase tracking-wide font-medium mb-1">Type the campaign name to confirm: {campaign.name}</span>
                 <TextInput value={typed} onChange={(e) => setTyped(e.target.value)} aria-label="Campaign name" autoComplete="off" />
               </label>
               {blockers.length > 0 && (

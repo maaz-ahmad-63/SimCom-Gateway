@@ -18,7 +18,7 @@ export function ModemTelemetryCard() {
   const platform = health?.system?.platform ?? '—';
 
   return (
-    <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 space-y-4">
+    <div className="bg-surface border border-slate-800 rounded-lg p-5 space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Server className="w-4 h-4 text-emerald-400" />
@@ -35,7 +35,7 @@ export function ModemTelemetryCard() {
       <div className="grid grid-cols-2 gap-3 text-xs">
         {/* Hardware Model */}
         <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/80">
-          <div className="text-[10px] text-slate-500 uppercase font-mono flex items-center gap-1.5">
+          <div className="text-[10px] text-slate-500 uppercase tracking-wide font-medium flex items-center gap-1.5">
             <Cpu className="w-3 h-3 text-slate-400" /> Device Model
           </div>
           <div className="font-mono font-semibold text-white mt-1 truncate">{model}</div>
@@ -44,7 +44,7 @@ export function ModemTelemetryCard() {
 
         {/* Carrier & Registration */}
         <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/80">
-          <div className="text-[10px] text-slate-500 uppercase font-mono flex items-center gap-1.5">
+          <div className="text-[10px] text-slate-500 uppercase tracking-wide font-medium flex items-center gap-1.5">
             <Radio className="w-3 h-3 text-cyan-400" /> Cellular Carrier
           </div>
           <div className="font-mono font-semibold text-white mt-1">{carrier}</div>
@@ -55,7 +55,7 @@ export function ModemTelemetryCard() {
 
         {/* Signal Quality */}
         <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/80">
-          <div className="text-[10px] text-slate-500 uppercase font-mono flex items-center gap-1.5">
+          <div className="text-[10px] text-slate-500 uppercase tracking-wide font-medium flex items-center gap-1.5">
             <Signal className="w-3 h-3 text-amber-400" /> Signal Quality
           </div>
           <div className="font-mono font-semibold text-white mt-1">
@@ -68,7 +68,7 @@ export function ModemTelemetryCard() {
 
         {/* Host System & Ports */}
         <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/80">
-          <div className="text-[10px] text-slate-500 uppercase font-mono flex items-center gap-1.5">
+          <div className="text-[10px] text-slate-500 uppercase tracking-wide font-medium flex items-center gap-1.5">
             <HardDrive className="w-3 h-3 text-purple-400" /> Host & Runtime
           </div>
           <div className="font-mono font-semibold text-white mt-1 capitalize">{platform} host</div>

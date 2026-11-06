@@ -18,7 +18,7 @@ export default function DashboardPage() {
       {/* Page Title */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-800/80 pb-4">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-white">
+          <h1 className="text-lg font-semibold text-white">
             Gateway Operations
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
@@ -29,7 +29,7 @@ export default function DashboardPage() {
 
       {/* Connection Error Banner */}
       {error && (
-        <div className="p-3.5 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-300 text-xs font-mono flex items-center gap-3">
+        <div className="p-3.5 rounded-lg bg-rose-950/60 border border-rose-800/80 text-rose-300 text-xs font-mono flex items-center gap-3">
           <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
           <div className="flex-1">
             <span className="font-semibold">Gateway Connection Error: </span>

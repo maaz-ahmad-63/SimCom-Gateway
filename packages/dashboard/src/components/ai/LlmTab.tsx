@@ -70,7 +70,7 @@ function TextTest() {
       {result && (
         <div className="space-y-3">
           <div className="bg-slate-950/60 border border-slate-800 rounded-lg p-3">
-            <p className="text-[10px] uppercase font-mono text-slate-500 mb-1">
+            <p className="text-[10px] uppercase tracking-wide font-medium text-slate-500 mb-1">
               Reply from {result.model}
               {result.mock ? ' (offline mock provider)' : ''}
             </p>
@@ -147,7 +147,7 @@ export function LlmTab() {
         </div>
 
         <div className="space-y-2">
-          <p className="text-[10px] uppercase font-mono text-slate-500">Set by the gateway for this model (not editable)</p>
+          <p className="text-[10px] uppercase tracking-wide font-medium text-slate-500">Set by the gateway for this model (not editable)</p>
           {fixed.length === 0 ? (
             <p className="text-xs text-slate-500">None.</p>
           ) : (

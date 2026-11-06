@@ -104,7 +104,7 @@ export function CallHistoryTable() {
   return (
     <div className="space-y-4">
       {/* Controls Bar */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 rounded-xl p-3">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-surface border border-slate-800 rounded-lg p-3">
         {/* Search */}
         <div className="relative w-full sm:w-64">
           <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -146,11 +146,11 @@ export function CallHistoryTable() {
       </div>
 
       {/* Table */}
-      <div className="border border-slate-800 rounded-xl bg-slate-900/40 overflow-hidden shadow-sm">
+      <div className="border border-slate-800 rounded-lg bg-slate-900/40 overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
-              <tr className="border-b border-slate-800 bg-slate-950/70 text-[11px] font-mono uppercase tracking-wider text-slate-400">
+              <tr className="border-b border-slate-800 bg-slate-950/70 text-[11px] uppercase tracking-wide font-medium tracking-wider text-slate-400">
                 <th className="py-3 px-4">Remote Number</th>
                 <th className="py-3 px-3">Direction</th>
                 <th className="py-3 px-3">Duration</th>

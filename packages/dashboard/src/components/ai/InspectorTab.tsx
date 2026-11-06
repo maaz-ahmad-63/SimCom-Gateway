@@ -90,7 +90,7 @@ export function TurnCard({ turn }: { turn: TurnView }) {
 
       <table className="w-full text-xs">
         <thead>
-          <tr className="text-[10px] uppercase font-mono text-slate-500 text-left">
+          <tr className="text-[10px] uppercase tracking-wide font-medium text-slate-500 text-left">
             <th className="py-1 pr-2 font-normal">Stage</th>
             <th className="py-1 pr-2 font-normal">Status</th>
             <th className="py-1 pr-2 font-normal">Time</th>

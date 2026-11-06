@@ -24,7 +24,7 @@ export function IvrView() {
 
   if (ivr.loadError && !overview) {
     return (
-      <div role="alert" className="p-3.5 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-300 text-xs font-mono flex items-center gap-3">
+      <div role="alert" className="p-3.5 rounded-lg bg-rose-950/60 border border-rose-800/80 text-rose-300 text-xs font-mono flex items-center gap-3">
         <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
         <span>
           <span className="font-semibold">Gateway IVR API: </span>

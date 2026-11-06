@@ -52,9 +52,9 @@ export function DialPad({ onKeyPress, disabled }: DialPadProps) {
           type="button"
           onClick={() => handleClick(char)}
           disabled={disabled}
-          className="h-14 rounded-xl bg-slate-900/80 hover:bg-slate-800 border border-slate-800 text-slate-100 flex flex-col items-center justify-center transition active:scale-95 disabled:opacity-50 select-none shadow-sm hover:border-slate-700"
+          className="h-14 rounded-lg bg-slate-900/80 hover:bg-slate-800 border border-slate-800 text-slate-100 flex flex-col items-center justify-center transition active:scale-95 disabled:opacity-50 select-none shadow-sm hover:border-slate-700"
         >
-          <span className="text-xl font-bold font-mono leading-none">{char}</span>
+          <span className="text-lg font-semibold font-mono leading-none">{char}</span>
           {letters ? (
             <span className="text-[9px] font-mono tracking-widest text-slate-500 mt-1 uppercase">
               {letters}

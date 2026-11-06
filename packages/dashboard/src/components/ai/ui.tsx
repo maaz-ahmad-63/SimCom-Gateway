@@ -6,10 +6,10 @@ import { GatewayApiError } from '../../lib/api-client';
 import type { Tone } from '../../lib/ai-secrets';
 
 const TONES: Record<Tone, string> = {
-  good: 'bg-emerald-950/60 text-emerald-300 border-emerald-800/70',
-  warn: 'bg-amber-950/60 text-amber-300 border-amber-800/70',
-  bad: 'bg-rose-950/60 text-rose-300 border-rose-800/70',
-  neutral: 'bg-slate-800/60 text-slate-300 border-slate-700/70',
+  good: 'bg-emerald-950/40 text-emerald-300 border-emerald-800/60',
+  warn: 'bg-amber-950/40 text-amber-300 border-amber-800/60',
+  bad: 'bg-rose-950/40 text-rose-300 border-rose-800/60',
+  neutral: 'bg-slate-800/50 text-slate-300 border-slate-700/60',
 };
 
 export function Card({
@@ -24,12 +24,12 @@ export function Card({
   children: React.ReactNode;
 }) {
   return (
-    <section className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 space-y-4">
+    <section className="bg-surface border border-slate-800 rounded-lg p-5 space-y-4">
       {(title || actions) && (
         <div className="flex items-start justify-between gap-3">
-          <div>
-            {title && <h2 className="text-sm font-semibold text-white">{title}</h2>}
-            {subtitle && <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">{subtitle}</p>}
+          <div className="min-w-0">
+            {title && <h2 className="text-[15px] font-semibold text-white leading-6">{title}</h2>}
+            {subtitle && <p className="text-[13px] text-slate-400 mt-0.5 leading-relaxed max-w-3xl">{subtitle}</p>}
           </div>
           {actions}
         </div>
@@ -41,25 +41,25 @@ export function Card({
 
 export function Badge({ tone = 'neutral', children }: { tone?: Tone; children: React.ReactNode }) {
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-mono ${TONES[tone]}`}>{children}</span>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] font-medium ${TONES[tone]}`}>{children}</span>
   );
 }
 
 export function Label({ children }: { children: React.ReactNode }) {
-  return <span className="block text-[10px] text-slate-500 uppercase font-mono mb-1">{children}</span>;
+  return <span className="block text-xs font-medium text-slate-300 mb-1.5">{children}</span>;
 }
 
 export function Tile({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="bg-slate-950/60 rounded-lg p-3 border border-slate-800/80">
-      <Label>{label}</Label>
-      <div className="text-sm text-slate-200 font-mono break-words">{children}</div>
+    <div className="bg-slate-950/60 rounded-md p-3 border border-slate-800">
+      <span className="block text-[11px] text-slate-500 mb-1">{label}</span>
+      <div className="text-sm text-slate-100 font-medium break-words tabular-nums">{children}</div>
     </div>
   );
 }
 
 const inputClass =
-  'w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-xs text-slate-200 font-mono placeholder:text-slate-600 focus:outline-none focus:border-cyan-700 disabled:opacity-50';
+  'w-full bg-slate-950 border border-slate-700/70 rounded-md px-3 py-2 text-[13px] text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500/20 disabled:opacity-50';
 
 export const TextInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(function TextInput(props, ref) {
   return <input ref={ref} {...props} className={`${inputClass} ${props.className ?? ''}`} />;
@@ -85,7 +85,7 @@ export function Field({ label, hint, children }: { label: string; hint?: React.R
     <label className="block">
       <Label>{label}</Label>
       {children}
-      {hint && <span className="block text-[11px] text-slate-500 mt-1 leading-relaxed">{hint}</span>}
+      {hint && <span className="block text-xs text-slate-500 mt-1.5 leading-relaxed">{hint}</span>}
     </label>
   );
 }
@@ -111,21 +111,22 @@ export function Toggle({
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 h-4 w-4 accent-cyan-500"
+        className="mt-0.5 h-4 w-4 accent-cyan-600"
       />
       <span>
-        <span className="block text-xs text-slate-200 font-medium">{label}</span>
-        {hint && <span className="block text-[11px] text-slate-500 mt-0.5 leading-relaxed">{hint}</span>}
+        <span className="block text-[13px] text-slate-100 font-medium">{label}</span>
+        {hint && <span className="block text-xs text-slate-400 mt-0.5 leading-relaxed">{hint}</span>}
       </span>
     </label>
   );
 }
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger';
+// Primary uses the semantic primary token (a solid brand blue in both themes); the others follow the palette tokens.
 const BUTTONS: Record<ButtonVariant, string> = {
-  primary: 'bg-cyan-700 hover:bg-cyan-600 text-white border-cyan-600',
-  secondary: 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700',
-  danger: 'bg-rose-900/70 hover:bg-rose-800 text-rose-100 border-rose-800',
+  primary: 'bg-primary hover:bg-primary-hover text-primary-foreground border-transparent',
+  secondary: 'bg-surface hover:bg-slate-800/60 text-slate-200 border-slate-700/80',
+  danger: 'bg-surface hover:bg-rose-950/50 text-rose-300 border-rose-800/70',
 };
 
 export function Button({
@@ -139,7 +140,7 @@ export function Button({
       type="button"
       {...props}
       disabled={props.disabled || busy}
-      className={`inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md border text-xs font-medium transition disabled:opacity-50 disabled:cursor-not-allowed ${BUTTONS[variant]} ${props.className ?? ''}`}
+      className={`inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md border text-[13px] font-medium transition disabled:opacity-50 disabled:cursor-not-allowed ${BUTTONS[variant]} ${props.className ?? ''}`}
     >
       {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
       {children}

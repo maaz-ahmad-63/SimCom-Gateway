@@ -189,7 +189,7 @@ export function ContactsStep({ campaign, existing, onImported }: { campaign: Cam
 
   const fieldSelect = (f: (typeof CONTACT_FIELDS)[number]) => (
     <label key={f.key} className="block">
-      <span className="block text-[10px] text-slate-500 uppercase font-mono mb-1">
+      <span className="block text-[10px] text-slate-500 uppercase tracking-wide font-medium mb-1">
         {f.label}
         {f.required ? ' * (required)' : ' (detected from the file)'}
       </span>

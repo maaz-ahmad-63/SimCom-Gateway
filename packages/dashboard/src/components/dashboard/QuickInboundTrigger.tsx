@@ -13,7 +13,7 @@ export function QuickInboundTrigger() {
 
   if (!isSimulated) {
     return (
-      <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 text-xs text-slate-500 flex items-center gap-2">
+      <div className="bg-surface border border-slate-800 rounded-lg p-5 text-xs text-slate-500 flex items-center gap-2">
         <AlertCircle className="w-4 h-4 text-slate-600 shrink-0" />
         <span>Mock simulation triggers are disabled when connected to physical modem hardware.</span>
       </div>
@@ -47,7 +47,7 @@ export function QuickInboundTrigger() {
   const isCallInProgress = Boolean(activeCall && activeCall.state !== 'IDLE');
 
   return (
-    <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 space-y-4">
+    <div className="bg-surface border border-slate-800 rounded-lg p-5 space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <PhoneIncoming className="w-4 h-4 text-cyan-400" />
@@ -68,7 +68,7 @@ export function QuickInboundTrigger() {
       <form onSubmit={handleSubmit} className="space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
           <div className="sm:col-span-2">
-            <label className="block text-[10px] font-mono uppercase text-slate-500 mb-1">
+            <label className="block text-[10px] uppercase tracking-wide font-medium text-slate-500 mb-1">
               Caller Phone Number (E.164)
             </label>
             <input
@@ -82,7 +82,7 @@ export function QuickInboundTrigger() {
           </div>
 
           <div>
-            <label className="block text-[10px] font-mono uppercase text-slate-500 mb-1">
+            <label className="block text-[10px] uppercase tracking-wide font-medium text-slate-500 mb-1">
               Max Rings
             </label>
             <input
@@ -99,7 +99,7 @@ export function QuickInboundTrigger() {
         <button
           type="submit"
           disabled={isLoading || isCallInProgress}
-          className="w-full py-2 px-3 rounded-md text-xs font-semibold bg-cyan-600 hover:bg-cyan-500 text-white transition flex items-center justify-center gap-2 disabled:opacity-50"
+          className="w-full py-2 px-3 rounded-md text-xs font-semibold bg-cyan-600 hover:bg-cyan-500 text-primary-foreground transition flex items-center justify-center gap-2 disabled:opacity-50"
         >
           <Play className="w-3.5 h-3.5 fill-current" />
           <span>

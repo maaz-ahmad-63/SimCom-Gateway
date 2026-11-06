@@ -48,7 +48,7 @@ export function RecordingPlayerView(p: PlayerViewProps) {
             type="button"
             onClick={p.onToggle}
             aria-label={p.playing ? 'Pause recording' : 'Play recording'}
-            className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-cyan-700 hover:bg-cyan-600 text-white"
+            className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-cyan-700 hover:bg-cyan-600 text-primary-foreground"
           >
             {p.playing ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
           </button>

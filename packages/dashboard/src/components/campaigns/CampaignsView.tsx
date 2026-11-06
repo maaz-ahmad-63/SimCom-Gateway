@@ -122,7 +122,7 @@ export function CampaignsView() {
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="text-left text-slate-500 border-b border-slate-800 text-[11px] uppercase font-mono">
+                <tr className="text-left text-slate-500 border-b border-slate-800 text-[11px] uppercase tracking-wide font-medium">
                   <th className="py-2 pr-3">Name</th>
                   <th className="py-2 pr-3">Status</th>
                   <th className="py-2 pr-3">Contacts</th>

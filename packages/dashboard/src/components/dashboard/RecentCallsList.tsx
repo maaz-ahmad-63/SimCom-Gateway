@@ -29,7 +29,7 @@ export function RecentCallsList() {
   }, [lastCallEnded, activeCall?.state]);
 
   return (
-    <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 space-y-4">
+    <div className="bg-surface border border-slate-800 rounded-lg p-5 space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <History className="w-4 h-4 text-purple-400" />

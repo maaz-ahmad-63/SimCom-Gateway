@@ -91,7 +91,7 @@ function RecordingTest() {
             <Tile label="Estimated cost">{result.estimatedCostUsd === null ? 'n/a' : `$${result.estimatedCostUsd.toFixed(5)}`}</Tile>
           </div>
           <div className="bg-slate-950/60 border border-slate-800 rounded-lg p-3">
-            <p className="text-[10px] uppercase font-mono text-slate-500 mb-1">Transcript{result.mock ? ' (offline mock provider)' : ''}</p>
+            <p className="text-[10px] uppercase tracking-wide font-medium text-slate-500 mb-1">Transcript{result.mock ? ' (offline mock provider)' : ''}</p>
             <p className="text-sm text-slate-100">{result.transcript || '(the provider returned no words)'}</p>
           </div>
           <p className="text-[11px] text-slate-500">{result.note}</p>
@@ -196,7 +196,7 @@ export function SttTab() {
       <Card title="Live diagnostics" subtitle="What the speech-to-text stage is receiving and returning right now.">
         {session ? <MeterCard session={session} /> : <p className="text-xs text-slate-500">No AI session is attached to a call.</p>}
         <div>
-          <p className="text-[10px] uppercase font-mono text-slate-500 mb-1">Recent results</p>
+          <p className="text-[10px] uppercase tracking-wide font-medium text-slate-500 mb-1">Recent results</p>
           {recent.length === 0 ? (
             <p className="text-xs text-slate-500">Nothing transcribed yet.</p>
           ) : (

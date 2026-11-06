@@ -191,7 +191,7 @@ export default function SmsPage() {
     <div className="space-y-6">
       <div className="border-b border-slate-800/80 pb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold text-white">SMS</h1>
+          <h1 className="text-lg font-semibold text-white">SMS</h1>
           <p className="text-xs text-slate-400 mt-0.5">
             Messages the modem receives are copied to the gateway and kept there. Opening or refreshing this page never marks a message as read, and nothing is deleted.
           </p>
@@ -206,7 +206,7 @@ export default function SmsPage() {
 
       {setup && <SetupNotice text={setup} />}
       {error && !setup && (
-        <div role="alert" className="p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-300 text-xs">
+        <div role="alert" className="p-3 rounded-lg bg-rose-950/60 border border-rose-800/80 text-rose-300 text-xs">
           {error.message}
         </div>
       )}

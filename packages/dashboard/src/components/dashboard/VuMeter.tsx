@@ -20,7 +20,7 @@ export function VuMeter() {
   const activeOutboundSegments = Math.round((outboundPercent / 100) * totalSegments);
 
   return (
-    <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 space-y-4">
+    <div className="bg-surface border border-slate-800 rounded-lg p-5 space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Activity className="w-4 h-4 text-cyan-400" />

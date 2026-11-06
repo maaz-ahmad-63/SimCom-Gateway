@@ -35,7 +35,7 @@ export function IncomingCallBanner() {
   };
 
   return (
-    <div className="bg-gradient-to-r from-amber-950/90 via-slate-900 to-amber-950/90 border-b border-amber-500/40 px-4 py-2.5 shadow-lg flex flex-col sm:flex-row items-center justify-between gap-3 animate-pulse">
+    <div role="alert" className="bg-amber-950/60 border-b border-amber-700/60 px-4 py-2.5 flex flex-col sm:flex-row items-center justify-between gap-3">
       <div className="flex items-center gap-3">
         <div className="h-8 w-8 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center">
           <PhoneIncoming className="w-4 h-4 animate-bounce" />
@@ -68,7 +68,7 @@ export function IncomingCallBanner() {
         <button
           onClick={handleAnswer}
           disabled={isProcessing}
-          className="flex-1 sm:flex-initial px-4 py-1.5 rounded-md text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+          className="flex-1 sm:flex-initial px-4 py-1.5 rounded-md text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-primary-foreground shadow-sm transition flex items-center justify-center gap-1.5 disabled:opacity-50"
         >
           <Phone className="w-3.5 h-3.5" />
           <span>Answer</span>

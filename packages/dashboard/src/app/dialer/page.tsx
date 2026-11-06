@@ -50,7 +50,7 @@ export default function DialerPage() {
   return (
     <div className="max-w-md mx-auto space-y-6">
       <div className="text-center space-y-1">
-        <h1 className="text-xl font-bold tracking-tight text-white flex items-center justify-center gap-2">
+        <h1 className="text-lg font-semibold text-white flex items-center justify-center gap-2">
           <Phone className="w-5 h-5 text-emerald-400" />
           Cellular Dialer
         </h1>
@@ -60,10 +60,10 @@ export default function DialerPage() {
       </div>
 
       {/* Main Dialer Box */}
-      <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-5">
+      <div className="bg-surface border border-slate-800 rounded-lg p-6 shadow-lg space-y-5">
         {/* State / Caller Banner */}
         {isCallInProgress && (
-          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between font-mono text-xs">
+          <div className="p-3 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between font-mono text-xs">
             <div>
               <div className="text-[10px] text-slate-500 uppercase">Current Call</div>
               <div className="font-bold text-white text-sm">
@@ -94,7 +94,7 @@ export default function DialerPage() {
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 placeholder="+91..."
-                className="w-full h-14 bg-slate-950 border border-slate-800 rounded-xl px-4 text-center text-2xl font-bold font-mono text-white placeholder-slate-700 tracking-wider focus:outline-none focus:border-cyan-500"
+                className="w-full h-14 bg-slate-950 border border-slate-800 rounded-lg px-4 text-center text-2xl font-bold font-mono text-white placeholder-slate-700 tracking-wider focus:outline-none focus:border-cyan-500"
               />
 
               {phoneNumber.length > 0 && (

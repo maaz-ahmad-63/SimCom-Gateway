@@ -69,7 +69,7 @@ export function AgentTab() {
 
       <AutomationCard draft={draft} setDraft={setDraft} attestations={state.settings.attestations} />
       {dirty && (
-        <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5">
+        <div className="bg-surface border border-slate-800 rounded-lg p-5">
           <SaveBar dirty={dirty} problems={problems} action={action} onSave={save} onCancel={cancel} />
         </div>
       )}

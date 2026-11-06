@@ -37,7 +37,7 @@ export function AlertCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-white">{alert.title}</span>
             <Badge tone={severityTone(alert.severity)}>{SEVERITY_LABEL[alert.severity]}</Badge>
-            <span className="text-[10px] font-mono uppercase text-slate-400">{alert.component}</span>
+            <span className="text-[10px] uppercase tracking-wide font-medium text-slate-400">{alert.component}</span>
           </div>
           <p className="text-slate-200">{alert.message}</p>
           {alert.action && (
@@ -92,7 +92,7 @@ export function DiagnosticsDialog({ alertId, onClose }: { alertId: number; onClo
   }, [alertId, onClose]);
   return (
     <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-label="Technical details" onClick={(e) => e.stopPropagation()} className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-xl border border-slate-800 bg-[#0f172a] p-5 space-y-3 text-xs">
+      <div role="dialog" aria-modal="true" aria-label="Technical details" onClick={(e) => e.stopPropagation()} className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-lg border border-slate-800 bg-surface p-5 space-y-3 text-xs">
         <div className="flex items-start justify-between">
           <h2 className="text-sm font-bold text-white">Technical details</h2>
           <button type="button" onClick={onClose} aria-label="Close" className="p-1 text-slate-400 hover:text-white">
@@ -191,7 +191,7 @@ export function AlertCenter() {
       )}
       <div className="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2">
         {open && (
-          <div className="w-[26rem] max-w-[92vw] max-h-[70vh] overflow-y-auto rounded-xl border border-slate-800 bg-[#0f172a] p-3 space-y-2 shadow-2xl" data-testid="alert-menu">
+          <div className="w-[26rem] max-w-[92vw] max-h-[70vh] overflow-y-auto rounded-lg border border-slate-800 bg-surface p-3 space-y-2 shadow-lg" data-testid="alert-menu">
             <div className="flex items-center justify-between">
               <h2 className="text-sm font-bold text-white">Alerts</h2>
               <a href="/health" className="text-[11px] text-cyan-400 hover:underline">

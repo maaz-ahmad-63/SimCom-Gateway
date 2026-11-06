@@ -53,7 +53,7 @@ export function SettingsStep({ campaign, onSaved, readOnly }: { campaign: Campai
           </Field>
         </div>
         <div>
-          <span className="block text-[10px] text-slate-500 uppercase font-mono mb-1">Retry when the call ended as</span>
+          <span className="block text-[10px] text-slate-500 uppercase tracking-wide font-medium mb-1">Retry when the call ended as</span>
           <div className="flex gap-4">
             {(Object.keys(RETRY_LABELS) as Array<keyof typeof RETRY_LABELS>).map((k) => (
               <label key={k} className="flex items-center gap-1.5 text-xs text-slate-300">
@@ -78,7 +78,7 @@ export function SettingsStep({ campaign, onSaved, readOnly }: { campaign: Campai
             <TextInput value={form.timeZone} onChange={(e) => set('timeZone', e.target.value)} placeholder="Asia/Kolkata" />
           </Field>
           <div>
-            <span className="block text-[10px] text-slate-500 uppercase font-mono mb-1">Days</span>
+            <span className="block text-[10px] text-slate-500 uppercase tracking-wide font-medium mb-1">Days</span>
             <div className="flex flex-wrap gap-2">
               {DAY_LABELS.map((d, i) => (
                 <label key={d} className="flex items-center gap-1 text-[11px] text-slate-300">

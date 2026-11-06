@@ -59,8 +59,8 @@ function Modal({ title, subtitle, onClose, children }: { title: string; subtitle
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
-      <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()} className="bg-[#0f172a] border border-slate-800 rounded-xl w-full max-w-3xl max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={onClose}>
+      <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()} className="bg-surface border border-slate-800 rounded-lg w-full max-w-3xl max-h-[88vh] flex flex-col shadow-lg overflow-hidden">
         <div className="px-5 py-4 border-b border-slate-800 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-sm font-bold text-white">{title}</h2>
@@ -201,7 +201,7 @@ export function CallDetailBody(p: DetailBodyProps) {
         <p className="text-[11px] text-slate-500">A correction is laid over the result for the table, the counts and the export. The AI's original answer stays saved{ai ? ` (${OUTCOME_LABELS[ai.outcome]}, ${call.analysisDetail.ranAt ? formatDate(call.analysisDetail.ranAt) : ''})` : ''}.</p>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <label className="block">
-            <span className="block text-[10px] text-slate-500 uppercase font-mono mb-1">Outcome</span>
+            <span className="block text-[10px] text-slate-500 uppercase tracking-wide font-medium mb-1">Outcome</span>
             <Select value={p.draft.outcome} onChange={(e) => p.onDraft({ ...p.draft, outcome: e.target.value as Outcome | '' })} aria-label="Outcome">
               <option value="">Keep the current result</option>
               {CORRECTABLE_OUTCOMES.map((o) => (
@@ -212,7 +212,7 @@ export function CallDetailBody(p: DetailBodyProps) {
             </Select>
           </label>
           <label className="block">
-            <span className="block text-[10px] text-slate-500 uppercase font-mono mb-1">Interest</span>
+            <span className="block text-[10px] text-slate-500 uppercase tracking-wide font-medium mb-1">Interest</span>
             <Select value={p.draft.interest} onChange={(e) => p.onDraft({ ...p.draft, interest: e.target.value as Interest | '' })} aria-label="Interest">
               <option value="">Keep the current result</option>
               {(['high', 'medium', 'low', 'none'] as Interest[]).map((i) => (

@@ -216,7 +216,7 @@ export function ObservabilityView() {
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
-                <tr className="text-left text-slate-500 border-b border-slate-800 text-[11px] uppercase font-mono">
+                <tr className="text-left text-slate-500 border-b border-slate-800 text-[11px] uppercase tracking-wide font-medium">
                   <th className="py-2 pr-3">Started</th>
                   <th className="py-2 pr-3">Dir</th>
                   <th className="py-2 pr-3">Duration</th>
@@ -270,7 +270,7 @@ export function ObservabilityView() {
       )}
 
       {selected && (
-        <aside className="fixed inset-y-0 right-0 z-40 w-full md:w-[760px] max-w-full overflow-y-auto bg-[#0b1020] border-l border-slate-800 shadow-2xl p-4" data-testid="call-drawer" aria-label="Call detail">
+        <aside className="fixed inset-y-0 right-0 z-40 w-full md:w-[760px] max-w-full overflow-y-auto bg-surface border-l border-slate-800 shadow-lg p-4" data-testid="call-drawer" aria-label="Call detail">
           {/* key: a different call is a different component, so nothing of the previous call can remain */}
           <CallDetailPanel key={selected} callId={selected} onClose={() => select(null)} />
         </aside>

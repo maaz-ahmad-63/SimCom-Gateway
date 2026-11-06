@@ -96,7 +96,7 @@ export default function SettingsPage() {
     <div className="max-w-3xl mx-auto space-y-6">
       <SettingsNav />
       <div className="border-b border-slate-800/80 pb-4">
-        <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-2">
+        <h1 className="text-lg font-semibold text-white flex items-center gap-2">
           <Sliders className="w-5 h-5 text-cyan-400" />
           Gateway Connection & Security
         </h1>
@@ -106,7 +106,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Connection Form */}
-      <form onSubmit={handleSave} className="bg-slate-900/70 border border-slate-800 rounded-2xl p-6 shadow-sm space-y-5">
+      <form onSubmit={handleSave} className="bg-surface border border-slate-800 rounded-lg p-6 shadow-sm space-y-5">
         <h2 className="text-sm font-semibold text-white uppercase tracking-wider font-mono flex items-center gap-2">
           <Server className="w-4 h-4 text-emerald-400" />
           Dashboard Connection Parameters
@@ -164,7 +164,7 @@ export default function SettingsPage() {
         <div className="flex flex-wrap items-center gap-3 pt-2">
           <button
             type="submit"
-            className="px-4 py-2 rounded-lg text-xs font-semibold bg-cyan-600 hover:bg-cyan-500 text-white shadow-sm transition"
+            className="px-4 py-2 rounded-lg text-xs font-semibold bg-cyan-600 hover:bg-cyan-500 text-primary-foreground shadow-sm transition"
           >
             Save & Reconnect
           </button>
@@ -218,7 +218,7 @@ export default function SettingsPage() {
       <UpdatesCard />
 
       {/* Host Settings Info Card */}
-      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-4">
+      <div className="bg-surface border border-slate-800 rounded-lg p-6 space-y-4">
         <h2 className="text-sm font-semibold text-white uppercase tracking-wider font-mono flex items-center gap-2">
           <Radio className="w-4 h-4 text-amber-400" />
           Gateway Host Configuration (Read-Only)
@@ -259,7 +259,7 @@ export default function SettingsPage() {
       </div>
 
       {/* Cross-Network LAN Setup Guide */}
-      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-3">
+      <div className="bg-surface border border-slate-800 rounded-lg p-6 space-y-3">
         <h2 className="text-sm font-semibold text-white uppercase tracking-wider font-mono flex items-center gap-2">
           <Shield className="w-4 h-4 text-purple-400" />
           Mac-to-Windows LAN Deployment Guide

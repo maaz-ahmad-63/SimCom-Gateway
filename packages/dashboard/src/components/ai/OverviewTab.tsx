@@ -100,7 +100,7 @@ function ReadinessCard() {
       </ul>
       {readiness.checks.some((c) => c.name === 'inbound-wire' && c.status !== 'pass') && (
         <p className="text-[11px] text-slate-500 leading-relaxed">
-          Caller audio starts only after the modem’s USB audio is activated for the call. This page never sends that command (it changes the modem’s PCM registration); use the documented activate step in docs/WINDOWS_HARDWARE_INTEGRATION.md, then watch this check turn to pass.
+          Caller audio starts only after the modem’s USB audio is activated for the call. The gateway does this by itself for every call it handles automatically, and this check passes once audio bytes are actually flowing. If it stays failed during a call, the call’s log in Call Logs says why.
         </p>
       )}
     </Card>
@@ -335,7 +335,7 @@ export function OverviewTab() {
       <TestResponseCard />
       <RecordingCard />
       <AudioVerificationPanel />
-      <details className="rounded-xl border border-slate-800 bg-slate-900/40 p-4" data-testid="diagnostics-override">
+      <details className="rounded-lg border border-slate-800 bg-slate-900/40 p-4" data-testid="diagnostics-override">
         <summary className="cursor-pointer text-sm text-slate-300">Diagnostics: manual audio confirmation (optional override)</summary>
         <p className="text-[11px] text-slate-500 mt-2 mb-3">
           Not part of normal calls. A person's confirmation never changes the automatic results above; it is only used for replies when

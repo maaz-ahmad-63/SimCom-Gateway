@@ -21,7 +21,7 @@ export function CallControls({ onDial, isValidNumber, isSubmitting }: CallContro
         type="button"
         onClick={onDial}
         disabled={!isValidNumber || isSubmitting}
-        className="w-full h-12 rounded-xl text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md transition flex items-center justify-center gap-2.5 disabled:opacity-40 disabled:hover:bg-emerald-600"
+        className="w-full h-12 rounded-lg text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-primary-foreground shadow-md transition flex items-center justify-center gap-2.5 disabled:opacity-40 disabled:hover:bg-emerald-600"
       >
         <Phone className="w-4 h-4 fill-current" />
         <span>{isSubmitting ? 'Dialing...' : 'Initiate Call'}</span>
@@ -39,7 +39,7 @@ export function CallControls({ onDial, isValidNumber, isSubmitting }: CallContro
           type="button"
           onClick={() => hangup('User cancelled call before answer')}
           disabled={isSubmitting}
-          className="w-full h-12 rounded-xl text-sm font-semibold bg-rose-600 hover:bg-rose-500 text-white shadow-md transition flex items-center justify-center gap-2.5 disabled:opacity-50"
+          className="w-full h-12 rounded-lg text-sm font-semibold bg-rose-600 hover:bg-rose-500 text-primary-foreground shadow-md transition flex items-center justify-center gap-2.5 disabled:opacity-50"
         >
           <PhoneOff className="w-4 h-4" />
           <span>Cancel Call</span>
@@ -55,7 +55,7 @@ export function CallControls({ onDial, isValidNumber, isSubmitting }: CallContro
           type="button"
           onClick={() => hangup('Operator declined incoming call')}
           disabled={isSubmitting}
-          className="h-12 rounded-xl text-sm font-semibold bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 transition flex items-center justify-center gap-2 disabled:opacity-50"
+          className="h-12 rounded-lg text-sm font-semibold bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 transition flex items-center justify-center gap-2 disabled:opacity-50"
         >
           <PhoneOff className="w-4 h-4" />
           <span>Decline</span>
@@ -65,7 +65,7 @@ export function CallControls({ onDial, isValidNumber, isSubmitting }: CallContro
           type="button"
           onClick={() => answer()}
           disabled={isSubmitting}
-          className="h-12 rounded-xl text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-white shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50"
+          className="h-12 rounded-lg text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-primary-foreground shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50"
         >
           <PhoneCall className="w-4 h-4" />
           <span>Answer</span>
@@ -80,7 +80,7 @@ export function CallControls({ onDial, isValidNumber, isSubmitting }: CallContro
         type="button"
         onClick={() => hangup('User ended active call')}
         disabled={isSubmitting}
-        className="w-full h-12 rounded-xl text-sm font-semibold bg-rose-600 hover:bg-rose-500 text-white shadow-md transition flex items-center justify-center gap-2.5 disabled:opacity-50"
+        className="w-full h-12 rounded-lg text-sm font-semibold bg-rose-600 hover:bg-rose-500 text-primary-foreground shadow-md transition flex items-center justify-center gap-2.5 disabled:opacity-50"
       >
         <PhoneOff className="w-4 h-4" />
         <span>End Call</span>
@@ -93,7 +93,7 @@ export function CallControls({ onDial, isValidNumber, isSubmitting }: CallContro
     <button
       type="button"
       disabled
-      className="w-full h-12 rounded-xl text-sm font-semibold bg-slate-800 text-slate-500 transition flex items-center justify-center gap-2.5"
+      className="w-full h-12 rounded-lg text-sm font-semibold bg-slate-800 text-slate-500 transition flex items-center justify-center gap-2.5"
     >
       <PhoneOff className="w-4 h-4" />
       <span>Terminating Call...</span>

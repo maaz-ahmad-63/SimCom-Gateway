@@ -61,7 +61,7 @@ export function ModelsTable({ stage, view, actions }: { stage: Stage; view: HubV
     <div className="overflow-x-auto">
       <table className="w-full text-xs" aria-label={`${STAGE_LABEL[stage]} registry`}>
         <thead>
-          <tr className="text-[10px] uppercase font-mono text-slate-500 text-left">
+          <tr className="text-[10px] uppercase tracking-wide font-medium text-slate-500 text-left">
             <th className="py-1 pr-3 font-normal">Model</th>
             <th className="py-1 pr-3 font-normal">Provider and protocol</th>
             <th className="py-1 pr-3 font-normal">Status</th>
@@ -456,7 +456,7 @@ export function ProvidersTable({ view, onTest, onEdit, onToggle, onRemove, busyI
     <div className="overflow-x-auto">
       <table className="w-full text-xs" aria-label="Providers">
         <thead>
-          <tr className="text-[10px] uppercase font-mono text-slate-500 text-left">
+          <tr className="text-[10px] uppercase tracking-wide font-medium text-slate-500 text-left">
             <th className="py-1 pr-3 font-normal">Provider</th>
             <th className="py-1 pr-3 font-normal">Base URL</th>
             <th className="py-1 pr-3 font-normal">Credential</th>
@@ -686,7 +686,7 @@ function PricingPanel({ view, onView }: { view: HubView; onView: (v: HubView) =>
         <div className="overflow-x-auto">
           <table className="w-full text-xs" aria-label="Prices">
             <thead>
-              <tr className="text-[10px] uppercase font-mono text-slate-500 text-left">
+              <tr className="text-[10px] uppercase tracking-wide font-medium text-slate-500 text-left">
                 <th className="py-1 pr-3 font-normal">Model</th>
                 <th className="py-1 pr-3 font-normal">Rates</th>
                 <th className="py-1 pr-3 font-normal">Plan</th>

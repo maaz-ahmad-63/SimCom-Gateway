@@ -99,7 +99,7 @@ export function UsageTab() {
           <div className="overflow-x-auto">
             <table className="w-full text-xs min-w-[720px]">
               <thead>
-                <tr className="text-[10px] uppercase font-mono text-slate-500 text-left">
+                <tr className="text-[10px] uppercase tracking-wide font-medium text-slate-500 text-left">
                   {['When', 'Call', 'Result', 'STT', 'LLM 1st token', 'TTS 1st', 'Total', 'Words'].map((h) => (
                     <th key={h} className="py-1 pr-3 font-normal">
                       {h}

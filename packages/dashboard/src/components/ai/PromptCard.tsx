@@ -54,7 +54,7 @@ export function PromptCard(p: PromptCardProps) {
       {!p.editing && (
         <div className="space-y-3" data-testid={`${p.direction}-reading`}>
           <div>
-            <p className="text-[10px] uppercase font-mono text-slate-500 mb-1">{label} instructions</p>
+            <p className="text-[10px] uppercase tracking-wide font-medium text-slate-500 mb-1">{label} instructions</p>
             {known ? (
               <pre className="whitespace-pre-wrap break-words text-xs text-slate-200 bg-slate-950/60 border border-slate-800 rounded-lg p-3 font-sans" data-testid={`${p.direction}-instructions`}>
                 {view.instructions}
@@ -66,7 +66,7 @@ export function PromptCard(p: PromptCardProps) {
             )}
           </div>
           <div>
-            <p className="text-[10px] uppercase font-mono text-slate-500 mb-1">{label} greeting</p>
+            <p className="text-[10px] uppercase tracking-wide font-medium text-slate-500 mb-1">{label} greeting</p>
             <p className="text-xs text-slate-200 bg-slate-950/60 border border-slate-800 rounded-lg p-3" data-testid={`${p.direction}-greeting`}>
               {view.greeting || (view.source.greeting === 'none' ? 'None: the assistant waits for the other person to speak first.' : '—')}
             </p>

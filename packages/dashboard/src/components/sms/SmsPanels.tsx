@@ -37,7 +37,7 @@ export function NoticeList({ notices }: { notices: Notice[] }) {
 
 export function SetupNotice({ text }: { text: string }) {
   return (
-    <div role="alert" className="rounded-xl border border-amber-800/70 bg-amber-950/50 p-4 text-xs text-amber-200 space-y-2">
+    <div role="alert" className="rounded-lg border border-amber-800/70 bg-amber-950/50 p-4 text-xs text-amber-200 space-y-2">
       <p className="font-semibold">SMS needs a one-time setup on the dashboard server</p>
       <p className="leading-relaxed">{text}</p>
     </div>
@@ -226,7 +226,7 @@ export function ComposeForm({
         }}
       >
         <div>
-          <label htmlFor="sms-to" className="block text-[10px] text-slate-500 uppercase font-mono mb-1">Recipient</label>
+          <label htmlFor="sms-to" className="block text-[10px] text-slate-500 uppercase tracking-wide font-medium mb-1">Recipient</label>
           <input
             id="sms-to"
             type="tel"
@@ -242,7 +242,7 @@ export function ComposeForm({
           <p id="sms-to-error" className="mt-1 min-h-[1rem] text-[11px] text-rose-300">{touched ? check.errors.to : ''}</p>
         </div>
         <div>
-          <label htmlFor="sms-message" className="block text-[10px] text-slate-500 uppercase font-mono mb-1">Message</label>
+          <label htmlFor="sms-message" className="block text-[10px] text-slate-500 uppercase tracking-wide font-medium mb-1">Message</label>
           <textarea
             id="sms-message"
             rows={4}
@@ -265,7 +265,7 @@ export function ComposeForm({
         )}
         {blockedReason && <p role="alert" className="text-xs text-amber-300">{blockedReason}</p>}
         <div className="flex items-center gap-3">
-          <button type="submit" disabled={disabled} className="inline-flex items-center gap-2 rounded bg-cyan-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">
+          <button type="submit" disabled={disabled} className="inline-flex items-center gap-2 rounded bg-cyan-700 px-4 py-2 text-xs font-semibold text-primary-foreground disabled:opacity-50">
             {sending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {sending ? 'Sending... this can take up to a minute' : 'Send'}
           </button>

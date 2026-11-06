@@ -34,7 +34,7 @@ export function ActiveCallCard() {
 
   if (!activeCall || activeCall.state === 'IDLE') {
     return (
-      <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-5 flex flex-col items-center justify-center text-center min-h-[190px]">
+      <div className="bg-surface border border-slate-800 rounded-lg p-5 flex flex-col items-center justify-center text-center min-h-[190px]">
         <div className="h-10 w-10 rounded-full bg-slate-800/80 border border-slate-700/60 flex items-center justify-center text-slate-500 mb-2">
           <Phone className="w-5 h-5" />
         </div>
@@ -66,7 +66,7 @@ export function ActiveCallCard() {
   const isCallActive = activeCall.state === 'ACTIVE';
 
   return (
-    <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
+    <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-5 shadow-sm space-y-4">
       {/* Top Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -99,14 +99,14 @@ export function ActiveCallCard() {
       {/* Main Info */}
       <div className="flex items-baseline justify-between border-y border-slate-800/60 py-3">
         <div>
-          <div className="text-[11px] text-slate-500 uppercase font-mono">Remote Party</div>
-          <div className="text-xl font-bold font-mono text-white mt-0.5">
+          <div className="text-[11px] text-slate-500 uppercase tracking-wide font-medium">Remote Party</div>
+          <div className="text-lg font-semibold font-mono text-white mt-0.5">
             {activeCall.remoteNumber}
           </div>
         </div>
 
         <div className="text-right">
-          <div className="text-[11px] text-slate-500 uppercase font-mono">Duration</div>
+          <div className="text-[11px] text-slate-500 uppercase tracking-wide font-medium">Duration</div>
           <div className="text-2xl font-bold font-mono text-emerald-400 mt-0.5">
             {formatDuration(elapsedSeconds)}
           </div>
@@ -118,7 +118,7 @@ export function ActiveCallCard() {
         <button
           onClick={handleHangup}
           disabled={isHangingUp}
-          className="flex-1 py-2 px-3 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50"
+          className="flex-1 py-2 px-3 rounded-lg text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-primary-foreground shadow-sm transition flex items-center justify-center gap-2 disabled:opacity-50"
         >
           <PhoneOff className="w-4 h-4" />
           <span>{isHangingUp ? 'Terminating...' : 'End Call'}</span>

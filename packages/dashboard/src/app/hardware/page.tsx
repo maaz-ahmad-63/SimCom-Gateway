@@ -45,12 +45,12 @@ export default function HardwarePage() {
   return (
     <div className="space-y-6">
       <div className="border-b border-slate-800/80 pb-4">
-        <h1 className="text-xl font-bold text-white">Hardware Operations</h1>
+        <h1 className="text-lg font-semibold text-white">Hardware Operations</h1>
         <p className="text-xs text-slate-400 mt-0.5">
           Port open, USB audio registration, fresh PCM and verified playback are separate facts. This page reads state and never dials, answers, restarts the gateway or changes USB registration.
         </p>
       </div>
-      {error && <div role="alert" className="p-3 rounded-xl bg-rose-950/60 border border-rose-800/80 text-rose-300 text-xs font-mono">{error}</div>}
+      {error && <div role="alert" className="p-3 rounded-lg bg-rose-950/60 border border-rose-800/80 text-rose-300 text-xs font-mono">{error}</div>}
       {status && (
         <div className="grid gap-6 lg:grid-cols-2">
           <LayerList status={status} />
