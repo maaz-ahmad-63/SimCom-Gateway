@@ -72,8 +72,9 @@ describe('the provider key list the API Keys page renders', () => {
       expect(check.body.check, name).toBe('ok');
       expect(JSON.stringify(check.body), name).not.toContain(value);
     }
-    // Each test went to that provider's own read-only endpoint with its own header scheme.
-    expect(seen.map((s) => new URL(s.url).host)).toEqual(['global.api.murf.ai', 'api.soniox.com', 'api.inworld.ai']);
+    // Each test went to that provider's own read-only endpoint with its own header scheme. (Murf lists voices only on api.murf.ai; its
+    // global host, used for streaming synthesis, answers 400 there.)
+    expect(seen.map((s) => new URL(s.url).host)).toEqual(['api.murf.ai', 'api.soniox.com', 'api.inworld.ai']);
     expect(seen[0].headers['api-key']).toBe(secrets.MURF_API_KEY);
     expect(seen[1].headers.authorization).toBe(`Bearer ${secrets.SONIOX_API_KEY}`);
     expect(seen[2].headers.authorization).toBe(`Basic ${secrets.INWORLD_API_KEY}`);
