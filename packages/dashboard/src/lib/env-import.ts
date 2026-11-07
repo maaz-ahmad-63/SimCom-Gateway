@@ -23,8 +23,12 @@ export interface CredentialImportResult {
 
 export const ACTION_LABEL: Record<CredentialImportPreview['recognized'][number]['action'], string> = { add: 'Add', update: 'Update', unchanged: 'Unchanged' };
 
-/** The names selected by default: everything that would change something. */
-export const defaultSelection = (p: CredentialImportPreview): string[] => p.recognized.filter((r) => r.action !== 'unchanged').map((r) => r.name);
+/** The names selected by default: new keys only. A key that would REPLACE a saved one is never selected until the user ticks it. */
+export const defaultSelection = (p: CredentialImportPreview): string[] => p.recognized.filter((r) => r.action === 'add').map((r) => r.name);
+
+/** The selected keys that would replace a key already saved (these need an explicit confirmation before saving). */
+export const replacementsIn = (p: CredentialImportPreview, selected: string[]): string[] =>
+  p.recognized.filter((r) => r.action === 'update' && selected.includes(r.name)).map((r) => r.provider);
 
 /** One sentence for the result of an import. */
 export function importSummary(r: Pick<CredentialImportResult, 'added' | 'updated' | 'unchanged' | 'invalid' | 'unrecognized'>): string {

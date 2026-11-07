@@ -628,6 +628,10 @@ export class ConversationSession {
   get isBusy(): boolean {
     return this.current !== null;
   }
+  /** The agent's audio is being played to the caller right now (not merely transcribing or thinking). */
+  get isSpeaking(): boolean {
+    return this.speaking;
+  }
   /** A turn is running (including its queued speech) or audio is still being played: nothing else may speak. */
   get isAgentActive(): boolean {
     return this.current !== null || this.speaking;
@@ -718,6 +722,16 @@ export class ConversationSession {
       if (this.seen.has(utteranceId)) return skipped('duplicate');
       this.seen.add(utteranceId);
       if (this.seen.size > 64) this.seen.delete(this.seen.values().next().value as string);
+    }
+
+    // A sound that is not speech (a noise, a breath, a click) must not cost the caller the answer that is being prepared: while a
+    // turn is running, such audio is dropped here, BEFORE anything is cancelled. Only real speech replaces the running turn below.
+    if (this.current !== null) {
+      const quick = assessUtterance(pcm, this.format, { minDurationMs: this.config.utterance.minDurationMs });
+      if (quick.decision === 'too-short' || quick.decision === 'silent' || (quick.decision === 'unlikely-speech' && this.config.utterance.skipUnlikelySpeech)) {
+        this.trace(null, 'pcm-validation', 'skipped', { detail: `ignored while the agent was answering: ${quick.decision}; the answer continues` });
+        return skipped(quick.decision);
+      }
     }
 
     // Newest wins: queue this audio, cancel whatever is running, and let only the latest call proceed.

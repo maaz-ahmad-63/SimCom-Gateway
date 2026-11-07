@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { apiClient } from '../../lib/api-client';
 import { useAi } from '../../lib/context/AiContext';
-import { ACTION_LABEL, defaultSelection, CredentialImportPreview, CredentialImportResult, importSummary } from '../../lib/env-import';
+import { ACTION_LABEL, defaultSelection, CredentialImportPreview, CredentialImportResult, importSummary, replacementsIn } from '../../lib/env-import';
 import { ActionNote, Badge, Button, Card, TextArea, useAction } from '../ai/ui';
 
 /**
@@ -34,6 +34,9 @@ export function EnvImport() {
   };
 
   const doApply = async () => {
+    // Replacing a key that is already saved (and may be working) needs a clear yes from the user.
+    const replacing = preview ? replacementsIn(preview, selected) : [];
+    if (replacing.length > 0 && !window.confirm(`This replaces the API key already saved for: ${replacing.join(', ')}.\n\nThe old key cannot be recovered from here. Replace it?`)) return;
     const r = await run(() => apiClient.applyCredentialImport(text, selected), 'Import finished.');
     if (r) {
       setResult(r);
@@ -105,6 +108,7 @@ export function EnvImport() {
                     <td className="py-1.5">
                       <Badge tone={r.action === 'add' ? 'good' : r.action === 'update' ? 'warn' : 'neutral'}>{ACTION_LABEL[r.action]}</Badge>
                       {r.overridesEnv && <span className="ml-2 text-[11px] text-slate-500">takes priority over the .env value</span>}
+                      {r.action === 'update' && <span className="ml-2 text-[11px] text-amber-300">replaces your saved key: tick to replace it</span>}
                     </td>
                   </tr>
                 ))}

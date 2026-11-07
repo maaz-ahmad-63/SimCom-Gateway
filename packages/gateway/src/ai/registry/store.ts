@@ -38,6 +38,20 @@ export interface RegistryStoreOptions {
 
 export const REGISTRY_FILE = 'registry.json';
 
+/**
+ * A saved registry plus the built-in entries it does not have. Built-in entries can never be deleted (only switched off or reset), so a
+ * built-in entry missing from a saved file is one a NEWER version added (the Inworld language model in 0.1.4 was invisible to anyone
+ * whose registry.json had been saved before). Nothing in the saved file is changed, including switched-off or edited defaults; the file
+ * itself is only rewritten by the next change, as always.
+ */
+export function withNewDefaults(file: RegistryFile, defaults: RegistryFile = defaultRegistry()): RegistryFile {
+  const providers = [...file.providers];
+  for (const p of defaults.providers) if (!providers.some((x) => x.id === p.id)) providers.push(p);
+  const models = [...file.models];
+  for (const m of defaults.models) if (!models.some((x) => x.id === m.id && x.stage === m.stage)) models.push(m);
+  return { providers, models };
+}
+
 const stageKeys: Array<[Stage, string]> = [
   ['llm', DEFAULT_LLM_KEY],
   ['stt', DEFAULT_STT_KEY],
@@ -92,8 +106,9 @@ export class RegistryStore {
     if (!head.success) return { registry: null, issues: [{ collection: 'document', id: null, path: path.basename(file), message: `must be { "schemaVersion": ${SCHEMA_VERSION}, "providers": [...], "models": [...] }` }] };
     const parsed = parseRegistry({ providers: head.data.providers, models: head.data.models });
     if (parsed.issues.length) return { registry: null, issues: parsed.issues };
-    const built = buildRegistry(parsed.file);
-    return { registry: built.registry, issues: this.requiredDefaults(parsed.file, built.issues) };
+    const withNew = withNewDefaults(parsed.file);
+    const built = buildRegistry(withNew);
+    return { registry: built.registry, issues: this.requiredDefaults(withNew, built.issues) };
   }
 
   /** The default selection of each stage must stay in the list (the gateway falls back to it). */

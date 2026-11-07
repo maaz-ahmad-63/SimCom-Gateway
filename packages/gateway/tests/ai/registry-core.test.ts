@@ -370,7 +370,7 @@ describe('switching off, deleting, resetting and the model in use', () => {
     expect(store.registry.modifiedModel('llm', 'telnyx_kimi_k3')).toBe(false);
   });
 
-  it('defaults missing from a registry.json (for example models a newer gateway ships) can be added back without touching your own', () => {
+  it('defaults missing from a registry.json (for example models a newer gateway ships) are added when it loads, without touching your own', () => {
     const dir = tmp();
     const first = new RegistryStore({ dir });
     first.load();
@@ -380,13 +380,14 @@ describe('switching off, deleting, resetting and the model in use', () => {
     fs.writeFileSync(path.join(dir, 'registry.json'), JSON.stringify(file), 'utf8');
     const second = new RegistryStore({ dir });
     expect(second.load().ok).toBe(true);
-    expect(second.registry.model('llm', 'groq_gpt_oss_20b')).toBeUndefined();
-    expect(second.restoreDefaults().ok).toBe(true);
+    // Built-in entries can never be deleted, so a missing one is new in this version: it is there without "Add missing defaults".
     expect(second.registry.model('llm', 'groq_gpt_oss_20b')).toBeDefined();
     expect(second.registry.model('llm', 'groq_llama_4_scout')).toBeDefined();
+    expect(second.registry.model('llm', llm().id)).toBeDefined(); // your own model is kept
+    expect(second.restoreDefaults().ok).toBe(true); // the button still works (nothing left to add)
   });
 
-  it('a registry that lacks the default model of a stage is rejected, since the gateway falls back to it', () => {
+  it('a registry.json that lacks the default model of a stage gets it back on load; an edit that removes it is still refused', () => {
     const dir = tmp();
     const store = new RegistryStore({ dir });
     store.load();
@@ -394,9 +395,14 @@ describe('switching off, deleting, resetting and the model in use', () => {
     const file = JSON.parse(fs.readFileSync(path.join(dir, 'registry.json'), 'utf8'));
     file.models = file.models.filter((m: { id: string }) => m.id !== 'groq_qwen_3_8_27b');
     fs.writeFileSync(path.join(dir, 'registry.json'), JSON.stringify(file), 'utf8');
-    const report = new RegistryStore({ dir }).load();
-    expect(report.ok).toBe(false);
-    expect(report.issues.map((i) => i.message).join(' ')).toMatch(/default llm model 'groq_qwen_3_8_27b' must stay/);
+    const again = new RegistryStore({ dir });
+    expect(again.load().ok).toBe(true);
+    expect(again.registry.model('llm', 'groq_qwen_3_8_27b')).toBeDefined();
+    const without = again.file();
+    without.models = without.models.filter((m) => m.id !== 'groq_qwen_3_8_27b');
+    const refused = again.apply(without);
+    expect(refused.ok).toBe(false);
+    expect(refused.issues.map((i) => i.message).join(' ')).toMatch(/default llm model 'groq_qwen_3_8_27b' must stay/);
   });
 });
 

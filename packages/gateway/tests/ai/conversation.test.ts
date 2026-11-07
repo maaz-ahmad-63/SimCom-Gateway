@@ -367,3 +367,31 @@ describe('session isolation', () => {
     expect(session.getHistory().at(-1)).toBeUndefined(); // an assistant-only opening is not sent as a leading message
   });
 });
+
+describe('a sound during the answer does not cost the caller the reply (live-call fix)', () => {
+  it('noise, silence or a too-short sound that arrives while the agent is preparing a reply is ignored; the reply is delivered', async () => {
+    const providers = createMockProviders({ stt: ['What are your opening hours?'], llm: ['We open at nine.'], delays: { llm: 150 } });
+    const { session, events } = build(providers);
+    const answering = session.handleUtterance(speechPcm(1200), 'u1');
+    await sleep(30); // the turn is now transcribing / waiting for the language model
+    const noise = await session.handleUtterance(noiseFloorPcm(400), 'u2'); // a breath, a click, line noise
+    const shortSound = await session.handleUtterance(speechPcm(80), 'u3'); // too short to be words
+    expect(noise.status).toBe('skipped');
+    expect(shortSound.status).toBe('skipped');
+    const first = await answering;
+    expect(first.status).toBe('completed'); // not cancelled by the sounds
+    expect(providers.tts.requests).toEqual(['We open at nine.']);
+    expect(turns(events).filter((t) => t.status === 'cancelled')).toHaveLength(0);
+  });
+
+  it('real speech that arrives while the agent is preparing a reply still replaces it, and the two parts are answered together', async () => {
+    const providers = createMockProviders({ stt: ['What are your opening hours', 'What are your opening hours on Sunday?'], llm: ['We are closed on Sunday.'], delays: { llm: 300 } });
+    const { session } = build(providers);
+    const first = session.handleUtterance(speechPcm(1200), 'u1');
+    await sleep(60);
+    const second = await session.handleUtterance(speechPcm(900), 'u2');
+    expect((await first).status).toBe('cancelled');
+    expect(second.status).toBe('completed');
+    expect(providers.tts.requests).toEqual(['We are closed on Sunday.']);
+  });
+});

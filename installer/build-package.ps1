@@ -16,7 +16,17 @@
   installer\out, plus build output folders that are already ignored (dist, .next-package).
 #>
 [CmdletBinding()]
-param([switch]$SkipInstaller, [string]$NodeExe = (Get-Command node).Source)
+param(
+  [switch]$SkipInstaller,
+  [string]$NodeExe = (Get-Command node).Source,
+  # Authenticode signing of the setup program and its uninstaller. A trusted code-signing certificate (from a certificate authority) must be
+  # installed in the Windows certificate store; give its SHA-1 thumbprint here or in SIMGW_SIGN_THUMBPRINT. signtool.exe comes from the
+  # Windows SDK (or SIMGW_SIGNTOOL). Without a certificate the setup program is built UNSIGNED and the script says so.
+  [string]$SignThumbprint = $env:SIMGW_SIGN_THUMBPRINT,
+  [string]$TimestampUrl = $(if ($env:SIMGW_SIGN_TIMESTAMP_URL) { $env:SIMGW_SIGN_TIMESTAMP_URL } else { 'http://timestamp.digicert.com' }),
+  # A release build: refuse to finish unless the setup program is validly signed.
+  [switch]$RequireSigning
+)
 
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path $PSScriptRoot -Parent
@@ -185,5 +195,29 @@ Step 'Compile the setup program (Inno Setup)'
 $iscc = @("$env:ProgramFiles\Inno Setup 7\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $iscc) { throw 'Inno Setup 7 (or 6.3 or newer) is not installed on this machine, so the setup program cannot be compiled. The package folder was assembled in installer\stage\app. Install Inno Setup (free) and run this script again.' }
 Write-Host "  using $iscc"
-Run $iscc @("/DAppVersion=$version", "/O$Out", (Join-Path $PSScriptRoot 'SimGateway.iss'))
-Step "Setup program: $(Join-Path $Out "SimGateway-Setup-$version.exe")"
+$isccArgs = @("/DAppVersion=$version", "/O$Out")
+if ($SignThumbprint) {
+  $signtool = if ($env:SIMGW_SIGNTOOL) { $env:SIMGW_SIGNTOOL } else {
+    Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+  }
+  if (-not $signtool -or -not (Test-Path $signtool)) { throw 'A signing certificate was given but signtool.exe was not found. Install the Windows SDK (Signing Tools) or set SIMGW_SIGNTOOL. Nothing was signed.' }
+  $cert = Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -CodeSigningCert -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $SignThumbprint.Replace(' ', '').ToUpper() } | Select-Object -First 1
+  if (-not $cert) { throw "No code-signing certificate with thumbprint $SignThumbprint is installed for this user or this computer. Nothing was signed." }
+  if ($cert.NotAfter -lt (Get-Date)) { throw "The code-signing certificate expired on $($cert.NotAfter.ToString('yyyy-MM-dd')). Nothing was signed." }
+  Write-Host "  signing with: $($cert.Subject) (valid until $($cert.NotAfter.ToString('yyyy-MM-dd')))"
+  # SHA-256 file digest, RFC 3161 timestamp (the signature stays valid after the certificate expires).
+  $isccArgs += @('/DSignBuild=1', "/Ssizh=`"$signtool`" sign /fd sha256 /tr $TimestampUrl /td sha256 /sha1 $($cert.Thumbprint) `$f")
+} elseif ($RequireSigning) {
+  throw 'This is a release build (-RequireSigning) but no code-signing certificate was given (-SignThumbprint or SIMGW_SIGN_THUMBPRINT). Nothing was built.'
+}
+Run $iscc ($isccArgs + @((Join-Path $PSScriptRoot 'SimGateway.iss')))
+$setupExe = Join-Path $Out "SimGateway-Setup-$version.exe"
+$signature = Get-AuthenticodeSignature $setupExe
+if ($signature.Status -eq 'Valid') {
+  Write-Host "  signed: $($signature.SignerCertificate.Subject); timestamped: $([bool]$signature.TimeStamperCertificate)" -ForegroundColor Green
+} elseif ($SignThumbprint -or $RequireSigning) {
+  throw "The setup program is not validly signed (signature status: $($signature.Status)). Do not release it."
+} else {
+  Write-Host '  UNSIGNED: no code-signing certificate was configured. Windows SmartScreen will show "Windows protected your PC" for this setup program.' -ForegroundColor Yellow
+}
+Step "Setup program: $setupExe"

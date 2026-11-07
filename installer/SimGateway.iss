@@ -42,7 +42,21 @@ ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 CloseApplications=no
 UninstallDisplayName=SIZH IT Solution
+UninstallDisplayIcon={app}\runtime\node.exe
 WizardStyle=modern
+; Publisher details shown in the EXE's Properties, in the SmartScreen / UAC prompt next to the signature, and in Installed apps.
+AppPublisherURL=https://github.com/maaz-ahmad-63/SimCom-Gateway
+VersionInfoCompany=SIZH IT Solution
+VersionInfoProductName=SIZH IT Solution
+VersionInfoDescription=SIZH IT Solution Setup
+VersionInfoCopyright=Copyright (C) SIZH IT Solution
+VersionInfoVersion={#AppVersion}
+#ifdef SignBuild
+; Authenticode signing of the setup program AND of the uninstaller it writes. The command is passed in by build-package.ps1 (ISCC /S"sizh=...")
+; only when a code-signing certificate is configured; an unsigned build simply has no SignTool line.
+SignTool=sizh $f
+SignedUninstaller=yes
+#endif
 
 [Dirs]
 ; The data folder: created if missing, its contents never touched by an upgrade. Setup is not elevated, so it sets no permissions here (that
@@ -104,6 +118,9 @@ Filename: "{app}\runtime\node.exe"; Parameters: """{app}\gateway\dist\supervisor
 [UninstallDelete]
 ; The start guard, and anything an automatic update left beside the program folder. Customer data is NOT listed here.
 Type: filesandordirs; Name: "{localappdata}\SIZH IT Solution"
+; The program folder itself, including files the program created there while running (they are not in the installer's own list), so a
+; reinstall always starts from a clean program folder. It holds program files only; customer data lives elsewhere.
+Type: filesandordirs; Name: "{app}"
 Type: filesandordirs; Name: "{app}.backup"
 Type: filesandordirs; Name: "{app}.new"
 Type: filesandordirs; Name: "{app}.failed"
@@ -292,17 +309,26 @@ end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  Data: String;
+  Data, Secrets, Backups: String;
 begin
   if CurUninstallStep = usPostUninstall then begin
     Data := ExpandConstant(DataDir);
-    if DirExists(Data) then begin
-      { The default is to KEEP the customer's data. It is removed only after an explicit Yes. }
-      if MsgBox('Do you also want to delete your data (call history, recordings, campaigns, settings, saved API keys and backups) in' + #13#10 + Data + '?' + #13#10#13#10 + 'Choose No to keep it. A later reinstall will find it again.', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+    Secrets := ExpandConstant('{commonappdata}\SimGatewaySecrets');
+    Backups := ExpandConstant(BackupRoot);
+    if DirExists(Data) or DirExists(Secrets) or DirExists(Backups) then begin
+      { The default is to KEEP the customer's data. A COMPLETE removal happens only after an explicit Yes, and then it removes every
+        folder that belongs to this product, including the setup safety copies: otherwise the next install would bring the deleted data
+        back from them. Only these three folders are ever deleted; nothing else on the computer is touched. }
+      if MsgBox('Remove ALL of your SIZH IT Solution data from this computer too?' + #13#10#13#10 +
+          'This deletes call history, recordings, campaigns, settings, saved API keys and their encryption key, and every backup and setup safety copy:' + #13#10 +
+          '  ' + Data + #13#10 + '  ' + Secrets + #13#10 + '  ' + Backups + #13#10#13#10 +
+          'Choose No to keep your data; a later reinstall will find it again. Choose Yes for a complete uninstall (it cannot be undone).',
+          mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
       begin
         DelTree(Data, True, True, True);
         { the key that protects saved API keys goes with the data it protected, and only then }
-        DelTree(ExpandConstant('{commonappdata}\SimGatewaySecrets'), True, True, True);
+        DelTree(Secrets, True, True, True);
+        DelTree(Backups, True, True, True);
       end;
     end;
   end;

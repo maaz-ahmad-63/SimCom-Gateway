@@ -729,7 +729,10 @@ export class AiCallOrchestrator extends EventEmitter {
       {
         onSpeechStart: () => {
           entry.idle?.pause(); // someone is talking: the silence clock stops
-          if (this.config.bargeIn.enabled && session.isBusy) session.interrupt('caller-speech');
+          // Barge-in: only while the agent's voice is actually playing. While it is still transcribing or thinking, the first moment
+          // of sound is not enough to throw the answer away (a breath or a noise did, and the caller never got a reply); the finished
+          // utterance decides instead: real speech replaces the turn and is merged with it, anything else is ignored.
+          if (this.config.bargeIn.enabled && session.isSpeaking) session.interrupt('caller-speech');
         },
         onUtteranceAudio: (pcm, info) => {
           const streaming = providers.sttStream;

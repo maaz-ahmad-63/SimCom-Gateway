@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { defaultSelection, importSummary, CredentialImportPreview } from '../src/lib/env-import';
+import { defaultSelection, importSummary, CredentialImportPreview, replacementsIn } from '../src/lib/env-import';
 
 const preview: CredentialImportPreview = {
   recognized: [
@@ -16,8 +16,10 @@ const preview: CredentialImportPreview = {
 };
 
 describe('.env import (dashboard)', () => {
-  it('selects only the keys that would change something', () => {
-    expect(defaultSelection(preview)).toEqual(['GROQ_API_KEY', 'INWORLD_API_KEY']);
+  it('selects only NEW keys by default; a key that would replace a saved one waits for the user', () => {
+    expect(defaultSelection(preview)).toEqual(['GROQ_API_KEY']);
+    expect(replacementsIn(preview, ['GROQ_API_KEY'])).toEqual([]);
+    expect(replacementsIn(preview, ['GROQ_API_KEY', 'INWORLD_API_KEY'])).toEqual(['Inworld']);
   });
 
   it('summarises a result without any key value', () => {
