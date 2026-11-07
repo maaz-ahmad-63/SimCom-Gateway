@@ -205,7 +205,7 @@ describe('operator-enabled conversation mode (per call, no per-turn clicks)', ()
   });
 
   it('does not process the same event twice, and merges a caller who speaks again while the answer is being generated', async () => {
-    const providers = createMockProviders({ stt: ['first part', 'second part'], llm: ['Sure, here is the answer.'], delays: { llm: 250 } });
+    const providers = createMockProviders({ stt: ['first part', 'first part second part'], llm: ['Sure, here is the answer.'], delays: { llm: 250 } });
     const h = await harness({ providers });
     const call = await h.startCall();
     await h.enable(call.id);

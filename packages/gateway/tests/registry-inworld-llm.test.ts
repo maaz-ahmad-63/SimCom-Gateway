@@ -77,23 +77,21 @@ describe('Inworld Gemma 4 31B in the Model Hub', () => {
     const first = await boot(dir);
 
     const before = (await first.api('get', '/api/ai/catalog')).body;
-    // Only the seeded Inworld Router model is there by default; the Gemma model is not until it is added.
-    expect(before.llm.filter((m: any) => m.provider === 'inworld').map((m: any) => m.key)).toEqual(['inworld_gpt_5_4']);
-    expect(llmOption(before, 'inworld_gpt_5_4')).toMatchObject({ model: 'openai/gpt-5.4', keyEnv: 'INWORLD_API_KEY', implemented: true });
+    // Both Inworld models are built in: Inworld's own Gemma 4 31B (the one this product uses) and GPT-5.4 routed through Inworld.
+    expect(before.llm.filter((m: any) => m.provider === 'inworld').map((m: any) => m.key)).toEqual(['inworld_gemma_4_31b', 'inworld_gpt_5_4']);
+    expect(llmOption(before, 'inworld_gemma_4_31b')).toMatchObject({ model: MODEL_ID, label: 'Inworld Gemma 4 31B', keyEnv: 'INWORLD_API_KEY', implemented: true });
+    expect(llmOption(before, 'inworld_gpt_5_4')).toMatchObject({ model: 'openai/gpt-5.4', label: 'OpenAI GPT-5.4 (through Inworld Router)', implemented: true });
     expect(llmOption(before, 'groq_qwen_3_8_27b')).toMatchObject({ implemented: true });
     expect(llmOption(before, 'telnyx_kimi_k3')).toMatchObject({ implemented: true });
-    const revisionBefore = (await first.api('get', '/api/ai/state')).body.catalogRevision;
-
-    // provider + protocol + model id: no endpoint on the model, the credential is the provider's
-    const created = await first.api('post', '/api/ai/registry/models', GEMMA);
-    expect(created.status, JSON.stringify(created.body)).toBe(200);
-    expect(created.body.registry.models.llm.find((m: any) => m.id === 'inworld_gemma_4_31b')).toMatchObject({
+    // Built in: provider + protocol + model id; no endpoint on the model, the credential is the provider's. (Adding it again is refused.)
+    const view = (await first.api('get', '/api/ai/registry')).body;
+    expect(view.models.llm.find((m: any) => m.id === 'inworld_gemma_4_31b')).toMatchObject({
       provider: 'inworld',
       protocol: 'openai-chat',
       model: MODEL_ID,
       resolved: { implemented: true, protocol: 'openai-chat', endpoint: 'https://api.inworld.ai/v1', endpointIsDefault: false, credential: { name: 'INWORLD_API_KEY', state: 'env' } },
     });
-    expect((await first.api('get', '/api/ai/state')).body.catalogRevision).not.toBe(revisionBefore);
+    expect((await first.api('post', '/api/ai/registry/models', GEMMA)).status).toBe(422);
 
     const catalog = (await first.api('get', '/api/ai/catalog')).body;
     expect(llmOption(catalog, 'inworld_gemma_4_31b')).toMatchObject({ label: 'Inworld Gemma 4 31B', provider: 'inworld', model: MODEL_ID, implemented: true });
@@ -180,7 +178,8 @@ describe('Inworld Gemma 4 31B in the Model Hub', () => {
     expect(await revision()).toBe(r0);
     await h.api('put', '/api/ai/settings', { llm: 'telnyx_kimi_k3' });
     expect(await revision()).toBe(r0);
-    await h.api('post', '/api/ai/registry/models', GEMMA);
+    // A real change (an own model) bumps the revision; the built-in Gemma entry is already there.
+    await h.api('post', '/api/ai/registry/models', { ...GEMMA, id: 'inworld_gemma_custom', label: 'My Gemma', aliases: [] });
     const r1 = await revision();
     expect(r1).not.toBe(r0);
     await h.api('patch', '/api/ai/registry/models/llm/inworld_gemma_4_31b', { enabled: false });

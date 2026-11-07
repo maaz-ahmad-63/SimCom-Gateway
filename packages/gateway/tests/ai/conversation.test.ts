@@ -175,7 +175,7 @@ describe('one response per caller turn', () => {
 
   it('lets a newer utterance cancel the reply in progress, so only one reply is ever spoken', async () => {
     const providers = {
-      stt: new ScriptedStt(['first thing', 'second thing']),
+      stt: new ScriptedStt(['first thing', 'first thing second thing']), // the second call hears both parts (re-queued + new)
       llm: new ScriptedLlm(['Answer to the first. It goes on a while longer.', 'Answer to the second one.'], { delayMs: 60 }),
       tts: new ToneTts(),
     };

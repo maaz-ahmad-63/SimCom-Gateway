@@ -224,8 +224,8 @@ describe('cancellation during recognition, merging and cancel sources', () => {
     expect(userTexts(session)).toEqual(['I need a chatbot for my website']); // said once, nothing duplicated
   });
 
-  it('does not put back audio whose words were already committed (no duplicate caller history)', async () => {
-    const stt = new ScriptedStt(['first part', 'second part']);
+  it('a reply replaced before any of it was played: its audio is transcribed again together with the new speech, each part once', async () => {
+    const stt = new ScriptedStt(['first part', 'first part second part']);
     const llm = new ScriptedLlm(['A reply that is slow to arrive.'], { delayMs: 120 });
     const { session } = build({ stt, llm });
     const a = speechPcm(1000);
@@ -236,7 +236,7 @@ describe('cancellation during recognition, merging and cancel sources', () => {
     const [r1] = await Promise.all([first, second]);
 
     expect(r1).toMatchObject({ status: 'cancelled', reason: 'interrupted', cancelSource: 'endpoint-continuation' });
-    expect(stt.calls[1].bytes).toBe(b.length); // only the new speech is transcribed
+    expect(stt.calls[1].bytes).toBe(a.length + b.length); // the question goes back to audio and is heard with what followed (so noise can never leave it unanswered)
     expect(userTexts(session)).toEqual(['first part second part']); // each part exactly once
   });
 

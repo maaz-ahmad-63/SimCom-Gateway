@@ -46,7 +46,7 @@ describe('the default registry is the original catalog, as one provider list and
     const dir = tmp();
     const store = new RegistryStore({ dir });
     expect(store.load().ok).toBe(true);
-    expect(store.registry.file.models.filter((m) => m.stage === 'llm')).toHaveLength(Object.keys(LLM_CATALOG).length + 1 /* + the seeded Inworld Router model */);
+    expect(store.registry.file.models.filter((m) => m.stage === 'llm')).toHaveLength(Object.keys(LLM_CATALOG).length + 2 /* + the two seeded Inworld models */);
     expect(store.registry.file.models.filter((m) => m.stage === 'stt')).toHaveLength(Object.keys(STT_CATALOG).length);
     expect(store.registry.file.models.filter((m) => m.stage === 'tts')).toHaveLength(Object.keys(TTS_CATALOG).length);
     expect(fs.readdirSync(dir)).toEqual([]); // no file at startup
@@ -447,7 +447,7 @@ describe('invalid JSON never replaces the last valid registry', () => {
     fs.writeFileSync(path.join(dir, 'registry.json'), 'nonsense', 'utf8');
     const store = new RegistryStore({ dir });
     expect(store.load().ok).toBe(false);
-    expect(store.registry.llmKeys()).toHaveLength(Object.keys(LLM_CATALOG).length + 1 /* + the seeded Inworld Router model */);
+    expect(store.registry.llmKeys()).toHaveLength(Object.keys(LLM_CATALOG).length + 2 /* + the two seeded Inworld models */);
     expect(loadAiConfig(aiEnv({})).errors).toEqual([]);
   });
 });

@@ -57,3 +57,22 @@ describe('a registry saved by an older version gets the defaults a newer version
     expect(buildCatalog({}).llm.find((o) => o.key === 'my_own_model')?.label).toBe('Renamed');
   });
 });
+
+describe('the Inworld Gemma model', () => {
+  it('is built in with the model id Inworld serves, and a customer who added it by hand keeps their own entry', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'registry-gemma-'));
+    dirs.push(dir);
+    const d = defaultRegistry();
+    expect(d.models.find((m) => m.id === 'inworld_gemma_4_31b')).toMatchObject({ provider: 'inworld', protocol: 'openai-chat', model: 'inworld/models/gemma-4-31b-it' });
+    const models = d.models.filter((m) => !(m.stage === 'llm' && m.provider === 'inworld'));
+    models.push({ id: 'inworld_gemma_4_31b', stage: 'llm', provider: 'inworld', protocol: 'openai-chat', model: 'inworld/models/gemma-4-31b-it', label: 'My Gemma (added by hand)', enabled: true, aliases: ['inworld_gemma_4_31b_it'], options: { body: {}, tools: false } } as never);
+    fs.writeFileSync(path.join(dir, 'registry.json'), JSON.stringify({ schemaVersion: SCHEMA_VERSION, providers: d.providers, models }));
+    const store = new RegistryStore({ dir });
+    expect(store.load().ok).toBe(true);
+    const llm = buildCatalog({}).llm.filter((o) => o.provider === 'inworld');
+    expect(llm.map((o) => [o.key, o.label])).toEqual([
+      ['inworld_gemma_4_31b', 'My Gemma (added by hand)'], // theirs, not replaced
+      ['inworld_gpt_5_4', 'OpenAI GPT-5.4 (through Inworld Router)'], // added as new
+    ]);
+  });
+});

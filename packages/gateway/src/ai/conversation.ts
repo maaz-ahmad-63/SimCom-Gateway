@@ -1256,7 +1256,11 @@ export class ConversationSession {
 
     // 2. Speech to text.
     let transcript: string;
-    const speculative = this.takeSpeculative(timing?.speculativeId);
+    // A speculative transcript, like a stream, covers only this utterance: when audio from an interrupted turn was put in front of it,
+    // using it would drop those earlier words, so it is cancelled and the merged audio is transcribed whole.
+    const takenSpec = this.takeSpeculative(timing?.speculativeId);
+    if (takenSpec && captures > 1) takenSpec.controller.abort();
+    const speculative = captures === 1 ? takenSpec : null;
     // A streaming recognizer only covers this utterance, so it cannot stand in for audio merged from several. Merged audio goes to
     // the batch provider AT ONCE and, in parallel, to a fresh stream (Deepgram takes audio faster than real time). The stream got
     // the live 1.5 s window before, which is shorter than its connection time, so it never answered (calls 9da41342, 0710a7d4)
@@ -1739,7 +1743,20 @@ export class ConversationSession {
       reply: cfg.logTranscripts ? spokenText : undefined,
     };
 
-    if (signal.aborted) return outcome({ status: 'cancelled', reason: 'interrupted', ...common });
+    if (signal.aborted) {
+      // Replaced by more caller audio before ANY of the reply was played: the question goes back to being audio, so the turn that
+      // replaces this one transcribes it together with what followed. Before, the words stayed committed with no reply, and when the
+      // audio that cancelled them was only noise (no words), nothing answered the caller until they spoke again.
+      if (!said && metrics.firstAudioMs === null && this.closedReason === null && (this.cancelSource === 'caller-speech' || this.cancelSource === 'endpoint-continuation')) {
+        const last = this.history[this.history.length - 1];
+        if (last?.role === 'user') {
+          if (last.content === transcript) this.history.pop();
+          else if (last.content.endsWith(` ${transcript}`)) last.content = last.content.slice(0, -(transcript.length + 1));
+        }
+        this.requeueUncommitted(pcm, captures);
+      }
+      return outcome({ status: 'cancelled', reason: 'interrupted', ...common });
+    }
     if (llmEmpty.detail !== null && !spokenText && !llmError) {
       this.reportError('llm', new Error(llmEmpty.detail));
       return outcome({ status: 'failed', reason: 'llm-empty', ...common }, true);

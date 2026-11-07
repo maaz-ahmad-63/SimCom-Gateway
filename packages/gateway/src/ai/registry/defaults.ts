@@ -90,18 +90,32 @@ function llmOptions(family: string, model: string): Record<string, unknown> {
 }
 
 /**
- * Inworld Router (OpenAI-compatible chat completions at the inworld provider's base URL, Basic auth). Only the model id its quickstart
- * documents is seeded (https://docs.inworld.ai/router/quickstart); add others from inworld.ai/models on the Model Hub. Tool calling stays
- * off until it is confirmed through the router on a real call.
+ * Inworld Router (OpenAI-compatible chat completions at the inworld provider's base URL, Basic auth). Tool calling stays off until it is
+ * confirmed through the router on a real call. Both ids answered HTTP 200 from https://api.inworld.ai/v1/chat/completions on 2026-11-07:
+ *  - inworld/models/gemma-4-31b-it: Inworld's own hosted Gemma 4 31B, the model this product uses with Inworld. Its id and alias are the
+ *    ones the Model Hub used for it, so a customer who added it by hand keeps that entry (and any selection of it).
+ *  - openai/gpt-5.4: OpenAI GPT-5.4 routed through Inworld (the id Inworld's quickstart documents), kept because 0.1.4 shipped it and a
+ *    customer may have it selected. It is labelled as OpenAI's model so it is never mistaken for Inworld's own.
  */
 const INWORLD_LLMS: ModelEntry[] = [
+  {
+    id: 'inworld_gemma_4_31b',
+    stage: 'llm',
+    provider: 'inworld',
+    protocol: 'openai-chat',
+    model: 'inworld/models/gemma-4-31b-it',
+    label: 'Inworld Gemma 4 31B',
+    enabled: true,
+    aliases: ['inworld_gemma_4_31b_it'],
+    options: { body: {}, tools: false, family: 'inworld' },
+  },
   {
     id: 'inworld_gpt_5_4',
     stage: 'llm',
     provider: 'inworld',
     protocol: 'openai-chat',
     model: 'openai/gpt-5.4',
-    label: 'Inworld Router: OpenAI GPT-5.4',
+    label: 'OpenAI GPT-5.4 (through Inworld Router)',
     enabled: true,
     aliases: [],
     options: { body: {}, tools: false, family: 'inworld' },
